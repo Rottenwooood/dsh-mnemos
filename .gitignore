@@ -1,0 +1,8 @@
+node_modules/
+lib/
+dist/
+*.tsbuildinfo
+.dsh/
+data/
+memory.db*
+*.log
