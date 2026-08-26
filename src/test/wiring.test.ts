@@ -1,18 +1,21 @@
 import { describe, it, expect, vi } from 'vitest';
+import { unlinkSync, writeFileSync } from 'node:fs';
 import type { Context } from '@deepseek-ai/cordis';
 import { openMemoryStore } from '../domain/store.js';
 import { createSensitiveDetector } from '../domain/sensitive.js';
 import { createMemoryService } from '../domain/service.js';
 import { registerTools } from '../dsh/tools.js';
 import { registerCommand } from '../dsh/command.js';
-import { SignalCollector } from '../dsh/hooks.js';
+import { registerInjection, SignalCollector } from '../dsh/hooks.js';
 import { gateFrom, apply } from '../index.js';
+import { defaultConfig } from '../config.js';
 import type { CommandDefinition, ToolDefinition } from '../dsh/types.js';
 
 function fakeContext() {
   const tools: ToolDefinition[] = [];
   const commands: CommandDefinition[] = [];
   const effects: Array<() => unknown> = [];
+  const listeners: Array<{ name: string; listener: (...args: any[]) => unknown }> = [];
   const ctx = {
     tools: {
       register(tool: ToolDefinition) {
@@ -35,7 +38,8 @@ function fakeContext() {
         }
       };
     },
-    on() {
+    on(name: string, listener: (...args: any[]) => unknown) {
+      listeners.push({ name, listener });
       return () => true;
     },
     logger() {
@@ -47,7 +51,7 @@ function fakeContext() {
       return () => true;
     },
   } as unknown as Context;
-  return { ctx, tools, commands };
+  return { ctx, tools, commands, listeners };
 }
 
 function makeService() {
@@ -125,7 +129,7 @@ describe('command wiring', () => {
   it('registers /memory and prints search results', async () => {
     const { ctx, commands } = fakeContext();
     const { service } = makeService();
-    registerCommand(ctx, service);
+    registerCommand(ctx, service, defaultConfig());
     service.add(
       {
         type: 'preference',
@@ -150,14 +154,73 @@ describe('command wiring', () => {
     expect(said.join('\n')).toContain('No semicolons');
   });
 
+  it('/memory import commits a remember candidate from a claude file', async () => {
+    const { ctx, commands } = fakeContext();
+    const { service } = makeService();
+    registerCommand(ctx, service, defaultConfig());
+    const file = '/tmp/opencode/mnemos-import-test.jsonl';
+    writeFileSync(
+      file,
+      JSON.stringify({
+        type: 'user',
+        message: { role: 'user', content: [{ type: 'text', text: '记住：用 pnpm' }] },
+        timestamp: '2025-01-01T00:00:00.000Z',
+      }),
+    );
+    const command = commands[0]!;
+    const said: string[] = [];
+    await command.handler(`import auto ${file}`, {
+      caller: 'human',
+      workspace: 'ws',
+      say: (t) => said.push(t),
+    });
+    unlinkSync(file);
+    expect(said[0]).toContain('1 committed');
+    expect(service.listActive('workspace', 'ws')).toHaveLength(1);
+  });
+
   it('prints usage for an unknown subcommand', async () => {
     const { ctx, commands } = fakeContext();
     const { service } = makeService();
-    registerCommand(ctx, service);
+    registerCommand(ctx, service, defaultConfig());
     const command = commands[0]!;
     const said: string[] = [];
     await command.handler('bogus', { caller: 'human', say: (t) => said.push(t) });
     expect(said[0]).toContain('commands:');
+  });
+});
+
+describe('pre-step injection', () => {
+  it('injects the hot-layer projection into the agent and delegates via next', async () => {
+    const { ctx, listeners } = fakeContext();
+    const { service } = makeService();
+    const added = service.add(
+      {
+        type: 'preference',
+        scope: 'workspace',
+        workspace: 'ws',
+        topic: 'pnpm',
+        summary: 'Use pnpm for builds.',
+        evidence: [],
+        confidence: 1,
+        source: 'manual',
+        writer: 'human',
+      },
+      'human',
+    );
+    if (added.memory) {
+      service.recordHit(added.memory.id, 'other-session');
+    }
+    registerInjection(ctx, service, {
+      ...defaultConfig(),
+      injectMaxBytes: 4096,
+      injectMinHits: 0,
+    });
+    const hook = listeners.find((l) => l.name === 'agent/pre-step')!;
+    const inject = vi.fn();
+    const delegated = await hook.listener({ inject } as never, {}, async () => 'delegated');
+    expect(inject).toHaveBeenCalledWith(expect.stringContaining('Use pnpm'));
+    expect(delegated).toBe('delegated');
   });
 });
 
@@ -185,6 +248,10 @@ describe('gateFrom', () => {
       blacklist: ['bad'],
       injectLimit: 3,
       injectMinHits: 2,
+      injectMaxBytes: 1024,
+      sessionLogDirs: [],
+      backfillEnabled: true,
+      importCaller: 'human',
     });
     expect(gate.maxEntries).toBe(10);
     expect(gate.blacklist).toEqual(['bad']);

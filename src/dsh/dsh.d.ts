@@ -8,6 +8,7 @@
  */
 import type {
   DshAgents,
+  DshAgent,
   DshCommands,
   DshJobs,
   DshSessions,
@@ -32,5 +33,14 @@ declare module '@deepseek-ai/cordis' {
   interface Events {
     /** Durable session events; see DshSessionEvent. */
     'session/event'(event: DshSessionEvent): void;
+    /**
+     * Waterfall deciding what the model sees; listeners must call next().
+     * @mode waterfall
+     */
+    'agent/pre-step'(
+      agent: DshAgent,
+      input: unknown,
+      next: () => Promise<unknown>,
+    ): Promise<unknown>;
   }
 }

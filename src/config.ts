@@ -28,6 +28,14 @@ export interface Config {
   injectLimit: number;
   /** Minimum cross-session hits before a memory is injected automatically. */
   injectMinHits: number;
+  /** Hard byte budget for the hot-layer projection injected per turn. */
+  injectMaxBytes: number;
+  /** Directories scanned by the background backfill job (DSH session logs). */
+  sessionLogDirs: string[];
+  /** Whether backfill runs on startup; false keeps it manual-only. */
+  backfillEnabled: boolean;
+  /** How backfill/imported candidates write: 'human' commits, 'model' queues. */
+  importCaller: 'human' | 'model';
 }
 
 export function defaultConfig(): Config {
@@ -42,5 +50,9 @@ export function defaultConfig(): Config {
     blacklist: [],
     injectLimit: 8,
     injectMinHits: 1,
+    injectMaxBytes: 2048,
+    sessionLogDirs: [],
+    backfillEnabled: true,
+    importCaller: 'human',
   };
 }
