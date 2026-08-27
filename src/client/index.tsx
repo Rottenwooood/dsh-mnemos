@@ -579,11 +579,28 @@ interface ModelsAnswer {
 }
 
 /** `/mnemos/api/import/preview` answer. */
+interface PreviewFile {
+  path: string
+  source: string
+  messages: number
+  candidates: number
+  duplicates: number
+}
+interface PreviewCandidate {
+  path: string
+  signal: string
+  type: string
+  topic: string
+  summary: string
+  duplicate: { id: string; similarity: number } | null
+}
 interface ImportPreview {
-  files: Array<{ path: string; source: string; messages: number; candidates: number }>
+  files: PreviewFile[]
+  candidates: PreviewCandidate[]
   totalFiles: number
   totalMessages: number
   totalCandidates: number
+  totalDuplicates: number
   errors: string[]
 }
 
@@ -774,10 +791,40 @@ function MnemosImportSection(): ReactNode {
       </div>
       {error !== null ? <p className="mnemos-error">{error}</p> : null}
       {preview !== null && run === null ? (
-        <p className="mnemos-note">
-          扫描到 {preview.totalFiles} 个文件 / {preview.totalMessages} 条消息 / {preview.totalCandidates} 个候选
-          {preview.errors.length > 0 ? `，${preview.errors.length} 个文件失败` : ''}。确认后点"导入"。
-        </p>
+        <>
+          <p className="mnemos-note">
+            扫描到 {preview.totalFiles} 个文件 / {preview.totalMessages} 条消息 / {preview.totalCandidates} 个候选
+            {preview.totalDuplicates > 0 ? `，其中 ${preview.totalDuplicates} 个已存在（导入时跳过）` : ''}
+            {preview.errors.length > 0 ? `，${preview.errors.length} 个文件失败` : ''}。确认后点"导入"。
+          </p>
+          <details style={{ marginTop: 6 }}>
+            <summary className="mnemos-note" style={{ cursor: 'pointer' }}>
+              查看 {preview.files.length} 个文件明细
+            </summary>
+            {preview.files.map((f) => (
+              <div key={f.path} className="mnemos-intro" style={{ margin: '4px 0 0', fontSize: 12 }}>
+                {f.source} · {f.path.split('/').slice(-2).join('/')} — {f.messages} 消息 / {f.candidates} 候选
+                {f.duplicates > 0 ? ` / ${f.duplicates} 已存在` : ''}
+              </div>
+            ))}
+          </details>
+          <div style={{ marginTop: 8 }}>
+            <div className="mnemos-note" style={{ marginBottom: 4 }}>候选明细（灰色 = 已存在，导入跳过）：</div>
+            {preview.candidates.map((c, i) => (
+              <div key={i} style={{ margin: '4px 0 0', fontSize: 12 }}>
+                {c.duplicate !== null ? (
+                  <span className="mnemos-intro" style={{ opacity: 0.5 }}>
+                    [已存在{typeof c.duplicate.similarity === 'number' && c.duplicate.similarity < 1 ? ` ${Math.round(c.duplicate.similarity * 100)}%` : ''}] {c.type} · {c.topic} — {c.summary}
+                  </span>
+                ) : (
+                  <span className="mnemos-intro">
+                    [{c.signal}] {c.type} · {c.topic} — {c.summary}
+                  </span>
+                )}
+              </div>
+            ))}
+          </div>
+        </>
       ) : null}
       {run !== null ? (
         <p className="mnemos-note">

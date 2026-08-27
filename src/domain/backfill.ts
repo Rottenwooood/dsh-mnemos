@@ -99,11 +99,21 @@ export function processImported(
       continue;
     }
     seenHashes.add(key);
+    // Reworded/subset duplicates ("用 pnpm" vs "用 pnpm 安装依赖") escape the
+    // exact-topic gate, and identical statements repeat across forked/resumed
+    // DSH sessions. Containment-similarity dedup keeps the store clean.
+    if (service.findDuplicate(input)) {
+      stats.duplicateSkipped++;
+      continue;
+    }
     const result = service.add(input, opts.caller);
     if (result.outcome === 'committed') {
       stats.committed++;
     } else if (result.outcome === 'proposed') {
       stats.proposed++;
+    } else if (result.reason === 'duplicate') {
+      // An exact- or fuzzy-duplicate write is a skip, not a denied rejection.
+      stats.duplicateSkipped++;
     } else {
       stats.denied++;
     }
@@ -191,6 +201,9 @@ function contentHashOfInput(input: MemoryInput): string {
     .update(`${input.scope}:${input.workspace ?? ''}:${input.type}:${input.topic}`)
     .digest('hex');
 }
+
+/** Exact-content dedup key used by both the import run and the preview. */
+export { contentHashOfInput };
 
 /** Pick an adapter by file name; fall back to heuristic detection on content. */
 function detectSourceFor(path: string): ImportSource {

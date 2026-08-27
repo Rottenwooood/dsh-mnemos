@@ -138,4 +138,39 @@ describe('backfill service', () => {
     expect(stats.committed).toBe(1);
     expect(stats.duplicateSkipped).toBe(1);
   });
+
+  it('skips a subset duplicate ("用 pnpm" vs "用 pnpm 安装依赖") as duplicate', () => {
+    const { service } = make();
+    const backfill = createBackfillService(service, {
+      checkpoint: memoryCheckpoint(),
+      caller: 'human',
+      scope: 'workspace',
+      workspace: 'ws',
+    });
+    const files = [
+      { path: '/a.jsonl', text: JSON.stringify({ type: 'user/message', text: '记住：用 pnpm', index: 0 }) },
+      { path: '/b.jsonl', text: JSON.stringify({ type: 'user/message', text: '记住：用 pnpm 安装依赖', index: 0 }) },
+    ];
+    const stats = backfill.run(files);
+    expect(stats.committed).toBe(1);
+    expect(stats.duplicateSkipped).toBe(1);
+    expect(service.listActive('workspace', 'ws')).toHaveLength(1);
+  });
+
+  it('keeps genuinely different facts as separate memories', () => {
+    const { service } = make();
+    const backfill = createBackfillService(service, {
+      checkpoint: memoryCheckpoint(),
+      caller: 'human',
+      scope: 'workspace',
+      workspace: 'ws',
+    });
+    const files = [
+      { path: '/a.jsonl', text: JSON.stringify({ type: 'user/message', text: '记住：用 pnpm', index: 0 }) },
+      { path: '/b.jsonl', text: JSON.stringify({ type: 'user/message', text: '记住：用 yarn 安装', index: 0 }) },
+    ];
+    const stats = backfill.run(files);
+    expect(stats.committed).toBe(2);
+    expect(service.listActive('workspace', 'ws')).toHaveLength(2);
+  });
 });

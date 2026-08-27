@@ -3,7 +3,7 @@
  * Tables: memories, rules, audit, approval, usage_ledger + an FTS5 external-content index.
  */
 import { DatabaseSync } from 'node:sqlite';
-import { normalizeTopic } from './dedup.js';
+import { normalizeTopic, containmentSimilarity } from './dedup.js';
 import {
   Memory,
   MemoryInput,
@@ -144,6 +144,8 @@ export interface MemoryStore {
   recordHit(id: string, sessionId?: string): void;
   usageStats(days?: number): UsageStats;
   exactTopicExists(m: MemoryInput): boolean;
+  /** Best active memory (same scope/workspace/type) whose summary is bigram-close enough to be a duplicate. */
+  findDuplicate(m: MemoryInput, threshold: number): { id: string; similarity: number } | undefined;
   countActive(): number;
   insertRule(r: Rule): void;
   listRules(state?: RuleState): Rule[];
@@ -423,6 +425,16 @@ export function openMemoryStore(path: string): MemoryStore {
       }>;
       const key = normalizeTopic(m.topic);
       return rows.some((r) => normalizeTopic(String(r.topic)) === key);
+    },
+    findDuplicate(m, threshold) {
+      let best: { id: string; similarity: number } | undefined;
+      for (const row of this.listSummaries(m.scope, m.workspace ?? undefined, 'active', m.type)) {
+        const sim = containmentSimilarity(m.summary, row.summary);
+        if (sim >= threshold && (best === undefined || sim > best.similarity)) {
+          best = { id: row.id, similarity: sim };
+        }
+      }
+      return best;
     },
     countActive() {
       return Number(countActiveStmt.get()?.c ?? 0);

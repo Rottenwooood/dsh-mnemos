@@ -26,8 +26,7 @@ export interface GateConfig {
   sensitivityCheckEnabled: boolean;
 }
 
-export const DEFAULT_GATE: GateConfig = {
-  maxEntries: 5000,
+export const DEFAULT_GATE: GateConfig = {  maxEntries: 5000,
   maxBytesPerEntry: 8192,
   autoApprove: true,
   autoApproveConfidence: 0.9,
@@ -37,6 +36,13 @@ export const DEFAULT_GATE: GateConfig = {
 };
 
 export type WriteOutcome = 'denied' | 'committed' | 'proposed';
+
+/**
+ * Containment-similarity threshold above which a summary counts as a reworded
+ * or subset duplicate ("用 pnpm" vs "用 pnpm 安装依赖"). Used by the import
+ * path's dedup, not the write gate.
+ */
+export const DUPLICATE_SIMILARITY = 0.85;
 
 export interface WriteResult {
   outcome: WriteOutcome;
@@ -139,6 +145,8 @@ export interface MemoryService {
   usageStats(days?: number): ReturnType<MemoryStore['usageStats']>;
   listDeleted(): ReturnType<MemoryStore['listDeleted']>;
   listStale(days: number): string[];
+  /** Best active memory (same scope/workspace/type) whose summary is a containment-duplicate. */
+  findDuplicate(input: MemoryInput): { id: string; similarity: number } | undefined;
   search(query: string, limit?: number): ReturnType<MemoryStore['searchMemories']>;
   listActive(scope?: 'global' | 'workspace', workspace?: string, type?: string): ReturnType<MemoryStore['listSummaries']>;
 }
@@ -446,6 +454,10 @@ export function createMemoryService(
 
     listStale(days) {
       return store.listStale(days);
+    },
+
+    findDuplicate(input) {
+      return store.findDuplicate(input, DUPLICATE_SIMILARITY);
     },
 
     search(query, limit = 10) {

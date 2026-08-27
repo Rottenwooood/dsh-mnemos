@@ -22,7 +22,7 @@ import type { Config } from '../config.js';
 import type { LlmRuntimeLike, LlmTarget } from './llm-adapter.js';
 import { detectSource, parseAny } from '../domain/imports/detect.js';
 import { extractCandidates } from '../domain/extract.js';
-import { processImported } from '../domain/backfill.js';
+import { processImported, contentHashOfInput } from '../domain/backfill.js';
 
 /** Structural face of the node IncomingMessage/ServerResponse the routes use. */
 type Req = IncomingMessage;
@@ -273,25 +273,60 @@ export function createMnemosRouteHandler(deps: MnemosRouteDeps): (req: Req, res:
           json(res, 400, { error: 'dir is required and must be a directory' });
           return;
         }
-        const rows: unknown[] = [];
+        const files: Array<{ path: string; source: string; messages: number; candidates: number; duplicates: number }> = [];
+        const candidates: Array<{
+          path: string;
+          signal: string;
+          type: string;
+          topic: string;
+          summary: string;
+          duplicate: { id: string; similarity: number } | null;
+        }> = [];
         const errors: string[] = [];
+        const seenHashes = new Set<string>();
         let totalMessages = 0;
-        let totalCandidates = 0;
         for (const file of listImportFiles(dir)) {
           try {
             const text = readTranscript(file);
             const source = detectSource(text);
             if (!source) continue;
             const messages = parseAny(text, source);
-            const candidates = extractCandidates(messages, { scope: deps.getConfig().defaultScope }).length;
             totalMessages += messages.length;
-            totalCandidates += candidates;
-            rows.push({ path: file, source, messages: messages.length, candidates });
+            const extracted = extractCandidates(messages, { scope: deps.getConfig().defaultScope });
+            let duplicates = 0;
+            for (const { signal, input } of extracted) {
+              const key = contentHashOfInput(input);
+              let duplicate: { id: string; similarity: number } | null = null;
+              if (seenHashes.has(key)) {
+                duplicate = { id: '(本次导入内重复)', similarity: 1 };
+              } else {
+                seenHashes.add(key);
+                duplicate = deps.service.findDuplicate(input) ?? null;
+              }
+              if (duplicate) duplicates++;
+              candidates.push({
+                path: file,
+                signal,
+                type: input.type,
+                topic: input.topic,
+                summary: input.summary,
+                duplicate,
+              });
+            }
+            files.push({ path: file, source, messages: messages.length, candidates: extracted.length, duplicates });
           } catch {
             errors.push(file);
           }
         }
-        json(res, 200, { files: rows, totalFiles: rows.length, totalMessages, totalCandidates, errors });
+        json(res, 200, {
+          files,
+          candidates,
+          totalFiles: files.length,
+          totalMessages,
+          totalCandidates: candidates.length,
+          totalDuplicates: candidates.filter((c) => c.duplicate !== null).length,
+          errors,
+        });
         return;
       }
       if (method === 'POST' && route === '/import/run') {
