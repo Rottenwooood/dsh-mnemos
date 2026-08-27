@@ -139,6 +139,7 @@ export function registerInjection(
     if (decision.kind === 'reject') return decision;
     payload.signal.throwIfAborted();
     const sessionId = (payload.agent as { session?: { id?: string } })?.session?.id;
+    const cwd = (payload.agent as { session?: { header?: { cwd?: string } } })?.session?.header?.cwd;
     try {
       const config = getConfig();
       if (!config.enabled || !config.injectionEnabled) {
@@ -149,10 +150,12 @@ export function registerInjection(
       if (!userText) {
         return decision;
       }
+      // Candidates = global memories + this workspace's memories (project A's
+      // facts must not inject into project B).
       const injection = recallByKeywords(service, userText, {
         maxBytes: config.injectMaxBytes,
         limit: config.injectLimit,
-        scope: 'workspace',
+        workspace: cwd,
       });
       if (injection.injectedCount > 0) {
         // A memory that actually reached a request counts as used.

@@ -75,43 +75,27 @@ export function buildInjection(ranked: RankedMemory[], maxBytes: number): Inject
 }
 
 /**
- * Hot layer: top memories by cross-session use, no query. Usually injected
- * every turn, so it stays small and cheap.
- */
-export function recallHot(
-  service: MemoryService,
-  opts: { maxBytes?: number; limit?: number; scope?: MemoryScope; minHits?: number } = {},
-): Injection {
-  const maxBytes = opts.maxBytes ?? 2048;
-  const limit = opts.limit ?? 20;
-  const minHits = opts.minHits ?? 0;
-  const rows = service
-    .listActive(opts.scope)
-    .filter((r) => r.crossSessionHits >= minHits)
-    .sort((a, b) => {
-      const hits = b.crossSessionHits - a.crossSessionHits;
-      return hits !== 0 ? hits : b.updatedAt.localeCompare(a.updatedAt);
-    })
-    .slice(0, limit);
-  return buildInjection(rows.map((r) => toRanked(r, r.crossSessionHits)), maxBytes);
-}
-
-/**
  * Keyword-triggered recall (the injection path): scan session text for each
- * active memory's keywords and inject the ones that hit. Memories without
- * keywords fall back to their topic. Matching is a case-insensitive substring
- * on terms of length >= 2, so it stays low-frequency and deterministic.
+ * candidate memory's keywords and inject the ones that hit. Candidates are the
+ * memories that apply to this session: global ones plus workspace-scoped ones
+ * of the session's own cwd (so project A's memories never inject into project
+ * B). Memories without keywords fall back to their topic. Matching is a
+ * case-insensitive substring on terms of length >= 2.
  */
 export function recallByKeywords(
   service: MemoryService,
   text: string,
-  opts: { maxBytes?: number; limit?: number; scope?: MemoryScope } = {},
+  opts: { maxBytes?: number; limit?: number; workspace?: string } = {},
 ): Injection {
   const maxBytes = opts.maxBytes ?? 2048;
   const limit = opts.limit ?? 8;
+  const candidates = [
+    ...service.listActive('global'),
+    ...service.listActive('workspace', opts.workspace),
+  ];
   const lower = text.toLowerCase();
   const matched: RankedMemory[] = [];
-  for (const row of service.listActive(opts.scope)) {
+  for (const row of candidates) {
     const terms = row.keywords.length > 0 ? row.keywords : [row.topic];
     const hit = terms.some((k) => k.trim().length >= 2 && lower.includes(k.trim().toLowerCase()));
     if (hit) {

@@ -60,6 +60,20 @@ describe('memory service write path', () => {
     expect(res.outcome).toBe('proposed');
   });
 
+  it('lets the model write a global preference without allowModelGlobalWrite (user-level)', () => {
+    const { service } = makeService();
+    const res = service.add(input({ writer: 'model', scope: 'global', type: 'preference', confidence: 0.9 }), 'model');
+    expect(res.outcome).not.toBe('denied');
+    expect(res.outcome).toBe('proposed');
+  });
+
+  it('still denies a model global non-preference write without allowModelGlobalWrite', () => {
+    const { service } = makeService();
+    const res = service.add(input({ writer: 'model', scope: 'global', type: 'project_fact', confidence: 1 }), 'model');
+    expect(res.outcome).toBe('denied');
+    expect(res.reason).toBe('scope');
+  });
+
   it('denies a model global write when policy forbids it', () => {
     const { service } = makeService({ allowModelGlobalWrite: false, autoApprove: false });
     const res = service.add(input({ writer: 'model', scope: 'global', confidence: 1 }), 'model');

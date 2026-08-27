@@ -2,7 +2,7 @@ import { describe, it, expect } from 'vitest';
 import { openMemoryStore } from '../domain/store.js';
 import { createSensitiveDetector } from '../domain/sensitive.js';
 import { createMemoryService, rrfFuse } from '../domain/service.js';
-import { buildInjection, recallHot, recallQuery, RankedMemory } from '../domain/recall.js';
+import { buildInjection, recallByKeywords, recallQuery, RankedMemory } from '../domain/recall.js';
 
 function ranked(partial: Partial<RankedMemory> = {}): RankedMemory {
   return {
@@ -68,13 +68,6 @@ function serviceWith(opts: { hits?: number[]; summaries?: string[] } = {}) {
 }
 
 describe('layered recall', () => {
-  it('recallHot ranks frequently-used memories first', () => {
-    const service = serviceWith({ hits: [5, 1] });
-    const inj = recallHot(service, { maxBytes: 4096 });
-    expect(inj.injectedCount).toBe(2);
-    expect(inj.text.indexOf('fact 0')).toBeLessThan(inj.text.indexOf('fact 1'));
-  });
-
   it('recallQuery returns the matching memory', () => {
     const service = serviceWith({
       hits: [0],
@@ -104,5 +97,23 @@ describe('layered recall', () => {
     const res = service.search('pnpm', 10);
     expect(res.length).toBe(2);
     expect(res.every((r) => r.summary.includes('pnpm'))).toBe(true);
+  });
+
+  it('keyword recall covers global memories plus only the session workspace', () => {
+    const store = openMemoryStore(':memory:');
+    const service = createMemoryService(store, createSensitiveDetector());
+    const add = (m: Parameters<typeof service.add>[0]) => service.add(m, 'human');
+    add({ type: 'preference', scope: 'global', topic: 'uv', summary: 'User prefers uv.', keywords: ['uv'], evidence: [], confidence: 1, source: 'manual', writer: 'human' });
+    add({ type: 'project_fact', scope: 'workspace', workspace: '/projA', topic: 'pnpm', summary: 'projA uses pnpm.', keywords: ['pnpm'], evidence: [], confidence: 1, source: 'manual', writer: 'human' });
+    add({ type: 'project_fact', scope: 'workspace', workspace: '/projB', topic: 'yarn', summary: 'projB uses yarn.', keywords: ['yarn'], evidence: [], confidence: 1, source: 'manual', writer: 'human' });
+
+    // Global memory injects regardless of workspace.
+    expect(recallByKeywords(service, 'using uv', { workspace: '/projA' }).text).toContain('uv');
+    // Project A memory injects in project A.
+    expect(recallByKeywords(service, 'install with pnpm', { workspace: '/projA' }).text).toContain('projA uses pnpm');
+    // Project B memory does NOT inject in project A.
+    expect(recallByKeywords(service, 'install with yarn', { workspace: '/projA' }).text).not.toContain('yarn');
+    // Project B memory injects in project B.
+    expect(recallByKeywords(service, 'install with yarn', { workspace: '/projB' }).text).toContain('projB uses yarn');
   });
 });

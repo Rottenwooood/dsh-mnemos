@@ -205,7 +205,16 @@ export function createMemoryService(
     if (current.blacklist.includes(input.writer)) {
       return { ok: false, reason: 'blacklisted' };
     }
-    if (caller === 'model' && input.scope === 'global' && !current.allowModelGlobalWrite) {
+    // Preferences are user-level by design and default to global scope (both
+    // the distill path and memory_record agree), so the model may write global
+    // preferences even when allowModelGlobalWrite is off. Other global types
+    // (facts/protocols) still need that flag.
+    if (
+      caller === 'model' &&
+      input.scope === 'global' &&
+      input.type !== 'preference' &&
+      !current.allowModelGlobalWrite
+    ) {
       return { ok: false, reason: 'scope' };
     }
     if (!opts.skipDedup && store.exactTopicExists(input)) {
