@@ -97,6 +97,32 @@ export function recallHot(
 }
 
 /**
+ * Keyword-triggered recall (the injection path): scan session text for each
+ * active memory's keywords and inject the ones that hit. Memories without
+ * keywords fall back to their topic. Matching is a case-insensitive substring
+ * on terms of length >= 2, so it stays low-frequency and deterministic.
+ */
+export function recallByKeywords(
+  service: MemoryService,
+  text: string,
+  opts: { maxBytes?: number; limit?: number; scope?: MemoryScope } = {},
+): Injection {
+  const maxBytes = opts.maxBytes ?? 2048;
+  const limit = opts.limit ?? 8;
+  const lower = text.toLowerCase();
+  const matched: RankedMemory[] = [];
+  for (const row of service.listActive(opts.scope)) {
+    const terms = row.keywords.length > 0 ? row.keywords : [row.topic];
+    const hit = terms.some((k) => k.trim().length >= 2 && lower.includes(k.trim().toLowerCase()));
+    if (hit) {
+      matched.push(toRanked(row, matched.length));
+    }
+  }
+  matched.sort((a, b) => b.crossSessionHits - a.crossSessionHits);
+  return buildInjection(matched.slice(0, limit), maxBytes);
+}
+
+/**
  * Warm/cold layer: search then rank, fit the budget. Ranking is the shared
  * hybrid search in MemoryService — reciprocal rank fusion of the store's FTS5
  * BM25 (or LIKE) ranking with a bigram-Jaccard ranking (dsh-evolve's zero-token

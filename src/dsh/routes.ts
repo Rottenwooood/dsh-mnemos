@@ -21,8 +21,8 @@ import type { GitStore } from '../domain/gitstore.js';
 import type { Config } from '../config.js';
 import type { LlmRuntimeLike, LlmTarget } from './llm-adapter.js';
 import { detectSource, parseAny } from '../domain/imports/detect.js';
-import { extractCandidates } from '../domain/extract.js';
-import { processImported, contentHashOfInput } from '../domain/backfill.js';
+import { processImported } from '../domain/backfill.js';
+import type { SignalCollector } from './hooks.js';
 
 /** Structural face of the node IncomingMessage/ServerResponse the routes use. */
 type Req = IncomingMessage;
@@ -34,6 +34,8 @@ export interface MnemosRouteDeps {
   store: MemoryStore;
   service: MemoryService;
   gitStore?: GitStore;
+  /** Distill buffer; import ingests parsed transcripts here (memory generation is LLM distillation, never regex). */
+  collector?: SignalCollector;
   /** Manual distillation trigger ("现在提炼"); null when no LLM adapter is mounted. */
   runDistillNow: () => Promise<{ memories: number; rules: number; conflicts: number } | null>;
   /** The harness llm service (optional; absent in llm-less profiles). */
@@ -184,6 +186,36 @@ export function createMnemosRouteHandler(deps: MnemosRouteDeps): (req: Req, res:
         json(res, 200, { query: q, hits });
         return;
       }
+      if (method === 'POST' && route === '/memory/add') {
+        const body = await readJson(req);
+        const topic = typeof body.topic === 'string' ? body.topic : '';
+        const summary = typeof body.summary === 'string' ? body.summary : '';
+        if (!topic || !summary) {
+          json(res, 400, { ok: false, reason: 'topic and summary are required' });
+          return;
+        }
+        const result = deps.service.add(
+          {
+            type: (typeof body.type === 'string' && ['project_fact', 'procedure', 'preference', 'error_fix', 'decision'].includes(body.type) ? body.type : 'project_fact') as MemoryInput['type'],
+            scope: body.scope === 'global' ? 'global' : 'workspace',
+            topic,
+            summary,
+            detail: typeof body.detail === 'string' ? body.detail : undefined,
+            keywords: Array.isArray(body.keywords) ? (body.keywords as unknown[]).filter((k): k is string => typeof k === 'string') : undefined,
+            evidence: [],
+            confidence: typeof body.confidence === 'number' ? body.confidence : 0.9,
+            source: 'manual',
+            writer: 'human',
+          },
+          'human',
+        );
+        json(res, 200, {
+          outcome: result.outcome,
+          memoryId: result.memory?.id ?? null,
+          approvalId: result.approvalId ?? null,
+        });
+        return;
+      }
       if (method === 'POST' && route === '/memory/delete') {
         const body = await readJson(req);
         const id = typeof body.id === 'string' ? body.id : '';
@@ -273,17 +305,9 @@ export function createMnemosRouteHandler(deps: MnemosRouteDeps): (req: Req, res:
           json(res, 400, { error: 'dir is required and must be a directory' });
           return;
         }
-        const files: Array<{ path: string; source: string; messages: number; candidates: number; duplicates: number }> = [];
-        const candidates: Array<{
-          path: string;
-          signal: string;
-          type: string;
-          topic: string;
-          summary: string;
-          duplicate: { id: string; similarity: number } | null;
-        }> = [];
+        const files: Array<{ path: string; source: string; messages: number }> = [];
+        const samples: Array<{ path: string; role: string; text: string }> = [];
         const errors: string[] = [];
-        const seenHashes = new Set<string>();
         let totalMessages = 0;
         for (const file of listImportFiles(dir)) {
           try {
@@ -292,39 +316,20 @@ export function createMnemosRouteHandler(deps: MnemosRouteDeps): (req: Req, res:
             if (!source) continue;
             const messages = parseAny(text, source);
             totalMessages += messages.length;
-            const extracted = extractCandidates(messages, { scope: deps.getConfig().defaultScope });
-            let duplicates = 0;
-            for (const { signal, input } of extracted) {
-              const key = contentHashOfInput(input);
-              let duplicate: { id: string; similarity: number } | null = null;
-              if (seenHashes.has(key)) {
-                duplicate = { id: '(本次导入内重复)', similarity: 1 };
-              } else {
-                seenHashes.add(key);
-                duplicate = deps.service.findDuplicate(input) ?? null;
-              }
-              if (duplicate) duplicates++;
-              candidates.push({
-                path: file,
-                signal,
-                type: input.type,
-                topic: input.topic,
-                summary: input.summary,
-                duplicate,
-              });
+            files.push({ path: file, source, messages: messages.length });
+            for (const m of messages.slice(0, 5)) {
+              samples.push({ path: file, role: m.role, text: m.text.slice(0, 200) });
             }
-            files.push({ path: file, source, messages: messages.length, candidates: extracted.length, duplicates });
           } catch {
             errors.push(file);
           }
         }
         json(res, 200, {
           files,
-          candidates,
+          samples,
           totalFiles: files.length,
           totalMessages,
-          totalCandidates: candidates.length,
-          totalDuplicates: candidates.filter((c) => c.duplicate !== null).length,
+          totalSamples: samples.length,
           errors,
         });
         return;
@@ -337,14 +342,12 @@ export function createMnemosRouteHandler(deps: MnemosRouteDeps): (req: Req, res:
           return;
         }
         const config = deps.getConfig();
-        const stats = {
-          parsedMessages: 0,
-          candidates: 0,
-          committed: 0,
-          proposed: 0,
-          denied: 0,
-          duplicateSkipped: 0,
-        };
+        const sink = deps.collector;
+        if (!sink) {
+          json(res, 500, { error: 'distill buffer unavailable' });
+          return;
+        }
+        let ingested = 0;
         const errors: string[] = [];
         for (const file of listImportFiles(dir)) {
           try {
@@ -352,21 +355,20 @@ export function createMnemosRouteHandler(deps: MnemosRouteDeps): (req: Req, res:
             const source = detectSource(text);
             if (!source) continue;
             const messages = parseAny(text, source);
-            const s = processImported(deps.service, messages, {
+            const s = processImported(sink, messages, {
               caller: config.importCaller,
               scope: config.defaultScope,
             });
-            stats.parsedMessages += s.parsedMessages;
-            stats.candidates += s.candidates;
-            stats.committed += s.committed;
-            stats.proposed += s.proposed;
-            stats.denied += s.denied;
-            stats.duplicateSkipped += s.duplicateSkipped;
+            ingested += s.parsedMessages;
           } catch {
             errors.push(file);
           }
         }
-        json(res, 200, { ...stats, errors });
+        json(res, 200, {
+          ingested,
+          hint: '消息已加入提炼缓冲，点"现在提炼"生成记忆',
+          errors,
+        });
         return;
       }
       if (method === 'POST' && route === '/approve') {

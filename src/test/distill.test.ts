@@ -55,7 +55,7 @@ describe('distill runner', () => {
     const { service } = make();
     const llm = fakeLlm(() =>
       JSON.stringify([
-        { type: 'project_fact', topic: 'build tool', summary: 'The project builds with pnpm.', confidence: 0.95 },
+        { type: 'project_fact', topic: 'build tool', summary: 'The project builds with pnpm.', confidence: 0.95, keywords: ['pnpm', 'install'] },
         { type: 'procedure', topic: 'release', summary: 'Run typecheck then tests before release.', confidence: 0.8 },
       ]),
     );
@@ -68,6 +68,8 @@ describe('distill runner', () => {
     expect(stats.rules).toBe(1);
     expect(stats.dropped).toBe(0);
     expect(service.listActive('workspace', 'ws')).toHaveLength(1);
+    const stored = service.listActive('workspace', 'ws')[0]!;
+    expect(stored.keywords).toEqual(['pnpm', 'install']);
     expect(service.listRules('proposed')).toHaveLength(1);
   });
 

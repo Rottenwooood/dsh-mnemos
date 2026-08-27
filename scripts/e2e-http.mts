@@ -98,21 +98,28 @@ async function main(): Promise<void> {
     expect(Array.isArray(cleanup.json.ids), 'cleanup ids not array')
   })
 
-  // ---- import flow (creates a real memory we reuse for edit/git) ----
-  let importedId = ''
-  await check('import preview + run', async () => {
+  // ---- import flow (ingests a transcript into the distill buffer) ----
+  await check('import preview + run ingests', async () => {
     const preview = await api(`/import/preview?dir=${encodeURIComponent(FIXTURE)}`)
-    expect(preview.json.totalFiles >= 1, `preview found no files: ${JSON.stringify(preview.json)}`)
+    expect(preview.json.totalFiles >= 1 && preview.json.totalMessages >= 1, `preview found no messages: ${JSON.stringify(preview.json)}`)
     const run = await api('/import/run', { method: 'POST', body: { dir: FIXTURE } })
-    expect(run.json.committed >= 1, `import committed 0: ${JSON.stringify(run.json)}`)
+    expect(run.json.ingested >= 1, `import ingested 0: ${JSON.stringify(run.json)}`)
+    // The imported messages landed in the distill buffer, not the store.
     const memories = (await api('/memories?scope=workspace&type=')).json.memories as Array<{ topic: string; id: string }>
-    const mine = memories.find((m) => m.topic.includes('pnpm') || m.topic.includes('remember'))
-    expect(mine !== undefined, 'imported memory not visible in list')
-    importedId = mine!.id
+    const before = await api('/stats')
+    const _ = memories
+    void before
   })
 
   // ---- edit flow (bumps git revision) ----
-  await check('memory edit', async () => {
+  let importedId = ''
+  await check('memory add then edit (goes through the gate, commits to git)', async () => {
+    const added = await api('/memory/add', {
+      method: 'POST',
+      body: { topic: 'e2e add test', summary: 'Created via the add endpoint.', keywords: ['e2e-add'] },
+    })
+    expect(added.json.memoryId !== null, `add failed: ${JSON.stringify(added.json)}`)
+    importedId = added.json.memoryId as string
     const res = await api('/memory/edit', { method: 'POST', body: { id: importedId, summary: 'edited e2e summary' } })
     expect(res.json.ok === true, `edit failed: ${JSON.stringify(res.json)}`)
   })

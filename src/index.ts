@@ -58,7 +58,7 @@ function listJsonlFiles(dir: string): string[] {
   return out;
 }
 
-export function registerBackfillJob(ctx: Context, service: MemoryService, getConfig: () => Config): void {
+export function registerBackfillJob(ctx: Context, collector: SignalCollector, getConfig: () => Config): void {
   const logger = ctx.logger('mnemos');
   let stopped = false;
   ctx.effect(() => {
@@ -69,10 +69,8 @@ export function registerBackfillJob(ctx: Context, service: MemoryService, getCon
           return;
         }
         const checkpointPath = join(dirname(config.dbPath), 'backfill-checkpoint.json');
-        const backfill = createBackfillService(service, {
+        const backfill = createBackfillService(collector, {
           checkpoint: createFileCheckpoint(checkpointPath),
-          caller: config.importCaller,
-          scope: config.defaultScope,
           incremental: true,
         });
         for (const dir of config.sessionLogDirs) {
@@ -89,7 +87,7 @@ export function registerBackfillJob(ctx: Context, service: MemoryService, getCon
         backfill.saveCheckpoint();
         logger.info(
           `backfill: scanned ${backfill.stats.scannedFiles} file(s), ` +
-            `${backfill.stats.committed} committed, ${backfill.stats.proposed} proposed, ${backfill.stats.denied} denied`,
+            `${backfill.stats.parsedMessages} messages ingested into the distill buffer`,
         );
       } catch (err) {
         logger.warn(`backfill failed: ${err instanceof Error ? err.message : String(err)}`);
@@ -98,35 +96,6 @@ export function registerBackfillJob(ctx: Context, service: MemoryService, getCon
     return () => {
       stopped = true;
     };
-  });
-}
-
-export function registerScheduledDistill(
-  ctx: Context,
-  deps: { llm: Llm; service: MemoryService; getConfig: () => Config; collector: SignalCollector },
-): void {
-  const { llm, service, getConfig, collector } = deps;
-  const logger = ctx.logger('mnemos');
-  const cursorStore = createJsonFileStore<DistillCursor>(join(dirname(getConfig().dbPath), 'distill-cursor.json'));
-  let cursor = cursorStore.read();
-  const run = async (): Promise<void> => {
-    const config = getConfig();
-    const messages = collector.drain();
-    if (messages.length === 0) {
-      return;
-    }
-    const result = await runDistillIncremental(llm, service, messages, cursor, {
-      scope: getConfig().defaultScope,
-    });
-    cursor = result.cursor;
-    cursorStore.write(cursor);
-    logger.info(
-      `distill: ${result.stats.memories} memory, ${result.stats.rules} rule, ${result.stats.conflicts} conflict`,
-    );
-  };
-  ctx.effect(() => {
-    const id = setInterval(run, getConfig().distillIntervalMinutes * 60_000);
-    return () => clearInterval(id);
   });
 }
 
@@ -177,10 +146,6 @@ export function apply(ctx: Context, raw: Partial<Config> = {}): void {
 
   let gitStore: GitStore | undefined;
   let gitCommitTimer: ReturnType<typeof setTimeout> | undefined;
-  // Bumped on every write through the service; the frozen per-session injection
-  // re-injects on the next step when this changes (a newly written or approved
-  // memory shows up mid-session instead of waiting for the next session).
-  let storeRevision = 0;
   const scheduleGitCommit = (): void => {
     if (gitStore === undefined) return;
     if (gitCommitTimer !== undefined) clearTimeout(gitCommitTimer);
@@ -194,11 +159,7 @@ export function apply(ctx: Context, raw: Partial<Config> = {}): void {
 
   mkdirSync(dirname(config.dbPath), { recursive: true });
   const store = openMemoryStore(config.dbPath);
-  const onStoreWrite = (): void => {
-    storeRevision += 1;
-    scheduleGitCommit();
-  };
-  const service = createMemoryService(store, createSensitiveDetector(), gateFrom(config), onStoreWrite);
+  const service = createMemoryService(store, createSensitiveDetector(), gateFrom(config), scheduleGitCommit);
 
   ctx.effect(() => () => {
     store.close();
@@ -263,10 +224,26 @@ export function apply(ctx: Context, raw: Partial<Config> = {}): void {
     system:
       'You are dsh-mnemos, extracting durable cross-session memories and rules from a conversation. Return only the requested JSON.',
   });
-  const collector = new SignalCollector((message) => logger.debug(message), config.distillWindow);
   const cursorStore = createJsonFileStore<DistillCursor>(join(dirname(config.dbPath), 'distill-cursor.json'));
-  let distillCursor = cursorStore.read();
-  const runDistillNow = async (): Promise<{ memories: number; rules: number; conflicts: number } | null> => {
+  const distillCursor: { current: DistillCursor } = { current: cursorStore.read() };
+
+  let runDistillNow: () => Promise<{ memories: number; rules: number; conflicts: number } | null>;
+  // Count-based auto-distill: every N live user messages, when distillAuto is on.
+  const collector = new SignalCollector(
+    (message) => logger.debug(message),
+    config.distillWindow,
+    (count) => {
+      const cfg = getConfig();
+      if (!cfg.enabled || !cfg.distillAuto || !llm) {
+        return;
+      }
+      if (count % Math.max(1, cfg.distillEveryNTurns) !== 0) {
+        return;
+      }
+      void runDistillNow().catch(() => {});
+    },
+  );
+  runDistillNow = async (): Promise<{ memories: number; rules: number; conflicts: number } | null> => {
     const cfg = getConfig();
     if (!cfg.enabled) {
       collector.drain();
@@ -280,11 +257,11 @@ export function apply(ctx: Context, raw: Partial<Config> = {}): void {
       return null;
     }
     try {
-      const result = await runDistillIncremental(llm, service, messages, distillCursor, {
+      const result = await runDistillIncremental(llm, service, messages, distillCursor.current, {
         scope: cfg.defaultScope,
       });
-      distillCursor = result.cursor;
-      cursorStore.write(distillCursor);
+      distillCursor.current = result.cursor;
+      cursorStore.write(distillCursor.current);
       return {
         memories: result.stats.memories,
         rules: result.stats.rules,
@@ -303,27 +280,28 @@ export function apply(ctx: Context, raw: Partial<Config> = {}): void {
     bus,
     gitStore,
     distillCursor,
-    persistCursor: (c) => cursorStore.write(c),
+    persistCursor: (c) => {
+      distillCursor.current = c;
+      cursorStore.write(c);
+    },
   };
 
-  registerTools(ctx, service);
+  registerTools(ctx, { service, llm, collector, cursor: distillCursor, persistCursor: (c) => cursorStore.write(c) });
   registerCommand(ctx, commandDeps);
   registerHooks(ctx, collector);
-  registerInjection(ctx, service, getConfig, () => storeRevision);
-  registerRuleInjection(ctx, service, getConfig, () => storeRevision);
-  registerBackfillJob(ctx, service, getConfig);
+  registerInjection(ctx, service, getConfig);
+  registerRuleInjection(ctx, service, getConfig, () => 0);
+  registerBackfillJob(ctx, collector, getConfig);
   registerMnemosRoutes(ctx, {
     store,
     service,
     gitStore,
+    collector,
     runDistillNow,
     getConfig,
     llm: (ctx as unknown as { get(name: string): unknown }).get('llm') as import('./dsh/llm-adapter.js').LlmRuntimeLike | undefined,
     resolveModel: resolveLlmTarget,
   });
-  if (config.distillAuto && llm) {
-    registerScheduledDistill(ctx, { llm, service, getConfig, collector });
-  }
 
   logger.info(`dsh-mnemos ready at ${config.dbPath}`);
 }

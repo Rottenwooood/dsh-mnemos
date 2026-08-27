@@ -3,7 +3,7 @@
  * Tables: memories, rules, audit, approval, usage_ledger + an FTS5 external-content index.
  */
 import { DatabaseSync } from 'node:sqlite';
-import { normalizeTopic, containmentSimilarity } from './dedup.js';
+import { normalizeTopic } from './dedup.js';
 import {
   Memory,
   MemoryInput,
@@ -34,6 +34,7 @@ CREATE TABLE IF NOT EXISTS memories (
   writer TEXT NOT NULL,
   created_at TEXT NOT NULL,
   updated_at TEXT NOT NULL,
+  keywords TEXT,
   cross_session_hits INTEGER NOT NULL DEFAULT 0,
   status TEXT NOT NULL DEFAULT 'active'
 );
@@ -126,6 +127,7 @@ export interface SummaryRow {
   scope: MemoryScope;
   workspace: string | null;
   topic: string;
+  keywords: string[];
   crossSessionHits: number;
   updatedAt: string;
   status: MemoryStatus;
@@ -144,8 +146,6 @@ export interface MemoryStore {
   recordHit(id: string, sessionId?: string): void;
   usageStats(days?: number): UsageStats;
   exactTopicExists(m: MemoryInput): boolean;
-  /** Best active memory (same scope/workspace/type) whose summary is bigram-close enough to be a duplicate. */
-  findDuplicate(m: MemoryInput, threshold: number): { id: string; similarity: number } | undefined;
   countActive(): number;
   insertRule(r: Rule): void;
   listRules(state?: RuleState): Rule[];
@@ -163,6 +163,18 @@ export interface MemoryStore {
   listBlacklist(): Array<{ name: string; reason?: string; blockedAt: string }>;
 }
 
+function parseKeywords(raw: unknown): string[] {
+  if (typeof raw !== 'string' || raw.length === 0) {
+    return [];
+  }
+  try {
+    const parsed = JSON.parse(raw) as unknown;
+    return Array.isArray(parsed) ? parsed.filter((k): k is string => typeof k === 'string') : [];
+  } catch {
+    return [];
+  }
+}
+
 function toMemory(row: Record<string, unknown>): Memory {
   return {
     id: String(row.id),
@@ -172,6 +184,7 @@ function toMemory(row: Record<string, unknown>): Memory {
     topic: String(row.topic),
     summary: String(row.summary),
     detail: (row.detail as string | null) ?? undefined,
+    keywords: parseKeywords(row.keywords),
     evidence: JSON.parse(String(row.evidence)),
     confidence: Number(row.confidence),
     source: row.source as Memory['source'],
@@ -191,6 +204,7 @@ function toSummary(row: Record<string, unknown>): SummaryRow {
     scope: row.scope as MemoryScope,
     workspace: (row.workspace as string | null) ?? null,
     topic: String(row.topic),
+    keywords: parseKeywords(row.keywords),
     crossSessionHits: Number(row.cross_session_hits),
     updatedAt: String(row.updated_at),
     status: row.status as MemoryStatus,
@@ -211,6 +225,11 @@ export function openMemoryStore(path: string): MemoryStore {
   const db = new DatabaseSync(path);
   db.exec('PRAGMA journal_mode = WAL;');
   db.exec(SCHEMA);
+  // Migration: older stores lack the keywords column; add it idempotently.
+  const cols = db.prepare('PRAGMA table_info(memories)').all() as Array<{ name: string }>;
+  if (!cols.some((c) => c.name === 'keywords')) {
+    db.exec('ALTER TABLE memories ADD COLUMN keywords TEXT');
+  }
   const userVersion = Number(db.prepare('PRAGMA user_version;').get()?.user_version ?? 0);
   if (userVersion !== SCHEMA_VERSION) {
     throw new Error(
@@ -220,18 +239,18 @@ export function openMemoryStore(path: string): MemoryStore {
 
   const insMemory = db.prepare(
     `INSERT INTO memories
-       (id, type, scope, workspace, topic, summary, detail, evidence, confidence, source, writer, created_at, updated_at, cross_session_hits, status)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, 'active')`,
+       (id, type, scope, workspace, topic, summary, detail, evidence, confidence, source, writer, created_at, updated_at, keywords, cross_session_hits, status)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, 'active')`,
   );
   const getMemoryStmt = db.prepare('SELECT * FROM memories WHERE id = ?');
   const listStmt = db.prepare(
-    `SELECT id, summary, type, scope, workspace, topic, updated_at, cross_session_hits, status
+    `SELECT id, summary, type, scope, workspace, topic, keywords, updated_at, cross_session_hits, status
        FROM memories
       WHERE (? IS NULL OR status IS ?) AND (? IS NULL OR scope IS ?) AND (? IS NULL OR workspace IS ?) AND (? IS NULL OR type IS ?)
       ORDER BY updated_at DESC`,
   );
   const listDeletedStmt = db.prepare(
-    `SELECT id, summary, type, scope, workspace, topic, updated_at, cross_session_hits, status
+    `SELECT id, summary, type, scope, workspace, topic, keywords, updated_at, cross_session_hits, status
        FROM memories WHERE status='deleted'
       ORDER BY updated_at DESC`,
   );
@@ -241,18 +260,18 @@ export function openMemoryStore(path: string): MemoryStore {
         AND NOT EXISTS (SELECT 1 FROM usage_ledger u WHERE u.memory_id = m.id AND u.ts >= ?)`,
   );
   const searchFtsStmt = db.prepare(
-    `SELECT m.id, m.summary, m.type, m.scope, m.workspace, m.topic, m.updated_at, m.cross_session_hits, m.status
+    `SELECT m.id, m.summary, m.type, m.scope, m.workspace, m.topic, m.keywords, m.updated_at, m.cross_session_hits, m.status
        FROM memory_fts f JOIN memories m ON m.rowid = f.rowid
       WHERE memory_fts MATCH ? AND m.status = 'active'
       ORDER BY rank LIMIT ?`,
   );
   const searchLikeStmt = db.prepare(
-    `SELECT id, summary, type, scope, workspace, topic, updated_at, cross_session_hits, status
+    `SELECT id, summary, type, scope, workspace, topic, keywords, updated_at, cross_session_hits, status
        FROM memories WHERE status='active' AND (summary LIKE ? OR topic LIKE ?)
        ORDER BY updated_at DESC LIMIT ?`,
   );
   const updateMem = db.prepare(
-    `UPDATE memories SET summary=?, detail=?, topic=?, updated_at=?, type=?, scope=?, workspace=?, confidence=?, evidence=?
+    `UPDATE memories SET summary=?, detail=?, topic=?, updated_at=?, type=?, scope=?, workspace=?, confidence=?, evidence=?, keywords=?
       WHERE id=?`,
   );
   const setStatus = db.prepare('UPDATE memories SET status=?, updated_at=? WHERE id=?');
@@ -289,7 +308,7 @@ export function openMemoryStore(path: string): MemoryStore {
   const listAuditStmt = db.prepare('SELECT * FROM audit ORDER BY id DESC LIMIT ?');
 
   const listByWriterStmt = db.prepare(
-    `SELECT id, summary, type, scope, workspace, topic, updated_at, cross_session_hits, status
+    `SELECT id, summary, type, scope, workspace, topic, keywords, updated_at, cross_session_hits, status
        FROM memories WHERE writer LIKE ? AND status='active' ORDER BY updated_at DESC`,
   );
   const blacklistGet = db.prepare('SELECT 1 FROM bus_blacklist WHERE name = ? LIMIT 1');
@@ -328,6 +347,7 @@ export function openMemoryStore(path: string): MemoryStore {
         m.writer,
         m.createdAt,
         m.updatedAt,
+        m.keywords && m.keywords.length > 0 ? JSON.stringify(m.keywords) : null,
       );
     },
     getMemory(id) {
@@ -388,6 +408,11 @@ export function openMemoryStore(path: string): MemoryStore {
         patch.workspace ?? existing.workspace ?? null,
         patch.confidence ?? existing.confidence,
         JSON.stringify(patch.evidence ?? existing.evidence),
+        patch.keywords !== undefined
+          ? JSON.stringify(patch.keywords)
+          : existing.keywords && existing.keywords.length > 0
+            ? JSON.stringify(existing.keywords)
+            : null,
         id,
       );
     },
@@ -425,16 +450,6 @@ export function openMemoryStore(path: string): MemoryStore {
       }>;
       const key = normalizeTopic(m.topic);
       return rows.some((r) => normalizeTopic(String(r.topic)) === key);
-    },
-    findDuplicate(m, threshold) {
-      let best: { id: string; similarity: number } | undefined;
-      for (const row of this.listSummaries(m.scope, m.workspace ?? undefined, 'active', m.type)) {
-        const sim = containmentSimilarity(m.summary, row.summary);
-        if (sim >= threshold && (best === undefined || sim > best.similarity)) {
-          best = { id: row.id, similarity: sim };
-        }
-      }
-      return best;
     },
     countActive() {
       return Number(countActiveStmt.get()?.c ?? 0);

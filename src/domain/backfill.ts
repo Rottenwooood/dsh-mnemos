@@ -1,22 +1,23 @@
 /**
- * Session-log backfill (M1): incremental, resumable, content-hash dedup.
+ * Session-log backfill / import (M1): incremental, resumable, no heuristics.
  *
  * A backfill run walks session-log files, parses each with the matching
- * adapter, extracts candidate memories, and routes them through the same
- * approval gate as every other write. A per-file byte checkpoint makes runs
- * resumable: a file is re-parsed only from its last recorded offset, so old
- * sessions are processed once and updated sessions only process their tail.
- * Cross-run dedup is the gate's own exact-topic check plus a per-run content
- * hash guard.
+ * adapter, and INGESTS the messages into the distill buffer — memory
+ * generation is the LLM distillation pipeline's job (manual tool call or
+ * every-N-user-inputs auto run), never a regex. A per-file byte checkpoint
+ * makes runs resumable: a file is re-parsed only from its last recorded
+ * offset.
  */
-import { MemoryService } from './service.js';
-import { MemoryInput, MemoryScope } from './types.js';
 import { ImportedMessage, ImportSource } from './imports/types.js';
+import { MemoryScope } from './types.js';
 import { parseAny } from './imports/detect.js';
-import { extractCandidates } from './extract.js';
-import { createHash } from 'node:crypto';
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname } from 'node:path';
+
+/** Anything that can accept transcript messages into the distill buffer. */
+export interface MessageSink {
+  ingest(messages: ImportedMessage[]): void;
+}
 
 export interface Checkpoint {
   [file: string]: { bytes: number };
@@ -55,11 +56,6 @@ export function createFileCheckpoint(path: string): CheckpointStore {
 
 export interface ImportStats {
   parsedMessages: number;
-  candidates: number;
-  committed: number;
-  proposed: number;
-  denied: number;
-  duplicateSkipped: number;
 }
 
 export interface ImportOptions {
@@ -69,60 +65,22 @@ export interface ImportOptions {
 }
 
 /**
- * Extract + gate a normalized message stream. Shared by the /memory import
- * command and the background backfill job so both route through the same
- * approval path.
+ * Ingest a normalized message stream into the distill buffer (no extraction).
+ * Shared by the /memory import command and the background backfill job; the
+ * buffered messages are distilled by the LLM pipeline later.
  */
 export function processImported(
-  service: MemoryService,
+  sink: MessageSink,
   messages: ImportedMessage[],
-  opts: ImportOptions,
-  seenHashes = new Set<string>(),
+  _opts: ImportOptions,
 ): ImportStats {
-  const stats: ImportStats = {
-    parsedMessages: messages.length,
-    candidates: 0,
-    committed: 0,
-    proposed: 0,
-    denied: 0,
-    duplicateSkipped: 0,
-  };
-  const candidates = extractCandidates(messages, {
-    scope: opts.scope,
-    workspace: opts.workspace,
-  });
-  stats.candidates = candidates.length;
-  for (const { input } of candidates) {
-    const key = contentHashOfInput(input);
-    if (seenHashes.has(key)) {
-      stats.duplicateSkipped++;
-      continue;
-    }
-    seenHashes.add(key);
-    // Reworded/subset duplicates ("用 pnpm" vs "用 pnpm 安装依赖") escape the
-    // exact-topic gate, and identical statements repeat across forked/resumed
-    // DSH sessions. Containment-similarity dedup keeps the store clean.
-    if (service.findDuplicate(input)) {
-      stats.duplicateSkipped++;
-      continue;
-    }
-    const result = service.add(input, opts.caller);
-    if (result.outcome === 'committed') {
-      stats.committed++;
-    } else if (result.outcome === 'proposed') {
-      stats.proposed++;
-    } else if (result.reason === 'duplicate') {
-      // An exact- or fuzzy-duplicate write is a skip, not a denied rejection.
-      stats.duplicateSkipped++;
-    } else {
-      stats.denied++;
-    }
-  }
-  return stats;
+  sink.ingest(messages);
+  return { parsedMessages: messages.length };
 }
 
-export interface BackfillStats extends ImportStats {
+export interface BackfillStats {
   scannedFiles: number;
+  parsedMessages: number;
   errors: string[];
 }
 
@@ -134,13 +92,9 @@ export interface BackfillService {
 }
 
 export function createBackfillService(
-  service: MemoryService,
+  sink: MessageSink,
   opts: {
     checkpoint: CheckpointStore;
-    /** How extracted candidates write: 'human' commits directly, 'model' queues. */
-    caller: 'human' | 'model';
-    scope: MemoryScope;
-    workspace?: string;
     /** Parse+extract only the tail beyond the checkpoint for each file. */
     incremental?: boolean;
   },
@@ -148,15 +102,9 @@ export function createBackfillService(
   const stats: BackfillStats = {
     scannedFiles: 0,
     parsedMessages: 0,
-    candidates: 0,
-    committed: 0,
-    proposed: 0,
-    denied: 0,
-    duplicateSkipped: 0,
     errors: [],
   };
   const checkpoint = opts.checkpoint.read();
-  const seenHashes = new Set<string>();
 
   return {
     stats,
@@ -171,18 +119,8 @@ export function createBackfillService(
           }
           const source = detectSourceFor(file.path);
           const messages = parseFor(source, text, file.path);
-          const s = processImported(
-            service,
-            messages,
-            { caller: opts.caller, scope: opts.scope, workspace: opts.workspace },
-            seenHashes,
-          );
-          stats.parsedMessages += s.parsedMessages;
-          stats.candidates += s.candidates;
-          stats.committed += s.committed;
-          stats.proposed += s.proposed;
-          stats.denied += s.denied;
-          stats.duplicateSkipped += s.duplicateSkipped;
+          sink.ingest(messages);
+          stats.parsedMessages += messages.length;
           checkpoint[file.path] = { bytes: file.text.length };
         } catch (err) {
           stats.errors.push(`${file.path}: ${err instanceof Error ? err.message : String(err)}`);
@@ -195,15 +133,6 @@ export function createBackfillService(
     },
   };
 }
-
-function contentHashOfInput(input: MemoryInput): string {
-  return createHash('sha1')
-    .update(`${input.scope}:${input.workspace ?? ''}:${input.type}:${input.topic}`)
-    .digest('hex');
-}
-
-/** Exact-content dedup key used by both the import run and the preview. */
-export { contentHashOfInput };
 
 /** Pick an adapter by file name; fall back to heuristic detection on content. */
 function detectSourceFor(path: string): ImportSource {

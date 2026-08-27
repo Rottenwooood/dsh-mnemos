@@ -41,7 +41,8 @@ export interface CommandDeps {
   collector?: SignalCollector;
   bus?: MemoryBus;
   gitStore?: GitStore;
-  distillCursor: DistillCursor;
+  /** Mutable distill cursor shared with the tool/auto/manual paths. */
+  distillCursor: { current: DistillCursor };
   persistCursor: (cursor: DistillCursor) => void;
 }
 
@@ -113,20 +114,22 @@ export function registerCommand(ctx: Context, deps: CommandDeps): void {
           if (!path || !existsSync(path)) {
             return ok('usage: /memory import <auto|claude|codex|chatgpt|dsh> <path>');
           }
+          if (!collector) {
+            return ok('Distill buffer unavailable.');
+          }
           const text = readFileSync(path, 'utf8');
           const source = kind === 'auto' ? detectSource(text) : kind;
           if (!source) {
             return ok('Cannot detect transcript format; pass one explicitly.');
           }
           const messages = parseAny(text, source);
-          const stats = processImported(service, messages, {
+          const stats = processImported(collector, messages, {
             caller: config.importCaller,
             scope,
             workspace,
           });
           return ok(
-            `Imported ${stats.parsedMessages} messages from ${source}; ${stats.candidates} candidates → ` +
-              `${stats.committed} committed, ${stats.proposed} proposed, ${stats.denied} denied, ${stats.duplicateSkipped} duplicates skipped.`,
+            `Ingested ${stats.parsedMessages} messages from ${source} into the distill buffer; run /memory distill to turn them into memories.`,
           );
         }
         case 'backfill': {
@@ -134,43 +137,35 @@ export function registerCommand(ctx: Context, deps: CommandDeps): void {
           if (!dir || !existsSync(dir) || !statSync(dir).isDirectory()) {
             return ok('usage: /memory backfill <session-log-dir>');
           }
+          if (!collector) {
+            return ok('Distill buffer unavailable.');
+          }
           const files = listJsonlFiles(dir);
           if (files.length === 0) {
             return ok('No .jsonl session logs found in that directory.');
           }
-          const stats = {
-            scannedFiles: 0,
-            parsedMessages: 0,
-            candidates: 0,
-            committed: 0,
-            proposed: 0,
-            denied: 0,
-            duplicateSkipped: 0,
-          };
-          const seen = new Set<string>();
+          let scanned = 0;
+          let parsed = 0;
+          const errors: string[] = [];
           for (const file of files) {
-            stats.scannedFiles++;
+            scanned++;
             try {
               const text = readFileSync(file, 'utf8');
               const source = detectSource(text) ?? 'dsh';
-              const s = processImported(service, parseAny(text, source, file), {
+              const s = processImported(collector, parseAny(text, source, file), {
                 caller: config.importCaller,
                 scope,
                 workspace,
-              }, seen);
-              stats.parsedMessages += s.parsedMessages;
-              stats.candidates += s.candidates;
-              stats.committed += s.committed;
-              stats.proposed += s.proposed;
-              stats.denied += s.denied;
-              stats.duplicateSkipped += s.duplicateSkipped;
+              });
+              parsed += s.parsedMessages;
             } catch {
-              // skip unreadable/unsupported files
+              errors.push(file);
             }
           }
           return ok(
-            `Backfilled ${stats.scannedFiles} files, ${stats.parsedMessages} messages, ${stats.candidates} candidates → ` +
-              `${stats.committed} committed, ${stats.proposed} proposed, ${stats.denied} denied, ${stats.duplicateSkipped} duplicates skipped.`,
+            `Backfilled ${scanned} files, ${parsed} messages into the distill buffer` +
+              (errors.length > 0 ? ` (${errors.length} failed)` : '') +
+              `; run /memory distill to turn them into memories.`,
           );
         }
         case 'distill': {
@@ -193,9 +188,10 @@ export function registerCommand(ctx: Context, deps: CommandDeps): void {
             llm,
             service,
             messages,
-            deps.distillCursor,
+            deps.distillCursor.current,
             { scope, workspace, sessionId },
           );
+          deps.distillCursor.current = result.cursor;
           deps.persistCursor(result.cursor);
           return ok(
             `Distilled ${result.stats.requested} messages → ${result.stats.memories} memory candidate(s), ` +

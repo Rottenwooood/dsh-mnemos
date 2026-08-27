@@ -50,8 +50,8 @@ export interface Config {
   rulesInjectEnabled: boolean;
   /** Automatic distillation (default off = purely manual trigger). */
   distillAuto: boolean;
-  /** How often the scheduled distillation runs, in minutes. */
-  distillIntervalMinutes: number;
+  /** Auto-distill every N live user messages when distillAuto is on (count-based, not a timer). */
+  distillEveryNTurns: number;
   /** Max session messages buffered for distillation at once. */
   distillWindow: number;
   /** Directory holding the git-tracked Markdown mirror (memory repo). */
@@ -97,7 +97,7 @@ export function defaultConfig(): Config {
     skillsDir: join(home, '.dsh', 'mnemos', 'skills'),
     rulesInjectEnabled: true,
     distillAuto: false,
-    distillIntervalMinutes: 1440,
+    distillEveryNTurns: 5,
     distillWindow: 200,
     memoryRepoDir: join(home, '.dsh', 'mnemos', 'repo'),
     gitVersioning: true,

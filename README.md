@@ -20,17 +20,19 @@ dsh plugin --profile web add dsh-mnemos
 dsh web
 ```
 
-记一条记忆：在会话里让模型"记住：用 pnpm 安装依赖"（模型会调用 `memory_record`），或者到设置页**导入历史会话**（支持 Claude Code / Codex / ChatGPT / DSH 历史日志，目录默认预填 `~/.dsh/sessions`，点"扫描预览"即可）。
+记一条记忆：在会话里让模型用 `memory_record` 写（带上 `keywords`，例如 `pnpm`、`deploy to us-east-1`），或到设置页**导入历史会话**（目录默认预填 `~/.dsh/sessions`，导入后点"现在提炼"让 LLM 生成记忆）。
 
 ## 日常用法
 
-- **模型工具**：`memory_search`（搜索）、`memory_record`（写）、`memory_list`、`memory_stats` —— 模型在会话里自己会用。
+- **模型工具**：`memory_search`（搜索）、`memory_record`（写，含 keywords）、`memory_distill`（提炼缓冲会话 → 记忆/规则，写 keywords）、`memory_list`、`memory_stats` —— 模型在会话里自己会用。
+- **记忆注入**：低频——当会话里的**用户消息**命中某条记忆的关键词时，下一条模型请求自动注入该记忆。没有启发式/正则抽取。
+- **提炼**：LLM 生成记忆（每条带 2-5 个关键词，供触发注入）；可手动（`memory_distill` 工具 / "现在提炼"按钮 / `/memory distill`），或开 `distillAuto` 后**每 N 次用户输入自动执行**（`distillEveryNTurns`）。
 - **人类命令** `/memory`：
   ```
   /memory search <关键词>          搜索记忆
   /memory list | stats             查看/统计
   /memory approve <id> | reject <id>   审批待确认项
-  /memory import <来源> <路径>      导入历史会话
+  /memory import <来源> <路径>      导入历史会话（进提炼缓冲）
   /memory distill [路径]            提炼（生成记忆/规则候选）
   /memory rules <list|activate|...>   管理规则
   /memory skill <list|promote>     规则 → SKILL
@@ -53,7 +55,7 @@ dsh web
 | `autoApprove` / `autoApproveConfidence` | 是否自动放行高置信度记忆、阈值 |
 | `injectionEnabled` / `injectLimit` / `injectMaxBytes` | 是否注入、注入条数/字节预算 |
 | `gitRemoteUrl` / `gitBackend` / `syncEnabled` | 跨机同步：远端地址 / 后端 / 自动同步 |
-| `distillAuto` / `distillIntervalMinutes` | 自动提炼开关与间隔 |
+| `distillAuto` / `distillEveryNTurns` | 自动提炼开关与间隔（次用户输入） |
 | `sessionLogDirs` / `backfillEnabled` | 启动时回填历史会话日志 |
 
 完整字段表、配置示例与使用场景见 **[docs/HANDOVER.md](docs/HANDOVER.md)**。

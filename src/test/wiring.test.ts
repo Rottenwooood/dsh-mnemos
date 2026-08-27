@@ -5,7 +5,7 @@ import { openMemoryStore } from '../domain/store.js';
 import { createSensitiveDetector } from '../domain/sensitive.js';
 import { createMemoryService } from '../domain/service.js';
 import { createMemoryBus } from '../domain/bus.js';
-import { registerTools } from '../dsh/tools.js';
+import { registerTools, ToolDeps } from '../dsh/tools.js';
 import { registerCommand, CommandDeps } from '../dsh/command.js';
 import { registerInjection, registerRuleInjection, SignalCollector } from '../dsh/hooks.js';
 import { gateFrom, apply } from '../index.js';
@@ -18,7 +18,8 @@ function commandDeps(service: ReturnType<typeof makeService>['service']): Comman
   return {
     service,
     config: defaultConfig(),
-    distillCursor: {},
+    collector: new SignalCollector(() => {}),
+    distillCursor: { current: {} },
     persistCursor: () => {},
   };
 }
@@ -90,24 +91,28 @@ function makeService() {
   const service = createMemoryService(store, createSensitiveDetector());
   return { store, service };
 }
+function toolDeps(service: ReturnType<typeof makeService>['service']): ToolDeps {
+  return { service, cursor: { current: {} }, persistCursor: () => {} };
+}
 
 describe('tools wiring', () => {
-  it('registers the four model-facing tools', () => {
+  it('registers the five model-facing tools', () => {
     const { ctx, tools } = fakeContext();
     const { service } = makeService();
-    registerTools(ctx, service);
+    registerTools(ctx, toolDeps(service));
     expect(tools.map((t) => t.name)).toEqual([
       'memory_search',
       'memory_record',
       'memory_list',
       'memory_stats',
+      'memory_distill',
     ]);
   });
 
   it('memory_search finds a committed memory', async () => {
     const { ctx, tools } = fakeContext();
     const { service } = makeService();
-    registerTools(ctx, service);
+    registerTools(ctx, toolDeps(service));
     service.add(
       {
         type: 'project_fact',
@@ -133,7 +138,7 @@ describe('tools wiring', () => {
   it('memory_record routes model writes through the gate', async () => {
     const { ctx, tools } = fakeContext();
     const { service } = makeService();
-    registerTools(ctx, service);
+    registerTools(ctx, toolDeps(service));
     const record = tools.find((t) => t.name === 'memory_record')!;
     const run = async (args: unknown): Promise<{ outcome: string }> =>
       (record as unknown as {
@@ -151,6 +156,28 @@ describe('tools wiring', () => {
       summary: 'Key is sk-abcdefghijklmnopqrstuvwxyzABCDEFGHI',
     });
     expect(denied.outcome).toBe('denied');
+  });
+
+  it('memory_distill distills buffered messages via the LLM and stores keywords', async () => {
+    const { ctx, tools } = fakeContext();
+    const { service } = makeService();
+    const llm: Llm = {
+      async complete() {
+        return JSON.stringify([
+          { type: 'project_fact', topic: 'build tool', summary: 'Build with pnpm.', confidence: 0.95, keywords: ['pnpm', 'install'] },
+        ]);
+      },
+    };
+    const collector = new SignalCollector(() => {});
+    collector.ingest([{ role: 'user', text: 'we use pnpm', sessionId: 's1', index: 0 }]);
+    registerTools(ctx, { service, llm, collector, cursor: { current: {} }, persistCursor: () => {} });
+    const distill = tools.find((t) => t.name === 'memory_distill')!;
+    const out = (await (distill as unknown as {
+      execute(args: unknown, e: unknown): Promise<{ memories: number }>;
+    }).execute({}, { agent: { id: 'a1', session: { id: 's1', header: { cwd: 'ws' } } } })) as { memories: number };
+    expect(out.memories).toBe(1);
+    const stored = service.listActive('workspace', 'ws')[0]!;
+    expect(stored.keywords).toEqual(['pnpm', 'install']);
   });
 });
 
@@ -179,10 +206,11 @@ describe('command wiring', () => {
     expect(result.text).toContain('No semicolons');
   });
 
-  it('/memory import commits a remember candidate from a claude file', async () => {
+  it('/memory import ingests a transcript into the distill buffer', async () => {
     const { ctx, commands } = fakeContext();
     const { service } = makeService();
-    registerCommand(ctx, commandDeps(service));
+    const collector = new SignalCollector(() => {});
+    registerCommand(ctx, { ...commandDeps(service), collector });
     const file = '/tmp/opencode/mnemos-import-test.jsonl';
     writeFileSync(
       file,
@@ -196,8 +224,9 @@ describe('command wiring', () => {
     const result = await invokeCommand(command, `import auto ${file}`);
     unlinkSync(file);
     expect(result.kind).toBe('success');
-    expect(result.text).toContain('1 committed');
-    expect(service.listActive('workspace', 'ws')).toHaveLength(1);
+    expect(result.text).toContain('Ingested 1 messages');
+    expect(collector.drain()).toHaveLength(1);
+    expect(service.listActive('workspace', 'ws')).toHaveLength(0);
   });
 
   it('prints usage for an unknown subcommand', async () => {
@@ -212,114 +241,77 @@ describe('command wiring', () => {
 });
 
 describe('pre-step injection', () => {
-  it('injects the hot-layer projection into the agent and delegates via next', async () => {
-    const { ctx, listeners } = fakeContext();
-    const { service } = makeService();
-    const added = service.add(
-      {
-        type: 'preference',
-        scope: 'workspace',
-        workspace: 'ws',
-        topic: 'pnpm',
-        summary: 'Use pnpm for builds.',
-        evidence: [],
-        confidence: 1,
-        source: 'manual',
-        writer: 'human',
-      },
-      'human',
-    );
-    if (added.memory) {
-      service.recordHit(added.memory.id, 'other-session');
-    }
-    registerInjection(ctx, service, () => ({
-      ...defaultConfig(),
-      injectMaxBytes: 4096,
-      injectMinHits: 0,
-    }));
+  function memoryWithKeywords(keywords: string[]): Parameters<ReturnType<typeof makeService>['service']['add']>[0] {
+    return {
+      type: 'preference',
+      scope: 'workspace',
+      workspace: 'ws',
+      topic: 'pnpm',
+      summary: 'Use pnpm for builds.',
+      keywords,
+      evidence: [],
+      confidence: 1,
+      source: 'manual',
+      writer: 'human',
+    };
+  }
+
+  async function listen(listeners: Array<{ name: string; listener: (...args: any[]) => unknown }>, messages: unknown[]): Promise<Array<{ content: Array<{ text: string }> }>> {
     const hook = listeners.find((l) => l.name === 'agent/pre-step')!;
     const decision = await hook.listener(
-      { agent: { id: 'a1' }, messages: [], turn: 0, step: 0, signal: new AbortController().signal },
+      { agent: { id: 'a1', session: { id: 's1' } }, messages, turn: 0, step: 0, signal: new AbortController().signal },
       async () => ({ kind: 'enter', messages: [] }),
     ) as { kind: string; messages: Array<{ content: Array<{ text: string }> }> };
-    expect(decision.kind).toBe('enter');
-    const texts = decision.messages.flatMap((m) => m.content.map((c) => c.text));
-    expect(texts.join('\n')).toContain('Use pnpm');
-  });
+    return decision.messages;
+  }
 
-  it('injects once per session, frozen until the store changes', async () => {
+  const userMsg = (text: string) => ({ role: 'user', content: [{ type: 'text', text }] });
+
+  it('injects a memory when its keyword appears in the user text', async () => {
     const { ctx, listeners } = fakeContext();
     const { service } = makeService();
-    service.add(
-      {
-        type: 'preference',
-        scope: 'workspace',
-        workspace: 'ws',
-        topic: 'pnpm',
-        summary: 'Use pnpm.',
-        evidence: [],
-        confidence: 1,
-        source: 'manual',
-        writer: 'human',
-      },
-      'human',
-    );
-    let revision = 0;
-    registerInjection(ctx, service, () => ({
-      ...defaultConfig(),
-      injectMaxBytes: 4096,
-      injectMinHits: 0,
-    }), () => revision);
-    const hook = listeners.find((l) => l.name === 'agent/pre-step')!;
-    const listener = hook.listener as (
-      payload: unknown,
-      next: () => Promise<{ kind: string; messages: unknown[] }>,
-    ) => Promise<{ kind: string; messages: Array<{ content: Array<{ text: string }> }> }>;
-    const payload = { agent: { id: 'a1', session: { id: 's1' } }, messages: [], turn: 7, step: 0, signal: new AbortController().signal };
-    const first = await listener(payload, async () => ({ kind: 'enter', messages: [] }));
-    const injected = first.messages.length;
-    expect(injected).toBeGreaterThan(0);
-    // Later step in the same session: frozen, no re-injection.
-    const second = await listener({ ...payload, step: 2 }, async () => ({ kind: 'enter', messages: [] }));
-    expect(second.messages.length).toBe(0);
-    // Later turn in the same session: still frozen.
-    const third = await listener({ ...payload, turn: 8, step: 0 }, async () => ({ kind: 'enter', messages: [] }));
-    expect(third.messages.length).toBe(0);
-    // A new session injects again.
-    const fourth = await listener({ ...payload, agent: { id: 'a1', session: { id: 's2' } }, turn: 1, step: 0 }, async () => ({ kind: 'enter', messages: [] }));
-    expect(fourth.messages.length).toBe(injected);
-    // A store write bumps the revision: the frozen session re-injects.
-    revision += 1;
-    const fifth = await listener({ ...payload, turn: 9, step: 0 }, async () => ({ kind: 'enter', messages: [] }));
-    expect(fifth.messages.length).toBe(injected);
+    service.add(memoryWithKeywords(['pnpm']), 'human');
+    registerInjection(ctx, service, () => ({ ...defaultConfig(), injectMaxBytes: 4096 }));
+    const messages = await listen(listeners, [userMsg('how do I install with pnpm?')]);
+    const texts = messages.flatMap((m) => m.content.map((c) => c.text));
+    expect(texts.join('\n')).toContain('Use pnpm for builds.');
   });
 
-  it('skips injection when the injection master switch or plugin master switch is off', async () => {
+  it('falls back to the topic when a memory has no keywords', async () => {
     const { ctx, listeners } = fakeContext();
     const { service } = makeService();
-    service.add(
-      {
-        type: 'preference',
-        scope: 'workspace',
-        workspace: 'ws',
-        topic: 'pnpm',
-        summary: 'Use pnpm.',
-        evidence: [],
-        confidence: 1,
-        source: 'manual',
-        writer: 'human',
-      },
-      'human',
-    );
-    registerInjection(ctx, service, () => ({ ...defaultConfig(), injectMaxBytes: 4096, injectMinHits: 0, injectionEnabled: false }));
-    const hook = listeners.find((l) => l.name === 'agent/pre-step')!;
-    const listener = hook.listener as (
-      payload: unknown,
-      next: () => Promise<{ kind: string; messages: unknown[] }>,
-    ) => Promise<{ kind: string; messages: Array<{ content: Array<{ text: string }> }> }>;
-    const payload = { agent: { id: 'a1', session: { id: 's1' } }, messages: [], turn: 1, step: 0, signal: new AbortController().signal };
-    const decision = await listener(payload, async () => ({ kind: 'enter', messages: [] }));
-    expect(decision.messages.length).toBe(0);
+    service.add(memoryWithKeywords([]), 'human');
+    registerInjection(ctx, service, () => ({ ...defaultConfig(), injectMaxBytes: 4096 }));
+    const messages = await listen(listeners, [userMsg('about pnpm installs')]);
+    const texts = messages.flatMap((m) => m.content.map((c) => c.text));
+    expect(texts.join('\n')).toContain('Use pnpm for builds.');
+  });
+
+  it('does NOT inject without user text (tool-loop steps stay low-frequency)', async () => {
+    const { ctx, listeners } = fakeContext();
+    const { service } = makeService();
+    service.add(memoryWithKeywords(['pnpm']), 'human');
+    registerInjection(ctx, service, () => ({ ...defaultConfig(), injectMaxBytes: 4096 }));
+    const messages = await listen(listeners, []);
+    expect(messages.length).toBe(0);
+  });
+
+  it('does NOT inject when the user text has no matching keyword', async () => {
+    const { ctx, listeners } = fakeContext();
+    const { service } = makeService();
+    service.add(memoryWithKeywords(['pnpm']), 'human');
+    registerInjection(ctx, service, () => ({ ...defaultConfig(), injectMaxBytes: 4096 }));
+    const messages = await listen(listeners, [userMsg('tell me about git rebase')]);
+    expect(messages.length).toBe(0);
+  });
+
+  it('skips injection when the injection master switch is off', async () => {
+    const { ctx, listeners } = fakeContext();
+    const { service } = makeService();
+    service.add(memoryWithKeywords(['pnpm']), 'human');
+    registerInjection(ctx, service, () => ({ ...defaultConfig(), injectMaxBytes: 4096, injectionEnabled: false }));
+    const messages = await listen(listeners, [userMsg('install with pnpm please')]);
+    expect(messages.length).toBe(0);
   });
 });
 
@@ -485,6 +477,6 @@ describe('apply', () => {
     } as unknown as Context;
     apply(ctx2, { dbPath: ':memory:', gitVersioning: false });
     expect(provided[0]?.[0]).toBe('mnemos');
-    expect(tools.length).toBe(4);
+    expect(tools.length).toBe(5);
   });
 });

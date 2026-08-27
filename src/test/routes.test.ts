@@ -11,6 +11,7 @@ import { describe, it, expect } from 'vitest';
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import { openMemoryStore } from '../domain/store.js';
 import { createSensitiveDetector } from '../domain/sensitive.js';
+import { SignalCollector } from '../dsh/hooks.js';
 import { createMemoryService } from '../domain/service.js';
 import { createMnemosRouteHandler, MnemosRouteDeps } from '../dsh/routes.js';
 import type { MemoryService } from '../domain/service.js';
@@ -26,6 +27,7 @@ function makeDeps(overrides: Partial<MnemosRouteDeps> = {}): MnemosRouteDeps {
     runDistillNow: async () => ({ memories: 0, rules: 0, conflicts: 0 }),
     resolveModel: async () => undefined,
     getConfig: () => defaultConfig(),
+    collector: new SignalCollector(() => {}),
     ...overrides,
   };
 }

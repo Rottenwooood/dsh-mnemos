@@ -9,7 +9,7 @@
 import type { Context } from '@deepseek-ai/cordis';
 import { randomUUID } from 'node:crypto';
 import type { MemoryService } from '../domain/service.js';
-import { recallHot } from '../domain/recall.js';
+import { recallByKeywords } from '../domain/recall.js';
 import type { Config } from '../config.js';
 import type { ImportedMessage } from '../domain/imports/types.js';
 
@@ -38,10 +38,13 @@ function blockText(value: unknown): string {
 export class SignalCollector {
   private readonly cursor = new Map<string, number>();
   private readonly buffer: ImportedMessage[] = [];
+  private userCount = 0;
 
   constructor(
     private readonly log: (message: string) => void,
     private readonly maxBuffer = 200,
+    /** Called with the running user-message count; drives count-based auto-distill. */
+    private readonly onUserMessage?: (count: number) => void,
   ) {}
 
   onEvent(session: { id?: unknown }, event: DshSessionFeedEvent): void {
@@ -75,6 +78,26 @@ export class SignalCollector {
             ? 'user'
             : 'assistant';
     this.buffer.push({ role, text, sessionId, index: event.seq });
+    if (role === 'user') {
+      this.trackUserMessage();
+    }
+    this.trim();
+  }
+
+  /** Ingest parsed transcript messages (import/backfill) into the distill buffer. */
+  ingest(messages: ImportedMessage[]): void {
+    for (const m of messages) {
+      this.buffer.push(m);
+    }
+    this.trim();
+  }
+
+  private trackUserMessage(): void {
+    this.userCount += 1;
+    this.onUserMessage?.(this.userCount);
+  }
+
+  private trim(): void {
     if (this.buffer.length > this.maxBuffer) {
       this.buffer.splice(0, this.buffer.length - this.maxBuffer);
     }
@@ -86,6 +109,11 @@ export class SignalCollector {
     this.buffer.length = 0;
     return out;
   }
+
+  /** Running count of user messages seen (drives the every-N auto-distill). */
+  get userMessages(): number {
+    return this.userCount;
+  }
 }
 
 export function registerHooks(ctx: Context, collector: SignalCollector): void {
@@ -93,52 +121,41 @@ export function registerHooks(ctx: Context, collector: SignalCollector): void {
 }
 
 /**
- * Cold/hot layered injection (M1): build the hot-layer projection under the
- * hard byte budget and append it as one injected UserMessage, returning
- * `{ kind: 'enter', messages: [...] }` per the real `agent/pre-step` contract
- * (payload + next waterfall).
+ * Cold/hot layered injection: keyword-triggered and low-frequency.
  *
- * The projection is frozen per session: it is injected once at the first
- * pre-step of a session and not repeated on later turns or tool-loop steps
- * (memory-standard: a session sees one snapshot; writes land next session).
- * `getRevision()` bumps when the store changes, so a freshly written or
- * approved memory re-injects on the next step instead of waiting for the next
- * session.
+ * On each `agent/pre-step`, when the step carries NEW user text (the first
+ * step of a user turn; tool-loop steps carry none), the session text is
+ * scanned against each active memory's keywords. Any hit is injected as one
+ * UserMessage into the next model request ("keyword appears → inject in the
+ * next block"). No LLM, no embeddings, no per-session frozen snapshot.
  */
 export function registerInjection(
   ctx: Context,
   service: MemoryService,
   getConfig: () => Config,
-  getRevision: () => number = () => 0,
 ): void {
-  const injectedRevision = new Map<string, number>();
   ctx.on('agent/pre-step', async (payload: PreStepPayload, next) => {
     const decision = (await next()) as PreStepDecision;
     if (decision.kind === 'reject') return decision;
     payload.signal.throwIfAborted();
     const sessionId = (payload.agent as { session?: { id?: string } })?.session?.id;
-    const revision = getRevision();
-    if (sessionId !== undefined && injectedRevision.get(sessionId) === revision) {
-      return decision;
-    }
     try {
       const config = getConfig();
       if (!config.enabled || !config.injectionEnabled) {
         return decision;
       }
-      const injection = recallHot(service, {
+      // Low-frequency scan: only a step carrying user input can trigger.
+      const userText = userTextOf(payload.messages);
+      if (!userText) {
+        return decision;
+      }
+      const injection = recallByKeywords(service, userText, {
         maxBytes: config.injectMaxBytes,
         limit: config.injectLimit,
         scope: 'workspace',
-        minHits: config.injectMinHits,
       });
-      // Mark the session as served at this revision even when nothing was
-      // injectable, so an empty store does not re-scan on every step.
-      if (sessionId !== undefined) injectedRevision.set(sessionId, revision);
       if (injection.injectedCount > 0) {
-        // A memory that actually reached a request counts as used: record the
-        // hit so cross-session frequency is real (and satisfies injectMinHits
-        // on later sessions) instead of staying 0 forever.
+        // A memory that actually reached a request counts as used.
         for (const id of injection.injectedIds) {
           try {
             service.recordHit(id, sessionId);
@@ -153,6 +170,29 @@ export function registerInjection(
     }
     return decision;
   });
+}
+
+/** Concatenate the text of all user messages carried by a pre-step payload. */
+function userTextOf(messages: unknown[]): string {
+  let out = '';
+  for (const message of messages) {
+    const msg = message as { role?: string; content?: unknown[] | string };
+    if (msg.role !== 'user') {
+      continue;
+    }
+    const content = msg.content;
+    if (typeof content === 'string') {
+      out += ` ${content}`;
+    } else if (Array.isArray(content)) {
+      for (const block of content) {
+        const b = block as { type?: string; text?: unknown };
+        if (b && typeof b === 'object' && b.type === 'text' && typeof b.text === 'string') {
+          out += ` ${b.text}`;
+        }
+      }
+    }
+  }
+  return out.trim();
 }
 
 /**

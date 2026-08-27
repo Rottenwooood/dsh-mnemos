@@ -121,13 +121,13 @@ async function main(): Promise<void> {
 
   const ok =
     registered &&
-    registeredTools.length === 4 &&
+    registeredTools.length === 5 &&
     list.includes('real-composition') &&
     search.includes('real-composition') &&
     stats.includes('Active memories') &&
     usage.includes('commands:') &&
     approve.includes('Approved memory') &&
-    imported.includes('committed') &&
+    imported.includes('Ingested 1 messages') &&
     rules.includes('No rules.') &&
     gitStatus.includes('Uncommitted') || gitStatus.includes('clean')
   console.log(`RESULT: ${ok ? 'PASS' : 'FAIL'}`)

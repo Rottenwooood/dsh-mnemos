@@ -16,6 +16,8 @@ export interface MemoryInput {
   topic: string;
   summary: string;
   detail?: string;
+  /** Short discriminative terms the user would type later; drive keyword-triggered injection. */
+  keywords?: string[];
   evidence: Evidence[];
   confidence: number;
   source: MemorySource;

@@ -15,6 +15,18 @@ import type { Context } from '@deepseek-ai/cordis';
 import type { MemoryService } from '../domain/service.js';
 import type { MemoryScope, MemoryType } from '../domain/types.js';
 import type { Caller, ToolDefinition } from './types.js';
+import type { Llm } from '../domain/llm.js';
+import { runDistillIncremental, DistillCursor } from '../domain/distill.js';
+import type { SignalCollector } from './hooks.js';
+
+export interface ToolDeps {
+  service: MemoryService;
+  llm?: Llm;
+  collector?: SignalCollector;
+  /** Mutable distill cursor holder shared with the manual/auto distill paths. */
+  cursor: { current: DistillCursor };
+  persistCursor: (cursor: DistillCursor) => void;
+}
 
 const SCOPES = new Set<MemoryScope>(['global', 'workspace']);
 const TYPES = new Set<MemoryType>([
@@ -84,7 +96,8 @@ function workspaceOf(exec: ToolExecLike): string | undefined {
   return exec.agent?.session?.header?.cwd;
 }
 
-export function registerTools(ctx: Context, service: MemoryService): void {
+export function registerTools(ctx: Context, deps: ToolDeps): void {
+  const { service, llm, collector, cursor, persistCursor } = deps;
   const search: MnemosTool = {
     name: 'memory_search',
     description:
@@ -164,13 +177,14 @@ export function registerTools(ctx: Context, service: MemoryService): void {
   const record: MnemosTool = {
     name: 'memory_record',
     description:
-      'Propose a memory entry. The write goes through an approval gate: sensitive content, duplicates, budget and scope policy are checked, low-risk project facts may auto-approve, everything else is queued for the user to approve.',
+      'Propose a memory entry. Include "keywords": 2-5 short discriminative terms or phrases the user would type verbatim later (e.g. "pnpm", "deploy to us-east-1") — they drive automatic keyword-triggered injection. The write goes through an approval gate: sensitive content, duplicates, budget and scope policy are checked, low-risk project facts may auto-approve, everything else is queued for the user to approve.',
     parameters: {
       type: 'object',
       properties: {
         topic: { type: 'string', description: 'Short normalized title of the memory.' },
         summary: { type: 'string', description: 'One-sentence fact to remember.' },
         detail: { type: 'string', description: 'Optional longer context.' },
+        keywords: { type: 'string', description: 'Comma-separated keywords that trigger injection (2-5 short terms).' },
         type: { type: 'string', enum: [...TYPES], description: 'Default project_fact.' },
         scope: { type: 'string', enum: [...SCOPES], description: 'Default workspace.' },
         confidence: { type: 'number', description: '0..1, default 0.9.' },
@@ -202,6 +216,7 @@ export function registerTools(ctx: Context, service: MemoryService): void {
         topic?: unknown;
         summary?: unknown;
         detail?: unknown;
+        keywords?: unknown;
         type?: unknown;
         scope?: unknown;
         confidence?: unknown;
@@ -215,6 +230,11 @@ export function registerTools(ctx: Context, service: MemoryService): void {
       const type = (asString(a.type) ?? 'project_fact') as MemoryType;
       const caller: Caller = 'model';
       const sessionId = exec.agent?.id ?? exec.agent?.session?.id;
+      const keywords = asString(a.keywords)
+        ?.split(',')
+        .map((k) => k.trim())
+        .filter(Boolean)
+        .slice(0, 8);
       const result = service.add(
         {
           type,
@@ -223,6 +243,7 @@ export function registerTools(ctx: Context, service: MemoryService): void {
           topic,
           summary,
           detail: asString(a.detail),
+          keywords,
           evidence:
             sessionId !== undefined
               ? [{ sessionId, eventRange: [0, 0], quote: summary }]
@@ -364,7 +385,59 @@ export function registerTools(ctx: Context, service: MemoryService): void {
     },
   };
 
-  for (const tool of [search, record, list, stats]) {
+  const distill: MnemosTool = {
+    name: 'memory_distill',
+    description:
+      'Distill the buffered recent conversation into memory and rule candidates. Call this when the user says to remember/record something, or when a reusable workflow/preference emerged. The LLM writes each memory\'s "keywords" — 2-5 short discriminative terms or phrases the user would type verbatim later (e.g. "pnpm", "deploy to us-east-1") — which drive automatic keyword-triggered injection. Candidates flow through the approval gate.',
+    parameters: { type: 'object', properties: {} },
+    output: {
+      schema: {
+        type: 'object',
+        additionalProperties: false,
+        required: ['requested', 'memories', 'rules', 'conflicts', 'dropped'],
+        properties: {
+          requested: { type: 'number' },
+          memories: { type: 'number' },
+          rules: { type: 'number' },
+          conflicts: { type: 'number' },
+          dropped: { type: 'number' },
+        },
+      },
+      render: (_args, value) => {
+        const v = value as { memories: number; rules: number; conflicts: number; dropped: number };
+        return text(
+          `memory_distill: ${v.memories} memory, ${v.rules} rule, ${v.conflicts} conflict, ${v.dropped} dropped`,
+        );
+      },
+    },
+    async execute(_args, exec: ToolExecLike): Promise<unknown> {
+      if (!llm) {
+        throw new Error('LLM unavailable; distillation is disabled until a model adapter is mounted.');
+      }
+      const messages = collector ? collector.drain() : [];
+      if (messages.length === 0) {
+        return { requested: 0, memories: 0, rules: 0, conflicts: 0, dropped: 0 };
+      }
+      const workspace = exec.agent?.session?.header?.cwd;
+      const sessionId = exec.agent?.id ?? exec.agent?.session?.id;
+      const result = await runDistillIncremental(llm, service, messages, cursor.current, {
+        scope: workspace ? 'workspace' : 'global',
+        workspace,
+        sessionId,
+      });
+      cursor.current = result.cursor;
+      persistCursor(result.cursor);
+      return {
+        requested: result.stats.requested,
+        memories: result.stats.memories,
+        rules: result.stats.rules,
+        conflicts: result.stats.conflicts,
+        dropped: result.stats.dropped,
+      };
+    },
+  };
+
+  for (const tool of [search, record, list, stats, distill]) {
     ctx.effect(() => ctx.tools.register(tool as unknown as ToolDefinition));
   }
 }

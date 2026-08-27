@@ -24,12 +24,14 @@ Each item:
  "topic":"short normalized title",
  "summary":"one-sentence fact",
  "detail":"optional longer context",
- "confidence":0.0-1.0}
+ "confidence":0.0-1.0,
+ "keywords":["...","..."]}
 Rules:
 - Extract only high-signal facts: explicit user instructions/preferences, workflows, errors that were fixed, decisions with reasons.
 - Do NOT extract one-off trivia, code snippets, or credentials.
 - A "procedure" is a repeatable workflow; a "preference" is a stated user preference; an "error_fix" is a problem that was solved a specific way.
-- Set confidence low (<=0.6) when unsure.`;
+- Set confidence low (<=0.6) when unsure.
+- "keywords" must contain 2-5 SHORT, DISCRIMINATIVE terms or phrases the user would type verbatim later (e.g. "pnpm", "deploy to us-east-1", "git hooks"). Keywords drive automatic injection later, so pick terms that uniquely surface THIS memory and are unlikely to appear in unrelated talk. One word or a short noun phrase each; lowercase; no punctuation; never the whole sentence.`;
 
 export interface DistillEntry {
   type: MemoryType;
@@ -37,6 +39,7 @@ export interface DistillEntry {
   summary: string;
   detail?: string;
   confidence: number;
+  keywords?: string[];
 }
 
 export interface DistillOutput {
@@ -132,6 +135,10 @@ function isValidEntry(v: unknown): v is DistillEntry {
     return false;
   }
   const o = v as Record<string, unknown>;
+  const keywords = o.keywords === undefined ? [] : o.keywords;
+  const keywordsValid =
+    Array.isArray(keywords) &&
+    keywords.every((k) => typeof k === 'string' && k.trim().length > 0);
   return (
     typeof o.type === 'string' &&
     TYPES.has(o.type as MemoryType) &&
@@ -139,6 +146,7 @@ function isValidEntry(v: unknown): v is DistillEntry {
     o.topic.trim().length > 0 &&
     typeof o.summary === 'string' &&
     o.summary.trim().length > 0 &&
+    keywordsValid &&
     (o.confidence === undefined || (typeof o.confidence === 'number' && o.confidence >= 0 && o.confidence <= 1))
   );
 }
@@ -203,6 +211,7 @@ function toMemoryInput(
     topic: normalizeTopic(d.topic),
     summary: d.summary,
     detail: d.detail,
+    keywords: (d.keywords ?? []).map((k) => k.trim()).filter(Boolean).slice(0, 8),
     evidence:
       opts.sessionId && d.confidence >= 0
         ? [{ sessionId: opts.sessionId, eventRange: [0, 0], quote: d.summary }]

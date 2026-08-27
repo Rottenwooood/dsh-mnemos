@@ -49,20 +49,19 @@
 
 ### M1 · 装完即满 + 冷热分层注入
 
-- **历史导入**：Claude Code / Codex / ChatGPT / **DSH 历史会话** 四种适配器 + 自动格式检测；DSH 日志是拼接的 **zstd 多帧**，逐帧解压。
-- **回填**（`backfill.ts`）：增量 + 断点续传（字节 checkpoint）+ 内容哈希去重；启动时扫描 `sessionLogDirs`。
-- **确定性提炼**（`extract.ts`）：从用户消息里识别"记住：…"与纠正，直接生成候选，不耗 LLM。
-- **冷热分层注入**（`recall.ts`）：热层是每次会话注入的压缩投影（硬字节预算），温/冷层按需搜索；`agent/pre-step` 同请求追加消息，**不产生第二次 API 调用**。
-- **每会话冻结快照**（对齐 memory-standard / memento）：投影在会话首个 pre-step 注入一次，同会话后续 turn/step 不再重复；**store 有写入时 revision 变化，下一 step 重新注入**（新写的记忆当轮就能生效）。每会话只记一次命中，`usage_ledger` 里 distinctSessions 语义真实。
+- **历史导入**：Claude Code / Codex / ChatGPT / **DSH 历史会话** 四种适配器 + 自动格式检测；DSH 日志是拼接的 **zstd 多帧**，逐帧解压。导入只把消息**吸入提炼缓冲**（不做任何正则启发式抽取），随后由 LLM 提炼生成记忆。
+- **回填**（`backfill.ts`）：增量 + 断点续传（字节 checkpoint）；启动时扫描 `sessionLogDirs`，消息进提炼缓冲。
+- **关键词触发注入**（`recall.ts` + `hooks.ts`）：**低频**扫描——仅当 `agent/pre-step` 携带**新的用户消息**时，把用户文本与每条记忆的 `keywords`（无关键词则回退 topic）做子串匹配；命中即在下一条模型请求注入该记忆。无启发式、无嵌入、无每会话冻结快照。每次命中记一次 `usage_ledger`。
 
 ### M2 · 自进化（提炼流水线 + 规则 + SKILL）
 
 - **提炼流水线**（`distill.ts`）：**隔离专职角色**（独立 system prompt，不继承主对话历史）→ 严格 JSON 输出 → schema 校验（不合法即丢弃计数，绝不半生效）→ 过门禁。复用 DSH 已配置的 LLM，**无需单独 API key**（`llmProvider`/`llmModel` 留空自动回落到 `agent-default-model`）。
+  - 每条记忆由 LLM 写 **`keywords`**（2-5 个简短、可区分的词/短语，用户日后可能原样说出，如 `pnpm`、`deploy to us-east-1`）——它们是关键词触发注入的依据。工具的说明与提炼 prompt 都会指导 LLM 怎么写。
   - 事实/决策 → 记忆；流程/偏好/失败 → **规则提案**（类型→kind 映射固定：procedure→skill / preference→preference / error_fix→system_prompt）。
   - **冲突裁决**：同一话题说法不同 → 打标**替换提案**（`proposeReplacement`），强制人工裁决，批准后替换原记忆，绝不自动放行。
 - **规则生命周期**：提案 → 批准/拒绝 → 生效（注入）→ 弃用/回滚（状态机校验非法迁移）。
 - **SKILL 合成**（`skill.ts`）：仅**批准后**的规则才固化为 `SKILL.md`（frontmatter + 来源证据），写盘后规则标 `promoted`（run2skill 草稿审批落盘思路）。
-- **三层触发时机**：① 事件缓冲（`session/event` 高价值信号）② 定时（`distillAuto`，默认关=纯手动）③ 手动（`/memory distill` / 界面按钮）。增量用每会话游标（序号 + 内容哈希）。
+- **三层触发时机**：① **模型工具** `memory_distill`（LLM 主动调用）② **每 N 次用户输入自动执行**（`distillAuto` + `distillEveryNTurns`，按用户消息计数，非定时器）③ **手动**（"现在提炼"按钮 / `/memory distill`）。增量用每会话游标（序号 + 内容哈希）。
 
 ### M3 · 开放记忆总线（`bus.ts` + `ctx.mnemosBus`）
 
@@ -108,7 +107,8 @@
 | 工具 | 作用 |
 |---|---|
 | `memory_search` | 跨会话搜索记忆（RRF 混合召回），参数 `query`/`scope`/`limit` |
-| `memory_record` | 提议写一条记忆，参数 `topic`/`summary`/`detail`/`type`/`scope`/`confidence`；过门禁（committed / proposed / denied） |
+| `memory_record` | 提议写一条记忆，参数 `topic`/`summary`/`detail`/`keywords`/`type`/`scope`/`confidence`；过门禁（committed / proposed / denied）。`keywords` 是触发注入的关键词 |
+| `memory_distill` | 提炼缓冲会话 → 记忆/规则候选，LLM 为每条记忆写 keywords；过门禁 |
 | `memory_list` | 列出 active 记忆，按 `scope`/`workspace`/`type` 过滤 |
 | `memory_stats` | 统计：总数、按作用域/类型分布、门禁配置 |
 
@@ -117,8 +117,8 @@
 /memory search <query>                      搜索
 /memory list | stats                        列出 / 统计
 /memory approve <id> | reject <id>          审批（仅人类，模型不能自批）
-/memory import <auto|claude|codex|chatgpt|dsh> <path>
-/memory backfill <session-log-dir>
+/memory import <auto|claude|codex|chatgpt|dsh> <path>   导入（进提炼缓冲）
+/memory backfill <session-log-dir>          回填（进提炼缓冲）
 /memory distill [path]                      提炼缓冲会话（或给定转录文件）
 /memory rules <list|activate|rollback|deprecate> [ruleId]
 /memory skill <list|promote <ruleId>>
@@ -172,8 +172,8 @@
 | `skillsDir` | string | `~/.dsh/mnemos/skills` | 规则固化为 SKILL.md 的目录 | 重启 |
 | `llmProvider` | string | `''` | 提炼用 provider；留空用 DSH `agent-default-model` | 即时 |
 | `llmModel` | string | `''` | 提炼用模型；留空同上 | 即时 |
-| `distillAuto` | bool | `false` | 自动提炼；关 = 纯手动按钮/命令 | 即时 |
-| `distillIntervalMinutes` | number | `1440` | 定时提炼间隔（分钟） | 即时 |
+| `distillAuto` | bool | `false` | 自动提炼；开 = 每 N 次用户输入自动执行 | 即时 |
+| `distillEveryNTurns` | number | `5` | 自动提炼间隔（次用户输入） | 即时 |
 | `distillWindow` | number | `200` | 单次提炼缓冲消息数 | 即时 |
 | `memoryRepoDir` | string | `~/.dsh/mnemos/repo` | git 镜像仓库目录 | 重启 |
 | `gitVersioning` | bool | `true` | 记忆变更自动 git 提交 | 即时 |
