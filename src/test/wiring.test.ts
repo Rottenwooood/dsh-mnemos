@@ -146,7 +146,7 @@ describe('tools wiring', () => {
 });
 
 describe('command wiring', () => {
-  it('registers /mnemos and prints search results', async () => {
+  it('registers /memory and prints search results', async () => {
     const { ctx, commands } = fakeContext();
     const { service } = makeService();
     registerCommand(ctx, commandDeps(service));
