@@ -11,6 +11,7 @@ import type {
   DshAgent,
   DshCommands,
   DshJobs,
+  DshLlm,
   DshSessions,
   DshSessionEvent,
   DshTools,
@@ -26,6 +27,8 @@ declare module '@deepseek-ai/cordis' {
     sessions: DshSessions;
     /** The dsh-mnemos memory service (the approval-gated write path). */
     mnemos: MemoryService;
+    /** The harness LLM seam, when an adapter is mounted. */
+    llm?: DshLlm;
     /** Present only when the optional dsh-better-sidebar plugin is mounted. */
     betterSidebar?: unknown;
   }
@@ -40,6 +43,15 @@ declare module '@deepseek-ai/cordis' {
     'agent/pre-step'(
       agent: DshAgent,
       input: unknown,
+      next: () => Promise<unknown>,
+    ): Promise<unknown>;
+    /**
+     * Waterfall before a model request is sent; listeners must call next().
+     * @mode waterfall
+     */
+    'agent/request'(
+      agent: DshAgent,
+      request: unknown,
       next: () => Promise<unknown>,
     ): Promise<unknown>;
   }

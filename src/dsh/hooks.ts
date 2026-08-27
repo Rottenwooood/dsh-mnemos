@@ -11,13 +11,18 @@ import type { MemoryService } from '../domain/service.js';
 import { recallHot } from '../domain/recall.js';
 import type { Config } from '../config.js';
 import type { DshSessionEvent } from './types.js';
+import type { ImportedMessage } from '../domain/imports/types.js';
 
 const REMEMBER_RE = /(?:^|[^\p{L}])(记住|记得|remember)(?:[^\p{L}]|$)/iu;
 
 export class SignalCollector {
   private readonly cursor = new Map<string, number>();
+  private readonly buffer: ImportedMessage[] = [];
 
-  constructor(private readonly log: (message: string) => void) {}
+  constructor(
+    private readonly log: (message: string) => void,
+    private readonly maxBuffer = 200,
+  ) {}
 
   onEvent(event: DshSessionEvent): void {
     if (!event.sessionId || typeof event.index !== 'number') {
@@ -34,9 +39,21 @@ export class SignalCollector {
     const text = typeof event.text === 'string' ? event.text : '';
     if (REMEMBER_RE.test(text)) {
       this.log(
-        `dsh-mnemos: remember-signal in session ${event.sessionId} at index ${event.index} (extraction pipeline lands in M2)`,
+        `dsh-mnemos: remember-signal in session ${event.sessionId} at index ${event.index} buffered for distillation`,
       );
     }
+    const role = event.type === 'user/message' ? 'user' : 'assistant';
+    this.buffer.push({ role, text, sessionId: event.sessionId, index: event.index });
+    if (this.buffer.length > this.maxBuffer) {
+      this.buffer.splice(0, this.buffer.length - this.maxBuffer);
+    }
+  }
+
+  /** Drain buffered messages for the distillation trigger. */
+  drain(): ImportedMessage[] {
+    const out = [...this.buffer];
+    this.buffer.length = 0;
+    return out;
   }
 }
 
@@ -64,6 +81,30 @@ export function registerInjection(ctx: Context, service: MemoryService, config: 
       }
     } catch {
       // injection is best-effort; never fail a step because of memory recall
+    }
+    return next();
+  });
+}
+
+/**
+ * Rule effect (M2): inject approved rules into agent/request with a marker, so
+ * the model sees the standing preferences/instructions the user approved. The
+ * waterfall always delegates with next().
+ */
+export function registerRuleInjection(ctx: Context, service: MemoryService, config: Config): void {
+  if (!config.rulesInjectEnabled) {
+    return;
+  }
+  ctx.on('agent/request', async (agent, _request, next) => {
+    try {
+      const rules = service.listRules('approved');
+      if (rules.length > 0) {
+        agent.inject(
+          `# dsh-mnemos 生效规则\n${rules.map((r) => `- [${r.kind}] ${r.text}`).join('\n')}`,
+        );
+      }
+    } catch {
+      // rule injection is best-effort; never fail a request
     }
     return next();
   });

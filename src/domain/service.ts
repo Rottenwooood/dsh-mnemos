@@ -12,7 +12,7 @@
  */
 import { randomUUID } from 'node:crypto';
 import { MemoryStore } from './store.js';
-import { Memory, MemoryInput, Caller, Rule } from './types.js';
+import { Memory, MemoryInput, Caller, Rule, RuleState } from './types.js';
 import { SensitiveDetector } from './sensitive.js';
 import { exactDedupKey } from './dedup.js';
 
@@ -52,10 +52,40 @@ export interface ApproveResult {
   rule?: Rule;
 }
 
+export interface RuleWriteResult {
+  outcome: 'proposed' | 'denied';
+  approvalId?: number;
+  reason?: string;
+  auditId: number;
+}
+
+/** Approval payload for a memory replacement: a conflicting claim on an
+ *  existing topic that must be adjudicated by a human. */
+export interface ReplacementPayload {
+  __replace: true;
+  memory: MemoryInput;
+  replaceMemoryId: string;
+}
+
+export function isReplacementPayload(v: unknown): v is ReplacementPayload {
+  return !!v && typeof v === 'object' && (v as { __replace?: unknown }).__replace === true;
+}
+
+export interface RuleStateResult {
+  ok: boolean;
+  reason?: string;
+  rule?: Rule;
+}
+
 export interface MemoryService {
   readonly config: GateConfig;
-  add(input: MemoryInput, caller: Caller): WriteResult;
+  add(input: MemoryInput, caller: Caller, forcePropose?: boolean): WriteResult;
   approve(id: number, decision: 'approve' | 'reject', edited?: MemoryInput): ApproveResult;
+  proposeRule(rule: Rule, caller: Caller): RuleWriteResult;
+  proposeReplacement(input: MemoryInput, replaceMemoryId: string, caller: Caller): RuleWriteResult;
+  listRules(state?: RuleState): Rule[];
+  getRule(id: string): Rule | undefined;
+  setRuleState(id: string, state: RuleState): RuleStateResult;
   recordHit(id: string, sessionId?: string): void;
   search(query: string, limit?: number): ReturnType<MemoryStore['searchMemories']>;
   listActive(scope?: 'global' | 'workspace', workspace?: string): ReturnType<MemoryStore['listSummaries']>;
@@ -100,7 +130,11 @@ export function createMemoryService(
     };
   }
 
-  function programChecks(input: MemoryInput, caller: Caller): { ok: true } | { ok: false; reason: string; reasons?: string[] } {
+  function programChecks(
+    input: MemoryInput,
+    caller: Caller,
+    opts: { skipDedup?: boolean } = {},
+  ): { ok: true } | { ok: false; reason: string; reasons?: string[] } {
     const bytes = Buffer.byteLength(`${input.topic}\n${input.summary}\n${input.detail ?? ''}`, 'utf8');
     if (bytes > config.maxBytesPerEntry) {
       return { ok: false, reason: 'budget' };
@@ -118,7 +152,7 @@ export function createMemoryService(
     if (caller === 'model' && input.scope === 'global' && !config.allowModelGlobalWrite) {
       return { ok: false, reason: 'scope' };
     }
-    if (store.exactTopicExists(input)) {
+    if (!opts.skipDedup && store.exactTopicExists(input)) {
       return { ok: false, reason: 'duplicate' };
     }
     return { ok: true };
@@ -136,17 +170,42 @@ export function createMemoryService(
     );
   }
 
+  const RULE_TRANSITIONS: Record<RuleState, RuleState[]> = {
+    proposed: ['approved', 'rejected'],
+    approved: ['deprecated', 'rolled_back', 'promoted'],
+    rejected: [],
+    edited: ['approved', 'rejected'],
+    promoted: ['deprecated', 'rolled_back'],
+    deprecated: ['rolled_back'],
+    rolled_back: ['approved'],
+  };
+
+  function ruleProgramChecks(rule: Rule, caller: Caller): { ok: true } | { ok: false; reason: string } {
+    const reasons = detector.detect(`${rule.text} ${rule.kind}`);
+    if (reasons.length > 0) {
+      return { ok: false, reason: 'sensitive' };
+    }
+    if (config.blacklist.includes(rule.proposedBy)) {
+      return { ok: false, reason: 'blacklisted' };
+    }
+    const dup = store.listRules('proposed').find((r) => r.kind === rule.kind && r.text === rule.text);
+    if (dup) {
+      return { ok: false, reason: 'duplicate' };
+    }
+    return { ok: true };
+  }
+
   return {
     config,
 
-    add(input, caller) {
+    add(input, caller, forcePropose = false) {
       const check = programChecks(input, caller);
       if (!check.ok) {
         const auditId = audit('denied', 'memory', exactDedupKey(input), input, true, caller === 'model', check.reason);
         return { outcome: 'denied', reason: check.reason, reasons: check.reasons, auditId };
       }
       const byAgent = caller === 'model';
-      if (autoApprovable(input, caller)) {
+      if (autoApprovable(input, caller) && !forcePropose) {
         const memory = buildMemory(input);
         store.addMemory(memory);
         const auditId = audit('add', 'memory', memory.id, input, false, byAgent);
@@ -173,11 +232,26 @@ export function createMemoryService(
       }
       if (decision === 'reject') {
         store.updateApprovalState(id, 'rejected');
+        if (candidate.kind === 'rule') {
+          const r = candidate.payload as Rule;
+          store.updateRuleState(r.id, 'rejected');
+        }
         audit('reject', 'approval', String(id), candidate.payload, false, false);
         return { ok: true };
       }
       if (candidate.kind === 'memory') {
-        const input = (edited ?? candidate.payload) as MemoryInput;
+        const raw = (edited ?? candidate.payload) as unknown;
+        if (isReplacementPayload(raw)) {
+          const existing = store.getMemory(raw.replaceMemoryId);
+          if (!existing) {
+            return { ok: false, reason: 'target-not-found' };
+          }
+          store.updateMemory(raw.replaceMemoryId, raw.memory);
+          store.updateApprovalState(id, 'approved');
+          audit('replace', 'memory', raw.replaceMemoryId, { approvalId: id, from: existing, to: raw.memory }, false, false);
+          return { ok: true, memory: store.getMemory(raw.replaceMemoryId) };
+        }
+        const input = raw as MemoryInput;
         const memory = buildMemory(input);
         store.addMemory(memory);
         store.updateApprovalState(id, 'approved');
@@ -185,11 +259,83 @@ export function createMemoryService(
         return { ok: true, memory };
       }
       const rule = (edited ?? candidate.payload) as Rule;
-      const committed: Rule = { ...rule, id: rule.id || `rule-${randomUUID()}`, state: 'approved' };
-      store.insertRule(committed);
+      const existing = store.listRules().find((r) => r.id === rule.id);
+      const committed: Rule = existing
+        ? { ...existing, state: 'approved' as const }
+        : { ...rule, id: rule.id || `rule-${randomUUID()}`, state: 'approved' as const };
+      store.updateRuleState(committed.id, 'approved', {
+        approvedBy: 'human',
+        approvedAt: now(),
+      });
       store.updateApprovalState(id, 'approved');
       audit('approve', 'rule', committed.id, { approvalId: id, ruleId: committed.id }, false, false);
-      return { ok: true, rule: committed };
+      return { ok: true, rule: store.listRules().find((r) => r.id === committed.id) };
+    },
+
+    proposeRule(rule, caller) {
+      const check = ruleProgramChecks(rule, caller);
+      if (!check.ok) {
+        const auditId = audit('denied', 'rule', rule.id, rule, true, caller === 'model', check.reason);
+        return { outcome: 'denied', reason: check.reason, auditId };
+      }
+      store.insertRule({ ...rule, state: 'proposed' });
+      store.insertApproval({
+        id: 0,
+        kind: 'rule',
+        payload: rule,
+        state: 'proposed',
+        proposedBy: rule.proposedBy,
+        evidence: rule.evidence,
+        createdAt: now(),
+      });
+      const approvalId = store.listApprovals('proposed').at(-1)?.id ?? 0;
+      const auditId = audit('propose', 'approval', String(approvalId), rule, false, caller === 'model');
+      return { outcome: 'proposed', approvalId, auditId };
+    },
+
+    proposeReplacement(input, replaceMemoryId, caller) {
+      const check = programChecks(input, caller, { skipDedup: true });
+      if (!check.ok) {
+        const auditId = audit('denied', 'memory', exactDedupKey(input), { __replace: true, input, replaceMemoryId }, true, caller === 'model', check.reason);
+        return { outcome: 'denied', reason: check.reason, auditId };
+      }
+      store.insertApproval({
+        id: 0,
+        kind: 'memory',
+        payload: { __replace: true, memory: input, replaceMemoryId },
+        state: 'proposed',
+        proposedBy: input.writer,
+        evidence: input.evidence,
+        createdAt: now(),
+      });
+      const approvalId = store.listApprovals('proposed').at(-1)?.id ?? 0;
+      const auditId = audit('propose', 'approval', String(approvalId), { __replace: true, memory: input, replaceMemoryId }, false, caller === 'model');
+      return { outcome: 'proposed', approvalId, auditId };
+    },
+
+    listRules(state) {
+      return store.listRules(state);
+    },
+
+    getRule(id) {
+      return store.listRules().find((r) => r.id === id);
+    },
+
+    setRuleState(id, state) {
+      const rule = store.listRules().find((r) => r.id === id);
+      if (!rule) {
+        return { ok: false, reason: 'not-found' };
+      }
+      const allowed = RULE_TRANSITIONS[rule.state] ?? [];
+      if (!allowed.includes(state)) {
+        return { ok: false, reason: `invalid transition ${rule.state} -> ${state}` };
+      }
+      store.updateRuleState(id, state, {
+        approvedBy: state === 'approved' ? 'human' : undefined,
+        approvedAt: state === 'approved' ? now() : undefined,
+      });
+      audit('rule-state', 'rule', id, { from: rule.state, to: state }, false, false);
+      return { ok: true, rule: store.listRules().find((r) => r.id === id) };
     },
 
     recordHit(id, sessionId) {

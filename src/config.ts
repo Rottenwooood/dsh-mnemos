@@ -36,6 +36,16 @@ export interface Config {
   backfillEnabled: boolean;
   /** How backfill/imported candidates write: 'human' commits, 'model' queues. */
   importCaller: 'human' | 'model';
+  /** Directory where approved rules are promoted into Markdown skill files. */
+  skillsDir: string;
+  /** Inject approved rules into agent/request prompts. */
+  rulesInjectEnabled: boolean;
+  /** Automatic distillation (default off = purely manual trigger). */
+  distillAuto: boolean;
+  /** How often the scheduled distillation runs, in minutes. */
+  distillIntervalMinutes: number;
+  /** Max session messages buffered for distillation at once. */
+  distillWindow: number;
 }
 
 export function defaultConfig(): Config {
@@ -54,5 +64,10 @@ export function defaultConfig(): Config {
     sessionLogDirs: [],
     backfillEnabled: true,
     importCaller: 'human',
+    skillsDir: join(home, '.dsh', 'mnemos', 'skills'),
+    rulesInjectEnabled: true,
+    distillAuto: false,
+    distillIntervalMinutes: 1440,
+    distillWindow: 200,
   };
 }

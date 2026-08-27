@@ -81,3 +81,17 @@ export interface DshSessionEvent {
 export interface DshSessions {
   list(filter?: unknown): Array<{ id: string }>;
 }
+
+export interface LlmMessageLike {
+  role: 'system' | 'user' | 'assistant' | 'tool';
+  content: string;
+}
+
+/**
+ * Placeholder for the harness LLM seam. The real `ctx.llm` is a streaming
+ * adapter service; `createLlmFromContext` maps the surface dsh-mnemos needs
+ * onto whatever is mounted. Refine against real types at integration time.
+ */
+export interface DshLlm {
+  complete(messages: LlmMessageLike[]): Promise<string>;
+}

@@ -27,20 +27,29 @@ export interface CheckpointStore {
   write(checkpoint: Checkpoint): void;
 }
 
-/** Checkpoint persisted to a JSON file beside the database. */
-export function createFileCheckpoint(path: string): CheckpointStore {
+/** Generic JSON-file key/value store; empty object when missing or invalid. */
+export function createJsonFileStore<T extends object>(path: string): { read(): T; write(value: T): void } {
   return {
-    read(): Checkpoint {
+    read(): T {
       try {
-        return JSON.parse(readFileSync(path, 'utf8')) as Checkpoint;
+        return JSON.parse(readFileSync(path, 'utf8')) as T;
       } catch {
-        return {};
+        return {} as T;
       }
     },
-    write(checkpoint: Checkpoint) {
+    write(value: T) {
       mkdirSync(dirname(path), { recursive: true });
-      writeFileSync(path, JSON.stringify(checkpoint, null, 2));
+      writeFileSync(path, JSON.stringify(value, null, 2));
     },
+  };
+}
+
+/** Checkpoint persisted to a JSON file beside the database. */
+export function createFileCheckpoint(path: string): CheckpointStore {
+  const store = createJsonFileStore<Checkpoint>(path);
+  return {
+    read: () => store.read(),
+    write: (c) => store.write(c),
   };
 }
 

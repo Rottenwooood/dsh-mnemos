@@ -16,6 +16,10 @@ import type { Config } from '../config.js';
 import { detectSource, parseAny } from '../domain/imports/detect.js';
 import { processImported } from '../domain/backfill.js';
 import { ImportSource } from '../domain/imports/types.js';
+import { Llm } from '../domain/llm.js';
+import { runDistillIncremental, DistillCursor } from '../domain/distill.js';
+import { promoteRuleToSkill, listSkillFiles } from '../domain/skill.js';
+import type { SignalCollector } from './hooks.js';
 
 function listJsonlFiles(dir: string): string[] {
   const out: string[] = [];
@@ -28,12 +32,22 @@ function listJsonlFiles(dir: string): string[] {
   return out;
 }
 
-export function registerCommand(ctx: Context, service: MemoryService, config: Config): void {
+export interface CommandDeps {
+  service: MemoryService;
+  config: Config;
+  llm?: Llm;
+  collector?: SignalCollector;
+  distillCursor: DistillCursor;
+  persistCursor: (cursor: DistillCursor) => void;
+}
+
+export function registerCommand(ctx: Context, deps: CommandDeps): void {
+  const { service, config, llm, collector } = deps;
   const command: CommandDefinition = {
     name: 'memory',
-    usage: 'memory <search|list|stats|approve|reject|import|backfill> ...',
+    usage: 'memory <search|list|stats|approve|reject|import|backfill|distill|rules|skill> ...',
     description:
-      'Manage dsh-mnemos memories: search across sessions, list active entries, show stats, approve/reject proposed memories, and import or backfill history.',
+      'Manage dsh-mnemos memories: search across sessions, list active entries, show stats, approve/reject proposals, import/backfill history, distill sessions, manage rules and promote skills.',
     async handler(args, runtime) {
       const [verb, ...rest] = args.trim().split(/\s+/);
       const scope = runtime.workspace ? 'workspace' : ('global' as const);
@@ -167,9 +181,97 @@ export function registerCommand(ctx: Context, service: MemoryService, config: Co
           );
           return;
         }
+        case 'distill': {
+          if (!llm) {
+            runtime.say('LLM unavailable; distillation is disabled until a model adapter is mounted.');
+            return;
+          }
+          const path = rest[0];
+          let messages = collector ? collector.drain() : [];
+          if (path && existsSync(path)) {
+            const text = readFileSync(path, 'utf8');
+            const source = detectSource(text);
+            messages = source ? parseAny(text, source) : [];
+            if (messages.length === 0) {
+              runtime.say('No parseable messages in that file.');
+              return;
+            }
+          } else if (messages.length === 0) {
+            runtime.say('No buffered session messages to distill (or pass a transcript path).');
+            return;
+          }
+          const result = await runDistillIncremental(
+            llm,
+            service,
+            messages,
+            deps.distillCursor,
+            { scope, workspace: runtime.workspace, sessionId: runtime.sessionId },
+          );
+          deps.persistCursor(result.cursor);
+          runtime.say(
+            `Distilled ${result.stats.requested} messages → ${result.stats.memories} memory candidate(s), ` +
+              `${result.stats.rules} rule proposal(s), ${result.stats.conflicts} conflict(s), ` +
+              `${result.stats.dropped} dropped.`,
+          );
+          return;
+        }
+        case 'rules': {
+          const sub = rest[0];
+          if (sub === 'list' || sub === undefined) {
+            const rules = service.listRules();
+            if (rules.length === 0) {
+              runtime.say('No rules.');
+              return;
+            }
+            runtime.say(
+              rules
+                .map((r) => `- [${r.state}] ${r.id} (${r.kind}) ${r.text}`)
+                .join('\n'),
+            );
+            return;
+          }
+          const id = rest[1];
+          if (!id) {
+            runtime.say('usage: /memory rules <list|activate|rollback|deprecate> [ruleId]');
+            return;
+          }
+          const stateMap: Record<string, 'approved' | 'rolled_back' | 'deprecated'> = {
+            activate: 'approved',
+            rollback: 'rolled_back',
+            deprecate: 'deprecated',
+          };
+          const target = stateMap[sub];
+          if (!target) {
+            runtime.say('usage: /memory rules <list|activate|rollback|deprecate> [ruleId]');
+            return;
+          }
+          const result = service.setRuleState(id, target);
+          runtime.say(result.ok ? `Rule ${id} → ${target}.` : `Cannot update rule: ${result.reason}.`);
+          return;
+        }
+        case 'skill': {
+          const sub = rest[0];
+          if (sub === 'list') {
+            const files = listSkillFiles(config.skillsDir);
+            runtime.say(files.length ? files.map((f) => `- ${f}`).join('\n') : 'No skill files yet.');
+            return;
+          }
+          if (sub === 'promote') {
+            const id = rest[1];
+            if (!id) {
+              runtime.say('usage: /memory skill promote <ruleId>');
+              return;
+            }
+            const result = promoteRuleToSkill(service, id, config.skillsDir);
+            runtime.say(result.ok ? `Promoted ${id} → ${result.path}.` : `Cannot promote: ${result.reason}.`);
+            return;
+          }
+          runtime.say('usage: /memory skill <list|promote <ruleId>>');
+          return;
+        }
         default:
           runtime.say(
-            'commands: search <query> | list | stats | approve <id> | reject <id> | import <src> <path> | backfill <dir>',
+            'commands: search <query> | list | stats | approve <id> | reject <id> | import <src> <path> | backfill <dir> | distill [path] | rules <list|activate|rollback|deprecate> | skill <list|promote>',
           );
       }
     },

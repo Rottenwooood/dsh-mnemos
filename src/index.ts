@@ -15,11 +15,14 @@ import { Config, defaultConfig } from './config.js';
 import { openMemoryStore } from './domain/store.js';
 import { createSensitiveDetector } from './domain/sensitive.js';
 import { createMemoryService, DEFAULT_GATE, GateConfig, MemoryService } from './domain/service.js';
-import { createBackfillService, createFileCheckpoint } from './domain/backfill.js';
+import { createBackfillService, createFileCheckpoint, createJsonFileStore } from './domain/backfill.js';
 import { detectSource, parseAny } from './domain/imports/detect.js';
+import { runDistillIncremental, DistillCursor } from './domain/distill.js';
 import { registerTools } from './dsh/tools.js';
-import { registerCommand } from './dsh/command.js';
-import { registerHooks, registerInjection, SignalCollector } from './dsh/hooks.js';
+import { registerCommand, CommandDeps } from './dsh/command.js';
+import { registerHooks, registerInjection, registerRuleInjection, SignalCollector } from './dsh/hooks.js';
+import { createLlmFromContext } from './dsh/llm-adapter.js';
+import { Llm } from './domain/llm.js';
 
 export const name = 'dsh-mnemos';
 
@@ -83,6 +86,34 @@ export function registerBackfillJob(ctx: Context, service: MemoryService, config
   );
 }
 
+export function registerScheduledDistill(
+  ctx: Context,
+  deps: { llm: Llm; service: MemoryService; config: Config; collector: SignalCollector },
+): void {
+  const { llm, service, config, collector } = deps;
+  const logger = ctx.logger('mnemos');
+  const cursorStore = createJsonFileStore<DistillCursor>(join(dirname(config.dbPath), 'distill-cursor.json'));
+  let cursor = cursorStore.read();
+  const run = async (): Promise<void> => {
+    const messages = collector.drain();
+    if (messages.length === 0) {
+      return;
+    }
+    const result = await runDistillIncremental(llm, service, messages, cursor, {
+      scope: 'workspace',
+    });
+    cursor = result.cursor;
+    cursorStore.write(cursor);
+    logger.info(
+      `distill: ${result.stats.memories} memory, ${result.stats.rules} rule, ${result.stats.conflicts} conflict`,
+    );
+  };
+  ctx.effect(() => {
+    const id = setInterval(run, config.distillIntervalMinutes * 60_000);
+    return () => clearInterval(id);
+  });
+}
+
 export function apply(ctx: Context, raw: Partial<Config> = {}): void {
   const config: Config = { ...defaultConfig(), ...raw };
   const logger = ctx.logger('mnemos');
@@ -96,11 +127,27 @@ export function apply(ctx: Context, raw: Partial<Config> = {}): void {
   });
   ctx.effect(() => ctx.provide('mnemos', service));
 
+  const llm = createLlmFromContext(ctx);
+  const collector = new SignalCollector((message) => logger.debug(message), config.distillWindow);
+  const cursorStore = createJsonFileStore<DistillCursor>(join(dirname(config.dbPath), 'distill-cursor.json'));
+  const commandDeps: CommandDeps = {
+    service,
+    config,
+    llm,
+    collector,
+    distillCursor: cursorStore.read(),
+    persistCursor: (c) => cursorStore.write(c),
+  };
+
   registerTools(ctx, service);
-  registerCommand(ctx, service, config);
-  registerHooks(ctx, new SignalCollector((message) => logger.debug(message)));
+  registerCommand(ctx, commandDeps);
+  registerHooks(ctx, collector);
   registerInjection(ctx, service, config);
+  registerRuleInjection(ctx, service, config);
   registerBackfillJob(ctx, service, config);
+  if (config.distillAuto && llm) {
+    registerScheduledDistill(ctx, { llm, service, config, collector });
+  }
 
   logger.info(`dsh-mnemos ready at ${config.dbPath}`);
 }

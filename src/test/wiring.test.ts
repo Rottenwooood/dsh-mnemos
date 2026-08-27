@@ -5,11 +5,21 @@ import { openMemoryStore } from '../domain/store.js';
 import { createSensitiveDetector } from '../domain/sensitive.js';
 import { createMemoryService } from '../domain/service.js';
 import { registerTools } from '../dsh/tools.js';
-import { registerCommand } from '../dsh/command.js';
-import { registerInjection, SignalCollector } from '../dsh/hooks.js';
+import { registerCommand, CommandDeps } from '../dsh/command.js';
+import { registerInjection, registerRuleInjection, SignalCollector } from '../dsh/hooks.js';
 import { gateFrom, apply } from '../index.js';
 import { defaultConfig } from '../config.js';
+import { Llm } from '../domain/llm.js';
 import type { CommandDefinition, ToolDefinition } from '../dsh/types.js';
+
+function commandDeps(service: ReturnType<typeof makeService>['service']): CommandDeps {
+  return {
+    service,
+    config: defaultConfig(),
+    distillCursor: {},
+    persistCursor: () => {},
+  };
+}
 
 function fakeContext() {
   const tools: ToolDefinition[] = [];
@@ -129,7 +139,7 @@ describe('command wiring', () => {
   it('registers /memory and prints search results', async () => {
     const { ctx, commands } = fakeContext();
     const { service } = makeService();
-    registerCommand(ctx, service, defaultConfig());
+    registerCommand(ctx, commandDeps(service));
     service.add(
       {
         type: 'preference',
@@ -157,7 +167,7 @@ describe('command wiring', () => {
   it('/memory import commits a remember candidate from a claude file', async () => {
     const { ctx, commands } = fakeContext();
     const { service } = makeService();
-    registerCommand(ctx, service, defaultConfig());
+    registerCommand(ctx, commandDeps(service));
     const file = '/tmp/opencode/mnemos-import-test.jsonl';
     writeFileSync(
       file,
@@ -182,7 +192,7 @@ describe('command wiring', () => {
   it('prints usage for an unknown subcommand', async () => {
     const { ctx, commands } = fakeContext();
     const { service } = makeService();
-    registerCommand(ctx, service, defaultConfig());
+    registerCommand(ctx, commandDeps(service));
     const command = commands[0]!;
     const said: string[] = [];
     await command.handler('bogus', { caller: 'human', say: (t) => said.push(t) });
@@ -224,6 +234,56 @@ describe('pre-step injection', () => {
   });
 });
 
+describe('rule injection (agent/request)', () => {
+  it('injects approved rules with a marker and delegates via next', async () => {
+    const { ctx, listeners } = fakeContext();
+    const { service } = makeService();
+    const proposed = service.proposeRule(
+      {
+        id: 'rule-inj',
+        kind: 'preference',
+        text: 'Always use pnpm for installs.',
+        evidence: [],
+        state: 'proposed',
+        proposedBy: 'distill',
+        version: 1,
+      },
+      'model',
+    );
+    service.approve(proposed.approvalId!, 'approve');
+    registerRuleInjection(ctx, service, defaultConfig());
+    const hook = listeners.find((l) => l.name === 'agent/request')!;
+    const inject = vi.fn();
+    const delegated = await hook.listener({ inject } as never, {}, async () => 'delegated');
+    expect(inject).toHaveBeenCalledWith(expect.stringContaining('Always use pnpm'));
+    expect(delegated).toBe('delegated');
+  });
+});
+
+describe('/memory distill command', () => {
+  it('distills buffered session messages and proposes a rule', async () => {
+    const { ctx, commands } = fakeContext();
+    const { service } = makeService();
+    const collector = new SignalCollector(() => {});
+    collector.onEvent({ type: 'user/message', sessionId: 's1', index: 0, text: '记住：用 pnpm' });
+    const llm: Llm = {
+      async complete() {
+        return JSON.stringify([{ type: 'preference', topic: 'pnpm', summary: 'Use pnpm.', confidence: 0.9 }]);
+      },
+    };
+    registerCommand(ctx, { ...commandDeps(service), llm, collector });
+    const command = commands[0]!;
+    const said: string[] = [];
+    await command.handler('distill', {
+      caller: 'human',
+      workspace: 'ws',
+      say: (t) => said.push(t),
+    });
+    expect(service.listRules('proposed')).toHaveLength(1);
+    expect(said[0]).toContain('Distilled');
+  });
+});
+
 describe('session signal collector', () => {
   it('detects an explicit remember request once', () => {
     const logs: string[] = [];
@@ -252,6 +312,11 @@ describe('gateFrom', () => {
       sessionLogDirs: [],
       backfillEnabled: true,
       importCaller: 'human',
+      skillsDir: '/tmp/skills',
+      rulesInjectEnabled: true,
+      distillAuto: false,
+      distillIntervalMinutes: 1440,
+      distillWindow: 200,
     });
     expect(gate.maxEntries).toBe(10);
     expect(gate.blacklist).toEqual(['bad']);
