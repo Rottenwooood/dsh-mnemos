@@ -13,7 +13,6 @@ import type {
   DshJobs,
   DshLlm,
   DshSessions,
-  DshSessionEvent,
   DshTools,
 } from './types.js';
 import type { MemoryService } from '../domain/service.js';
@@ -43,8 +42,11 @@ declare module '@deepseek-ai/cordis' {
   }
 
   interface Events {
-    /** Durable session events; see DshSessionEvent. */
-    'session/event'(event: DshSessionEvent): void;
+    /** Durable session feed: every appended event with the live session. */
+    'session/event'(
+      session: { id?: unknown; header?: { cwd?: unknown } },
+      event: { type: string; seq?: number; time?: number; data?: { role?: string; content?: unknown[]; text?: string } },
+    ): void;
     /** Memory-bus change notifications (committed/proposed/replaced/revoked/rule-approved). */
     'mnemos/memory'(event: BusEvent): void;
     /**

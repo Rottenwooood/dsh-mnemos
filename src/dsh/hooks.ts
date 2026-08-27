@@ -11,10 +11,29 @@ import { randomUUID } from 'node:crypto';
 import type { MemoryService } from '../domain/service.js';
 import { recallHot } from '../domain/recall.js';
 import type { Config } from '../config.js';
-import type { DshSessionEvent } from './types.js';
 import type { ImportedMessage } from '../domain/imports/types.js';
 
 const REMEMBER_RE = /(?:^|[^\p{L}])(记住|记得|remember)(?:[^\p{L}]|$)/iu;
+
+/** Structural face of one `session/event` payload (the real rc.2 shape). */
+export interface DshSessionFeedEvent {
+  type: string;
+  seq?: number;
+  time?: number;
+  data?: { role?: string; content?: unknown[]; text?: string };
+}
+
+/** Concatenate a dsh content-block array (or plain text) into one string. */
+function blockText(value: unknown): string {
+  if (typeof value === 'string') return value;
+  if (Array.isArray(value)) {
+    return value
+      .map((b) => (typeof b === 'string' ? b : (b as { text?: unknown })?.text))
+      .filter((t): t is string => typeof t === 'string')
+      .join('\n');
+  }
+  return '';
+}
 
 export class SignalCollector {
   private readonly cursor = new Map<string, number>();
@@ -25,26 +44,37 @@ export class SignalCollector {
     private readonly maxBuffer = 200,
   ) {}
 
-  onEvent(event: DshSessionEvent): void {
-    if (!event.sessionId || typeof event.index !== 'number') {
+  onEvent(session: { id?: unknown }, event: DshSessionFeedEvent): void {
+    const sessionId = typeof session.id === 'string' ? session.id : undefined;
+    if (!sessionId || typeof event.seq !== 'number') {
       return;
     }
-    const prev = this.cursor.get(event.sessionId) ?? -1;
-    if (event.index <= prev) {
+    const prev = this.cursor.get(sessionId) ?? -1;
+    if (event.seq <= prev) {
       return;
     }
-    this.cursor.set(event.sessionId, event.index);
+    this.cursor.set(sessionId, event.seq);
     if (event.type !== 'user/message' && event.type !== 'assistant/message') {
       return;
     }
-    const text = typeof event.text === 'string' ? event.text : '';
+    const text = blockText(event.data?.content ?? event.data?.text);
+    if (!text.trim()) {
+      return;
+    }
     if (REMEMBER_RE.test(text)) {
       this.log(
-        `dsh-mnemos: remember-signal in session ${event.sessionId} at index ${event.index} buffered for distillation`,
+        `dsh-mnemos: remember-signal in session ${sessionId} at index ${event.seq} buffered for distillation`,
       );
     }
-    const role = event.type === 'user/message' ? 'user' : 'assistant';
-    this.buffer.push({ role, text, sessionId: event.sessionId, index: event.index });
+    const role =
+      event.data?.role === 'assistant'
+        ? 'assistant'
+        : event.data?.role === 'tool'
+          ? 'tool'
+          : event.type === 'user/message'
+            ? 'user'
+            : 'assistant';
+    this.buffer.push({ role, text, sessionId, index: event.seq });
     if (this.buffer.length > this.maxBuffer) {
       this.buffer.splice(0, this.buffer.length - this.maxBuffer);
     }
@@ -59,7 +89,7 @@ export class SignalCollector {
 }
 
 export function registerHooks(ctx: Context, collector: SignalCollector): void {
-  ctx.on('session/event', (event) => collector.onEvent(event));
+  ctx.on('session/event', (session, event) => collector.onEvent(session, event));
 }
 
 /**

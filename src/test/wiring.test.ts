@@ -281,7 +281,7 @@ describe('/mnemos distill command', () => {
     const { ctx, commands } = fakeContext();
     const { service } = makeService();
     const collector = new SignalCollector(() => {});
-    collector.onEvent({ type: 'user/message', sessionId: 's1', index: 0, text: '记住：用 pnpm' });
+    collector.onEvent({ id: 's1' }, { type: 'user/message', seq: 0, data: { role: 'user', content: [{ type: 'text', text: '记住：用 pnpm' }] } });
     const llm: Llm = {
       async complete() {
         return JSON.stringify([{ type: 'preference', topic: 'pnpm', summary: 'Use pnpm.', confidence: 0.9 }]);
@@ -383,9 +383,9 @@ describe('session signal collector', () => {
   it('detects an explicit remember request once', () => {
     const logs: string[] = [];
     const collector = new SignalCollector((m) => logs.push(m));
-    collector.onEvent({ type: 'user/message', sessionId: 's1', index: 0, text: '记住：用 pnpm' });
-    collector.onEvent({ type: 'user/message', sessionId: 's1', index: 0, text: '记住：用 pnpm' });
-    collector.onEvent({ type: 'user/message', sessionId: 's1', index: 1, text: 'hello' });
+    collector.onEvent({ id: 's1' }, { type: 'user/message', seq: 0, data: { role: 'user', content: [{ type: 'text', text: '记住：用 pnpm' }] } });
+    collector.onEvent({ id: 's1' }, { type: 'user/message', seq: 0, data: { role: 'user', content: [{ type: 'text', text: '记住：用 pnpm' }] } });
+    collector.onEvent({ id: 's1' }, { type: 'user/message', seq: 1, data: { role: 'user', content: [{ type: 'text', text: 'hello' }] } });
     expect(logs).toHaveLength(1);
     expect(logs[0]).toContain('remember-signal');
   });
