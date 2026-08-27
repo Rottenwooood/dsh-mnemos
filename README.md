@@ -2,7 +2,23 @@
 
 Cross-session memory with governance, self-evolution and an approval-gated write path for DeepSeek Harness.
 
-> 开发中（M4 完成）。领域核心、DSH 接线层、历史导入 + 回填、冷热分层注入、提炼流水线（隔离角色 + JSON 校验 + 冲突裁决 + 规则生命周期 + SKILL 合成）、开放记忆总线（recall/record/subscribe + 身份 + 拉黑 + 撤销）、git 版本管理（历史/diff/回滚/恢复）+ 跨机同步（push/pull/逐条冲突标记）+ 备份导出已实现并全部可单测。管理页签（better-sidebar UI）与发布在最后里程碑。
+> 开发中（M5 主机侧完成）。领域核心、DSH 接线层、历史导入 + 回填、冷热分层注入、提炼流水线（隔离角色 + JSON 校验 + 冲突裁决 + 规则生命周期 + SKILL 合成）、开放记忆总线（recall/record/subscribe + 身份 + 拉黑 + 撤销）、git 版本管理（历史/diff/回滚/恢复）+ 跨机同步（push/pull/逐条冲突标记）+ 备份导出、真实 DSH 设置页（`ctx.settings` `mnemos` 命名空间）、管理页签（better-sidebar `registerTab` + host RPC 路由）已实现；已在真实 `dsh web` profile 装入并启动验证。全部核心逻辑可单测。
+
+## 安装（真实 DSH）
+
+```sh
+dsh plugin --profile web add dsh-mnemos          # 或 dsh-mnemos@<version>
+pnpm run build:client                            # 产出 lib/client.js（管理页签浏览器半）
+```
+
+包以 `dsh.bundle.patch` 声明为 profile 层插件；`dsh.client.platform: web` 让 modules 系统自动发现并服务 `/plugins/dsh-mnemos/client.js`。命令名 `/mnemos`（与 dsh-memento 的 `/memory` 共存）。
+
+## M5：真实 DSH 界面
+
+- **设置页**：注册 `mnemos` 命名空间（schemastery schema，24 个配置字段）→ 浏览器"设置 → dsh-mnemos"表单自动渲染；用户覆盖持久化到 `settings.yaml` 并分层叠加在组合 base 之上，变更实时重应用门禁（`updateGate`）。设置服务缺席时优雅回退到组合配置。
+- **管理页签**（better-sidebar）：`ctx.betterSidebar.registerTab({ id: 'mnemos:memory', ... })` 注册 React 控制台——概览/待审批（批准/拒绝）/记忆列表+搜索/git 同步（pull/push/备份）/“现在提炼”。
+- **Host RPC**（`src/dsh/routes.ts`）：`/mnemos/api/*` 挂到 `webServer`（仅 web profile 注册），client 同源读取；批准/提炼/同步全部走 `MemoryService` 门禁与 `GitStore`，浏览器不能绕过治理。
+- **初始提交**：git 仓库 `ensure()` 会播种 `.gitkeep` 并建初始提交，新装即可 `exportBundle`/`history`。
 
 ## 设计要点
 

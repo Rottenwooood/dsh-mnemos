@@ -27,6 +27,7 @@ import { registerCommand, CommandDeps } from './dsh/command.js';
 import { registerHooks, registerInjection, registerRuleInjection, SignalCollector } from './dsh/hooks.js';
 import { createLlmFromContext } from './dsh/llm-adapter.js';
 import { installMnemosSettings } from './dsh/settings.js';
+import { registerMnemosRoutes } from './dsh/routes.js';
 import { Llm } from './domain/llm.js';
 
 export const name = 'dsh-mnemos';
@@ -212,6 +213,26 @@ export function apply(ctx: Context, raw: Partial<Config> = {}): void {
   const llm = createLlmFromContext(ctx);
   const collector = new SignalCollector((message) => logger.debug(message), config.distillWindow);
   const cursorStore = createJsonFileStore<DistillCursor>(join(dirname(config.dbPath), 'distill-cursor.json'));
+  let distillCursor = cursorStore.read();
+  const runDistillNow = async (): Promise<{ memories: number; rules: number; conflicts: number } | null> => {
+    if (!llm) {
+      return null;
+    }
+    const messages = collector.drain();
+    if (messages.length === 0) {
+      return { memories: 0, rules: 0, conflicts: 0 };
+    }
+    const result = await runDistillIncremental(llm, service, messages, distillCursor, {
+      scope: 'workspace',
+    });
+    distillCursor = result.cursor;
+    cursorStore.write(distillCursor);
+    return {
+      memories: result.stats.memories,
+      rules: result.stats.rules,
+      conflicts: result.stats.conflicts,
+    };
+  };
   const commandDeps: CommandDeps = {
     service,
     config,
@@ -219,7 +240,7 @@ export function apply(ctx: Context, raw: Partial<Config> = {}): void {
     collector,
     bus,
     gitStore,
-    distillCursor: cursorStore.read(),
+    distillCursor,
     persistCursor: (c) => cursorStore.write(c),
   };
 
@@ -229,6 +250,7 @@ export function apply(ctx: Context, raw: Partial<Config> = {}): void {
   registerInjection(ctx, service, getConfig);
   registerRuleInjection(ctx, service, getConfig);
   registerBackfillJob(ctx, service, getConfig);
+  registerMnemosRoutes(ctx, { store, service, gitStore, runDistillNow });
   if (config.distillAuto && llm) {
     registerScheduledDistill(ctx, { llm, service, getConfig, collector });
   }

@@ -55,7 +55,7 @@ function runVersioningSuite(backendName: string, backend: () => GitBackend) {
       await git.recordCommit('add v2');
 
       const all = await git.history();
-      expect(all.length).toBe(2);
+      expect(all.length).toBe(3);
       expect(await git.history('mm://mnemos/aaaa')).toHaveLength(1);
 
       store.updateMemory('mm://mnemos/aaaa', { summary: 'v3' });
@@ -90,6 +90,19 @@ function runVersioningSuite(backendName: string, backend: () => GitBackend) {
       await git.exportBundle(out);
       expect(existsSync(out)).toBe(true);
       expect(() => execFileSync('git', ['bundle', 'verify', out], { encoding: 'utf8' })).not.toThrow();
+      rmSync(dir, { recursive: true, force: true });
+      rmSync(out, { force: true });
+    });
+
+    it('ensure seeds an initial commit so backup works on a fresh repo', async () => {
+      const dir = mkdtempSync(join(tmpdir(), `mnemos-git-init-${backendName}-`));
+      const { git } = makeGitStore(dir, backend);
+      await git.ensure();
+      const all = await git.history();
+      expect(all.length).toBeGreaterThanOrEqual(1);
+      const out = join(tmpdir(), `mnemos-init-${backendName}.bundle`);
+      await git.exportBundle(out);
+      expect(existsSync(out)).toBe(true);
       rmSync(dir, { recursive: true, force: true });
       rmSync(out, { force: true });
     });

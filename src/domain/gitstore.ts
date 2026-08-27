@@ -11,7 +11,8 @@
  * durable readable log and the sync transport. Pull reconciles the store from
  * the merged mirror; on conflict it applies nothing and reports the files.
  */
-import { mkdirSync } from 'node:fs';
+import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
+import { join } from 'node:path';
 import { GitBackend, CommitInfo } from './git/backend.js';
 import { MemoryStore } from './store.js';
 import { MemoryService } from './service.js';
@@ -51,6 +52,24 @@ export function createGitStore(opts: GitStoreOptions): GitStore {
   return {
     async ensure() {
       await backend.ensureRepo(repoDir);
+      let history: CommitInfo[] = [];
+      try {
+        history = await backend.log(repoDir);
+      } catch {
+        // A fresh repo has no refs; some backends (isomorphic-git) throw on
+        // log, which is exactly the no-commits case.
+      }
+      if (history.length > 0) {
+        return;
+      }
+      // A fresh mirror repo has no commits, so exportBundle/history have no ref
+      // to read. Seed a marker file (not `.md`, so syncMirror never removes it)
+      // and commit it, giving the initial snapshot real content.
+      const marker = join(repoDir, '.gitkeep');
+      if (!existsSync(marker)) {
+        writeFileSync(marker, 'dsh-mnemos memory mirror\n', 'utf8');
+      }
+      await backend.commit(repoDir, 'mnemos: initialize mirror');
     },
 
     async recordCommit(message) {
