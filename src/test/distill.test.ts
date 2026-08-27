@@ -73,6 +73,23 @@ describe('distill runner', () => {
     expect(service.listRules('proposed')).toHaveLength(1);
   });
 
+  it('stores a protocol entry as a memory, not a rule', async () => {
+    const { service } = make();
+    const llm = fakeLlm(() =>
+      JSON.stringify([
+        { type: 'protocol', topic: 'sandbox', summary: 'Every bash call runs in a fresh bwrap sandbox; /tmp is tmpfs.', confidence: 0.95, keywords: ['bash', 'sandbox'] },
+      ]),
+    );
+    const runner = createDistillRunner(llm, service, { scope: 'workspace', workspace: 'ws', sessionId: 's1' });
+    const stats = await runner.run([msg({ role: 'user', text: 'bash runs in a sandbox', index: 0 })]);
+    expect(stats.memories).toBe(1);
+    expect(stats.rules).toBe(0);
+    expect(service.listRules('proposed')).toHaveLength(0);
+    const stored = service.listActive('workspace', 'ws')[0]!;
+    expect(stored.type).toBe('protocol');
+    expect(stored.keywords).toEqual(['bash', 'sandbox']);
+  });
+
   it('drops invalid LLM output and never writes it', async () => {
     const { service } = make();
     const llm = fakeLlm(() => 'not json at all');

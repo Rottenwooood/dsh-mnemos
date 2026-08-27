@@ -196,7 +196,7 @@ export function createMnemosRouteHandler(deps: MnemosRouteDeps): (req: Req, res:
         }
         const result = deps.service.add(
           {
-            type: (typeof body.type === 'string' && ['project_fact', 'procedure', 'preference', 'error_fix', 'decision'].includes(body.type) ? body.type : 'project_fact') as MemoryInput['type'],
+            type: (typeof body.type === 'string' && ['project_fact', 'procedure', 'preference', 'error_fix', 'decision', 'protocol'].includes(body.type) ? body.type : 'project_fact') as MemoryInput['type'],
             // User preferences apply everywhere, not just the current workspace.
             scope: body.scope === 'global' || (body.type === 'preference' && body.scope === undefined) ? 'global' : 'workspace',
             topic,

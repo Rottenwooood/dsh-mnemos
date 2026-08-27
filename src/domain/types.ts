@@ -1,4 +1,4 @@
-export type MemoryType = 'project_fact' | 'procedure' | 'preference' | 'error_fix' | 'decision';
+export type MemoryType = 'project_fact' | 'procedure' | 'preference' | 'error_fix' | 'decision' | 'protocol';
 export type MemoryScope = 'global' | 'workspace';
 export type MemoryStatus = 'active' | 'archived' | 'deleted';
 export type MemorySource = 'manual' | 'import' | 'evolve' | 'third_party';

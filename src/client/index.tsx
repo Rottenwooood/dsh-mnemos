@@ -90,7 +90,7 @@ interface GitCommit {
   date: string
 }
 
-const MEMORY_TYPES = ['project_fact', 'preference', 'protocol', 'learned']
+const MEMORY_TYPES = ['project_fact', 'procedure', 'preference', 'error_fix', 'decision', 'protocol']
 
 /** `/mnemos/api/usage` answer: ledger-derived cross-session stats. */
 interface UsageStats {
@@ -552,6 +552,7 @@ const FIELDS: MnemosField[] = [
   { key: 'injectMinHits', kind: 'number', label: '自动注入最低跨会话命中次数', group: '注入' },
   { key: 'injectMaxBytes', kind: 'number', label: '每轮热层注入字节预算', group: '注入' },
   { key: 'rulesInjectEnabled', kind: 'boolean', label: '向模型注入已批准规则', group: '注入' },
+  { key: 'protocolInjectEnabled', kind: 'boolean', label: '每会话注入环境/工具约定', hint: 'protocol 类型记忆（如沙箱规则）每会话在场', group: '注入' },
   { key: 'sessionLogDirs', kind: 'stringList', label: '会话日志扫描目录', hint: '逗号分隔', group: '导入' },
   { key: 'backfillEnabled', kind: 'boolean', label: '启动时回填历史会话日志', group: '导入' },
   { key: 'importCaller', kind: 'string', label: '导入写入方', hint: 'human / plugin', group: '导入' },

@@ -48,6 +48,8 @@ export interface Config {
   skillsDir: string;
   /** Inject approved rules into agent/request prompts. */
   rulesInjectEnabled: boolean;
+  /** Inject active protocol (environment/tool-convention) memories every session. */
+  protocolInjectEnabled: boolean;
   /** Automatic distillation (default off = purely manual trigger). */
   distillAuto: boolean;
   /** Auto-distill every N live user messages when distillAuto is on (count-based, not a timer). */
@@ -96,6 +98,7 @@ export function defaultConfig(): Config {
     importCaller: 'human',
     skillsDir: join(home, '.dsh', 'mnemos', 'skills'),
     rulesInjectEnabled: true,
+    protocolInjectEnabled: true,
     distillAuto: false,
     distillEveryNTurns: 5,
     distillWindow: 200,
