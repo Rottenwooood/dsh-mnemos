@@ -66,7 +66,7 @@ export interface Config {
   syncEnabled: boolean;
   /** How often the sync job runs, in minutes. */
   syncIntervalMinutes: number;
-  /** Git backend: 'isomorphic' (pure JS, default) or 'system' (system git CLI). */
+  /** Git backend: 'system' (system git CLI, reliable for real remote sync) or 'isomorphic' (pure JS). */
   gitBackend: 'isomorphic' | 'system';
   /** LLM provider for distillation; empty falls back to DSH's agent-default-model. */
   llmProvider: string;
@@ -105,7 +105,7 @@ export function defaultConfig(): Config {
     gitRemoteUrl: '',
     syncEnabled: false,
     syncIntervalMinutes: 1440,
-    gitBackend: 'isomorphic',
+    gitBackend: 'system',
     llmProvider: '',
     llmModel: '',
   };

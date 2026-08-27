@@ -14,9 +14,9 @@ import { GitBackend, CommitInfo, MergeResult } from './backend.js';
 
 const execFileAsync = promisify(execFile);
 
-async function git(dir: string, args: string[]): Promise<{ stdout: string; code: number }> {
+async function git(dir: string, args: string[], opts: { timeout?: number } = {}): Promise<{ stdout: string; code: number }> {
   try {
-    const { stdout } = await execFileAsync('git', args, { cwd: dir, encoding: 'utf8' });
+    const { stdout } = await execFileAsync('git', args, { cwd: dir, encoding: 'utf8', timeout: opts.timeout });
     return { stdout: stdout.replace(/\n$/, ''), code: 0 };
   } catch (err) {
     const e = err as { stdout?: string; code?: number; message?: string };
@@ -94,14 +94,14 @@ export function createSystemGitBackend(): GitBackend {
     },
 
     async push(dir, remote, branch) {
-      const { code, stdout } = await git(dir, ['push', '-u', remote, branch]);
+      const { code, stdout } = await git(dir, ['push', '-u', remote, branch], { timeout: 180_000 });
       if (code !== 0) {
         throw new Error(stdout || 'git push failed');
       }
     },
 
     async fetch(dir, remote) {
-      await git(dir, ['fetch', remote]);
+      await git(dir, ['fetch', remote], { timeout: 180_000 });
     },
 
     async merge(dir, branch): Promise<MergeResult> {

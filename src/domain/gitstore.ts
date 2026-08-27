@@ -186,12 +186,19 @@ export function createGitStore(opts: GitStoreOptions): GitStore {
 
     async push() {
       const branch = await backend.currentBranch(repoDir);
-      try {
-        await backend.push(repoDir, remote, branch);
-        return { ok: true };
-      } catch (err) {
-        return { ok: false, reason: err instanceof Error ? err.message : String(err) };
+      let last: unknown;
+      // Remote sync failures are often transient (stale connection, flaky
+      // network); retry once before giving up.
+      for (let attempt = 0; attempt < 2; attempt++) {
+        try {
+          await backend.push(repoDir, remote, branch);
+          return { ok: true };
+        } catch (err) {
+          last = err;
+          await new Promise((r) => setTimeout(r, 1000 * (attempt + 1)));
+        }
       }
+      return { ok: false, reason: last instanceof Error ? last.message : String(last) };
     },
 
     async setRemote(url) {

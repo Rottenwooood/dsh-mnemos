@@ -11,17 +11,31 @@
  * standard `# v2 git bundle` format (refs + PACK) built from packObjects.
  */
 import git from 'isomorphic-git';
-import httpClient from 'isomorphic-git/http/node';
+import httpNode from 'isomorphic-git/http/node';
 import fs from 'node:fs';
 import { existsSync, readFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
+import { Agent as HttpsAgent } from 'node:https';
 import { GitBackend, CommitInfo, MergeResult } from './backend.js';
 
 const AUTHOR = { name: 'dsh-mnemos', email: 'dsh-mnemos@localhost' };
 
-/** Real node http client: https remotes now work (the old stub threw). */
-const opts = { fs, http: httpClient } as const;
+/**
+ * Dedicated keep-alive agent + request timeout for remote sync. The default
+ * global agent reuses sockets across unrelated traffic (LLM calls, settings,
+ * the web UI), so a stale half-open connection to the git remote can hang a
+ * push indefinitely. A private keep-alive pool isolates remote traffic, and a
+ * request inactivity timeout (60s) fails fast instead of hanging forever.
+ * No agent-level socket timeout: GitHub response gaps on slow networks must
+ * not kill a legitimate push.
+ */
+const remoteAgent = new HttpsAgent({ keepAlive: true, maxSockets: 4 });
+const http: Parameters<typeof git.push>[0]['http'] = {
+  request: (req) => httpNode.request({ ...req, agent: remoteAgent, fetchOptions: { timeout: 60_000 } }),
+};
+
+const opts = { fs, http } as const;
 
 /**
  * Read the credential for a remote host from the standard `~/.git-credentials`
