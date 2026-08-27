@@ -20,7 +20,7 @@ dsh plugin --profile web add dsh-mnemos
 dsh web
 ```
 
-记一条记忆：在会话里让模型"记住：用 pnpm 安装依赖"（模型会调用 `memory_record`），或者到设置页**导入历史会话**（支持 Claude Code / Codex / ChatGPT / DSH 历史日志）。
+记一条记忆：在会话里让模型"记住：用 pnpm 安装依赖"（模型会调用 `memory_record`），或者到设置页**导入历史会话**（支持 Claude Code / Codex / ChatGPT / DSH 历史日志，目录默认预填 `~/.dsh/sessions`，点"扫描预览"即可）。
 
 ## 日常用法
 

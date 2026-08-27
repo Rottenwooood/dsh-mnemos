@@ -687,9 +687,11 @@ function FieldControl({
 }
 
 /** The import-history area inside the settings page. */
+const DEFAULT_SESSION_DIR = '~/.dsh/sessions'
+
 function MnemosImportSection(): ReactNode {
   const [source, setSource] = useState('dsh')
-  const [dir, setDir] = useState('')
+  const [dir, setDir] = useState(DEFAULT_SESSION_DIR)
   const [preview, setPreview] = useState<ImportPreview | null>(null)
   const [run, setRun] = useState<ImportRunStats | null>(null)
   const [error, setError] = useState<string | null>(null)
@@ -754,12 +756,20 @@ function MnemosImportSection(): ReactNode {
           onChange={(e) => setDir(e.target.value)}
         />
       </div>
-      <div>
+      <div style={{ display: 'flex', gap: 8, marginBottom: 8 }}>
         <button className="mnemos-button" disabled={dir.length === 0 || busy} onClick={() => { void scan() }}>
           扫描预览
         </button>
-        <button className="mnemos-button" style={{ marginLeft: 8 }} disabled={preview === null || busy} onClick={() => { void doImport() }}>
+        <button className="mnemos-button" disabled={preview === null || busy} onClick={() => { void doImport() }}>
           导入
+        </button>
+        <button
+          className="mnemos-button"
+          disabled={dir === DEFAULT_SESSION_DIR}
+          title="填回 DSH 默认会话日志目录"
+          onClick={() => { setDir(DEFAULT_SESSION_DIR); setPreview(null); setRun(null) }}
+        >
+          用默认
         </button>
       </div>
       {error !== null ? <p className="mnemos-error">{error}</p> : null}

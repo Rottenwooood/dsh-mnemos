@@ -10,6 +10,7 @@
  */
 import type { Context } from '@deepseek-ai/cordis';
 import { readdirSync, readFileSync, statSync } from 'node:fs';
+import { homedir } from 'node:os';
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import { join } from 'node:path';
 import { zstdDecompressSync } from 'node:zlib';
@@ -49,6 +50,17 @@ function json(res: Res, status: number, value: unknown): void {
 }
 
 const IMPORT_FILE_RE = /\.(?:jsonl|json|txt|md|zstd|ln)$/;
+
+/** Expand a leading `~` (the client sends `~/.dsh/sessions` as the default). */
+function expandHome(dir: string): string {
+  if (dir === '~') {
+    return homedir();
+  }
+  if (dir.startsWith('~/')) {
+    return join(homedir(), dir.slice(2));
+  }
+  return dir;
+}
 
 /** Recursively list transcript files under a directory, bounded to avoid runaway scans. */
 function listImportFiles(dir: string): string[] {
@@ -256,7 +268,7 @@ export function createMnemosRouteHandler(deps: MnemosRouteDeps): (req: Req, res:
         return;
       }
       if (method === 'GET' && route === '/import/preview') {
-        const dir = url.searchParams.get('dir');
+        const dir = expandHome(url.searchParams.get('dir') ?? '');
         if (!dir || !statSync(dir, { throwIfNoEntry: false })?.isDirectory()) {
           json(res, 400, { error: 'dir is required and must be a directory' });
           return;
@@ -284,7 +296,7 @@ export function createMnemosRouteHandler(deps: MnemosRouteDeps): (req: Req, res:
       }
       if (method === 'POST' && route === '/import/run') {
         const body = await readJson(req);
-        const dir = typeof body.dir === 'string' ? body.dir : '';
+        const dir = expandHome(typeof body.dir === 'string' ? body.dir : '');
         if (!dir || !statSync(dir, { throwIfNoEntry: false })?.isDirectory()) {
           json(res, 400, { error: 'dir is required and must be a directory' });
           return;
