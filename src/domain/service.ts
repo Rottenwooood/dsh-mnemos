@@ -97,6 +97,7 @@ export function createMemoryService(
   store: MemoryStore,
   detector: SensitiveDetector,
   config: GateConfig = DEFAULT_GATE,
+  onWrite?: () => void,
 ): MemoryService {
   let current = config;
   const now = () => new Date().toISOString();
@@ -125,6 +126,7 @@ export function createMemoryService(
   function buildMemory(input: MemoryInput): Memory {
     return {
       ...input,
+      evidence: input.evidence ?? [],
       id: `mm://mnemos/${randomUUID()}`,
       createdAt: now(),
       updatedAt: now(),
@@ -217,6 +219,7 @@ export function createMemoryService(
       if (autoApprovable(input, caller) && !forcePropose) {
         const memory = buildMemory(input);
         store.addMemory(memory);
+        onWrite?.();
         const auditId = audit('add', 'memory', memory.id, input, false, byAgent);
         return { outcome: 'committed', memory, auditId };
       }
@@ -258,6 +261,7 @@ export function createMemoryService(
           store.updateMemory(raw.replaceMemoryId, raw.memory);
           store.updateApprovalState(id, 'approved');
           audit('replace', 'memory', raw.replaceMemoryId, { approvalId: id, from: existing, to: raw.memory }, false, false);
+          onWrite?.();
           return { ok: true, memory: store.getMemory(raw.replaceMemoryId) };
         }
         const input = raw as MemoryInput;
@@ -265,6 +269,7 @@ export function createMemoryService(
         store.addMemory(memory);
         store.updateApprovalState(id, 'approved');
         audit('approve', 'approval', String(id), { approvalId: id, memoryId: memory.id }, false, false);
+        onWrite?.();
         return { ok: true, memory };
       }
       const rule = (edited ?? candidate.payload) as Rule;

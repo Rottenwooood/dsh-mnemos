@@ -172,9 +172,22 @@ export function apply(ctx: Context, raw: Partial<Config> = {}): void {
   const getConfig = () => config;
   const logger = ctx.logger('mnemos');
 
+  let gitStore: GitStore | undefined;
+  let gitCommitTimer: ReturnType<typeof setTimeout> | undefined;
+  const scheduleGitCommit = (): void => {
+    if (gitStore === undefined) return;
+    if (gitCommitTimer !== undefined) clearTimeout(gitCommitTimer);
+    gitCommitTimer = setTimeout(() => {
+      gitCommitTimer = undefined;
+      void gitStore!.recordCommit('memory change').catch((err) =>
+        logger.warn(`git auto-commit failed: ${err instanceof Error ? err.message : String(err)}`),
+      );
+    }, 1000);
+  };
+
   mkdirSync(dirname(config.dbPath), { recursive: true });
   const store = openMemoryStore(config.dbPath);
-  const service = createMemoryService(store, createSensitiveDetector(), gateFrom(config));
+  const service = createMemoryService(store, createSensitiveDetector(), gateFrom(config), scheduleGitCommit);
 
   ctx.effect(() => () => {
     store.close();
@@ -193,7 +206,6 @@ export function apply(ctx: Context, raw: Partial<Config> = {}): void {
     logger.info(`mnemos settings updated (gate re-applied, dbPath=${next.dbPath})`);
   });
 
-  let gitStore: GitStore | undefined;
   if (config.gitVersioning) {
     const backend = config.gitBackend === 'isomorphic'
       ? createIsomorphicGitBackend()
