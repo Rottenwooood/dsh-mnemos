@@ -152,6 +152,33 @@ export function createMnemosRouteHandler(deps: MnemosRouteDeps): (req: Req, res:
         json(res, 200, { query: q, hits });
         return;
       }
+      if (method === 'POST' && route === '/memory/delete') {
+        const body = await readJson(req);
+        const id = typeof body.id === 'string' ? body.id : '';
+        if (!id) {
+          json(res, 400, { ok: false, reason: 'id is required' });
+          return;
+        }
+        json(res, 200, deps.service.removeMemory(id));
+        return;
+      }
+      if (method === 'POST' && route === '/memory/edit') {
+        const body = await readJson(req);
+        const id = typeof body.id === 'string' ? body.id : '';
+        if (!id) {
+          json(res, 400, { ok: false, reason: 'id is required' });
+          return;
+        }
+        const patch: Partial<{ summary: string; detail: string }> = {};
+        if (typeof body.summary === 'string') patch.summary = body.summary;
+        if (typeof body.detail === 'string') patch.detail = body.detail;
+        if (Object.keys(patch).length === 0) {
+          json(res, 400, { ok: false, reason: 'summary or detail is required' });
+          return;
+        }
+        json(res, 200, deps.service.editMemory(id, patch));
+        return;
+      }
       if (method === 'GET' && route === '/stats') {
         const active = deps.service.listActive();
         json(res, 200, {

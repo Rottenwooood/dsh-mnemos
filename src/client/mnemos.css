@@ -183,3 +183,29 @@
   line-height: 1.5;
   color: var(--dsw-alias-label-error);
 }
+
+.mnemos-group {
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  margin: 18px 0 4px;
+  padding-bottom: 4px;
+  border-bottom: 1px solid var(--dsw-alias-border-l2);
+  color: var(--dsw-alias-label-secondary);
+}
+
+.mnemos-notice {
+  padding: 8px 12px;
+  border-radius: 8px;
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--dsw-alias-label-primary);
+  background: var(--dsw-alias-bg-layer-3);
+  border: 1px solid var(--dsw-alias-border-l2);
+}
+
+.mnemos-notice[data-kind='err'] {
+  color: var(--dsw-alias-label-error);
+  border-color: var(--dsw-alias-label-error);
+}

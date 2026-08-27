@@ -82,6 +82,10 @@ export interface MemoryService {
   /** Replace the gate in place (live settings re-apply). */
   updateGate(next: GateConfig): void;
   add(input: MemoryInput, caller: Caller, forcePropose?: boolean): WriteResult;
+  /** Soft-delete one memory (human action); fires onWrite for the git snapshot. */
+  removeMemory(id: string): { ok: boolean; reason?: string };
+  /** Edit one memory's summary/detail (human action); fires onWrite. */
+  editMemory(id: string, patch: Partial<Pick<MemoryInput, 'summary' | 'detail'>>): { ok: boolean; reason?: string };
   approve(id: number, decision: 'approve' | 'reject', edited?: MemoryInput): ApproveResult;
   proposeRule(rule: Rule, caller: Caller): RuleWriteResult;
   proposeReplacement(input: MemoryInput, replaceMemoryId: string, caller: Caller): RuleWriteResult;
@@ -207,6 +211,28 @@ export function createMemoryService(
 
     updateGate(next) {
       current = next;
+    },
+
+    removeMemory(id) {
+      const existing = store.getMemory(id);
+      if (!existing) {
+        return { ok: false, reason: 'not-found' };
+      }
+      store.setMemoryStatus(id, 'deleted');
+      onWrite?.();
+      audit('delete', 'memory', id, { id, topic: existing.topic }, false, false);
+      return { ok: true };
+    },
+
+    editMemory(id, patch) {
+      const existing = store.getMemory(id);
+      if (!existing) {
+        return { ok: false, reason: 'not-found' };
+      }
+      store.updateMemory(id, patch);
+      onWrite?.();
+      audit('edit', 'memory', id, { id, patch }, false, false);
+      return { ok: true };
     },
 
     add(input, caller, forcePropose = false) {

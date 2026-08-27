@@ -86,29 +86,90 @@ export function MnemosTab(): ReactNode {
   const memories = useJson<{ memories: MemoryRow[] }>('/mnemos/api/memories?scope=workspace')
   const git = useJson<{ changed: string[] }>('/mnemos/api/git/status')
   const [search, setSearch] = useState('')
-  const [message, setMessage] = useState('')
+  const [notice, setNotice] = useState<{ kind: 'ok' | 'err'; text: string } | null>(null)
+  const [busy, setBusy] = useState(false)
+  const [editingId, setEditingId] = useState<string | null>(null)
+  const [draft, setDraft] = useState('')
 
-  const act = async (path: string, body?: unknown): Promise<void> => {
-    try {
-      const result = (await postJson(path, body)) as { ok?: boolean; error?: string; reason?: string }
-      setMessage(JSON.stringify(result).slice(0, 200))
-    } catch (err) {
-      setMessage(err instanceof Error ? err.message : String(err))
-    }
+  const refreshAll = useCallback(() => {
+    stats.reload()
     pending.reload()
     memories.reload()
     git.reload()
-    stats.reload()
+  }, [stats, pending, memories, git])
+
+  // Keep the console current while the panel is open.
+  useEffect(() => {
+    const id = setInterval(refreshAll, 30000)
+    return () => clearInterval(id)
+  }, [refreshAll])
+
+  // Auto-dismiss the action notice.
+  useEffect(() => {
+    if (notice === null) return
+    const id = setTimeout(() => setNotice(null), 4000)
+    return () => clearTimeout(id)
+  }, [notice])
+
+  const act = useCallback(async (path: string, body: unknown | undefined, okText: string): Promise<void> => {
+    setBusy(true)
+    try {
+      const result = (await postJson(path, body)) as { ok?: boolean; error?: string; reason?: string }
+      if (result.error !== undefined) setNotice({ kind: 'err', text: result.error })
+      else if (result.ok === false) setNotice({ kind: 'err', text: result.reason ?? '操作失败' })
+      else setNotice({ kind: 'ok', text: okText })
+    } catch (err) {
+      setNotice({ kind: 'err', text: err instanceof Error ? err.message : String(err) })
+    }
+    setBusy(false)
+    refreshAll()
+  }, [refreshAll])
+
+  const distill = async (): Promise<void> => {
+    setBusy(true)
+    try {
+      const result = (await postJson('/mnemos/api/distill')) as { error?: string; memories?: number; rules?: number; conflicts?: number }
+      if (result.error !== undefined) setNotice({ kind: 'err', text: result.error })
+      else setNotice({ kind: 'ok', text: `提炼完成：${result.memories ?? 0} 条记忆 · ${result.rules ?? 0} 条规则 · ${result.conflicts ?? 0} 冲突` })
+    } catch (err) {
+      setNotice({ kind: 'err', text: err instanceof Error ? err.message : String(err) })
+    }
+    setBusy(false)
+    refreshAll()
   }
+
+  const startEdit = (memory: MemoryRow): void => {
+    setEditingId(memory.id)
+    setDraft(memory.summary)
+  }
+
+  const visible = (memories.data?.memories ?? [])
+    .filter((m) => search.length === 0 || `${m.topic} ${m.summary}`.toLowerCase().includes(search.toLowerCase()))
+    .slice(0, 20)
 
   return (
     <div style={{ padding: 10, font: 'inherit' }}>
+      {notice !== null ? (
+        <div
+          className="mnemos-notice"
+          data-kind={notice.kind}
+          style={{ marginBottom: 8 }}
+        >
+          {notice.text}
+        </div>
+      ) : null}
+
       <div className="mnemos-section" style={{ padding: 0 }}>
         <div className="mnemos-heading" style={{ fontSize: 13 }}>概览</div>
         <div className="mnemos-intro" style={{ margin: '4px 0 8px' }}>
           {stats.data ? `${stats.data.totalActive} 条记忆 · ${stats.data.pending} 待审批 · 上限 ${stats.data.gate.maxEntries}` : stats.error ?? '加载中…'}
         </div>
-        <button className="mnemos-button" onClick={() => act('/mnemos/api/distill')}>现在提炼</button>
+        <button className="mnemos-button" style={{ marginRight: 6 }} disabled={busy} onClick={() => { void distill() }}>
+          现在提炼
+        </button>
+        <button className="mnemos-button" disabled={busy} onClick={refreshAll}>
+          刷新
+        </button>
       </div>
 
       <div className="mnemos-section" style={{ padding: 0 }}>
@@ -118,10 +179,10 @@ export function MnemosTab(): ReactNode {
             <div className="mnemos-intro" style={{ margin: 0 }}>
               [{p.kind}] {p.payload?.topic ?? p.id} — {p.payload?.summary ?? ''}（by {p.proposedBy}）
             </div>
-            <button className="mnemos-button" style={{ marginRight: 6, marginTop: 6 }} onClick={() => act('/mnemos/api/approve', { approvalId: p.id, decision: 'approve' })}>
+            <button className="mnemos-button" style={{ marginRight: 6, marginTop: 6 }} disabled={busy} onClick={() => void act('/mnemos/api/approve', { approvalId: p.id, decision: 'approve' }, '已批准')}>
               批准
             </button>
-            <button className="mnemos-button" style={{ marginTop: 6 }} onClick={() => act('/mnemos/api/approve', { approvalId: p.id, decision: 'reject' })}>
+            <button className="mnemos-button" style={{ marginTop: 6 }} disabled={busy} onClick={() => void act('/mnemos/api/approve', { approvalId: p.id, decision: 'reject' }, '已拒绝')}>
               拒绝
             </button>
           </div>
@@ -139,15 +200,52 @@ export function MnemosTab(): ReactNode {
           value={search}
           onChange={(e) => setSearch(e.target.value)}
         />
-        {(memories.data?.memories ?? [])
-          .filter((m) => search.length === 0 || `${m.topic} ${m.summary}`.toLowerCase().includes(search.toLowerCase()))
-          .slice(0, 20)
-          .map((m) => (
-            <div key={m.id} className="mnemos-intro" style={{ margin: '6px 0 0' }}>
-              {m.topic} — {m.summary}（命中 {m.crossSessionHits}）
-            </div>
-          ))}
-        {memories.data && memories.data.memories.length === 0 ? <div className="mnemos-intro" style={{ margin: 0 }}>暂无记忆</div> : null}
+        {visible.length === 0 && (memories.data?.memories.length ?? 0) === 0 ? (
+          <div className="mnemos-intro" style={{ margin: '8px 0 0' }}>
+            还没有记忆。让模型在会话里记录项目事实（例如"用 pnpm 安装依赖"），或在设置页导入历史会话。
+          </div>
+        ) : null}
+        {visible.length === 0 && (memories.data?.memories.length ?? 0) > 0 ? (
+          <div className="mnemos-intro" style={{ margin: '8px 0 0' }}>没有匹配「{search}」的记忆。</div>
+        ) : null}
+        {visible.map((m) => (
+          <div key={m.id} style={{ marginTop: 8 }}>
+            {editingId === m.id ? (
+              <>
+                <input
+                  className="mnemos-input"
+                  value={draft}
+                  onChange={(e) => setDraft(e.target.value)}
+                  placeholder="摘要"
+                />
+                <button className="mnemos-button" style={{ marginRight: 6, marginTop: 6 }} disabled={busy || draft.trim().length === 0} onClick={() => void act('/mnemos/api/memory/edit', { id: m.id, summary: draft.trim() }, '已保存').then(() => setEditingId(null))}>
+                  保存
+                </button>
+                <button className="mnemos-button" style={{ marginTop: 6 }} onClick={() => setEditingId(null)}>
+                  取消
+                </button>
+              </>
+            ) : (
+              <>
+                <div className="mnemos-intro" style={{ margin: 0 }}>
+                  {m.topic} — {m.summary}（命中 {m.crossSessionHits}）
+                </div>
+                <button className="mnemos-button" style={{ marginRight: 6, marginTop: 6 }} disabled={busy} onClick={() => startEdit(m)}>
+                  编辑
+                </button>
+                <button
+                  className="mnemos-button"
+                  style={{ marginTop: 6 }}
+                  disabled={busy}
+                  onClick={() => { if (window.confirm(`删除记忆「${m.topic}」？可从 git 历史恢复。`)) void act('/mnemos/api/memory/delete', { id: m.id }, '已删除') }}
+                >
+                  删除
+                </button>
+              </>
+            )}
+          </div>
+        ))}
+        {memories.error ? <div className="mnemos-error">{memories.error}</div> : null}
       </div>
 
       <div className="mnemos-section" style={{ padding: 0 }}>
@@ -155,12 +253,10 @@ export function MnemosTab(): ReactNode {
         <div className="mnemos-intro" style={{ margin: '4px 0 6px' }}>
           {git.data ? `${git.data.changed.length} 未提交变更` : git.error ?? '加载中…'}
         </div>
-        <button className="mnemos-button" style={{ marginRight: 6 }} onClick={() => act('/mnemos/api/git/pull')}>pull</button>
-        <button className="mnemos-button" style={{ marginRight: 6 }} onClick={() => act('/mnemos/api/git/push')}>push</button>
-        <button className="mnemos-button" onClick={() => act('/mnemos/api/git/backup', { out: '/tmp/mnemos-backup.bundle' })}>备份</button>
+        <button className="mnemos-button" style={{ marginRight: 6 }} disabled={busy} onClick={() => void act('/mnemos/api/git/pull', undefined, '已拉取')}>pull</button>
+        <button className="mnemos-button" style={{ marginRight: 6 }} disabled={busy} onClick={() => void act('/mnemos/api/git/push', undefined, '已推送')}>push</button>
+        <button className="mnemos-button" disabled={busy} onClick={() => void act('/mnemos/api/git/backup', { out: '/tmp/mnemos-backup.bundle' }, '备份已生成')}>备份</button>
       </div>
-
-      {message ? <div className="mnemos-note">{message}</div> : null}
     </div>
   )
 }
@@ -185,35 +281,36 @@ interface MnemosField {
   kind: 'string' | 'number' | 'boolean' | 'stringList'
   label: string
   hint?: string
+  group?: string
 }
 
 const FIELDS: MnemosField[] = [
-  { key: 'dbPath', kind: 'string', label: 'SQLite 数据库文件路径', hint: '需重启生效' },
-  { key: 'maxEntries', kind: 'number', label: '记忆条目上限' },
-  { key: 'maxBytesPerEntry', kind: 'number', label: '单条记忆字节上限' },
-  { key: 'autoApprove', kind: 'boolean', label: '自动放行高置信度项目事实' },
-  { key: 'autoApproveConfidence', kind: 'number', label: '自动放行置信度阈值' },
-  { key: 'allowModelGlobalWrite', kind: 'boolean', label: '允许模型直接写全局记忆' },
-  { key: 'blacklist', kind: 'stringList', label: '拉黑写入者', hint: '逗号分隔' },
-  { key: 'injectLimit', kind: 'number', label: '每轮注入记忆条数上限' },
-  { key: 'injectMinHits', kind: 'number', label: '自动注入最低跨会话命中次数' },
-  { key: 'injectMaxBytes', kind: 'number', label: '每轮热层注入字节预算' },
-  { key: 'sessionLogDirs', kind: 'stringList', label: '会话日志扫描目录', hint: '逗号分隔' },
-  { key: 'backfillEnabled', kind: 'boolean', label: '启动时回填历史会话日志' },
-  { key: 'importCaller', kind: 'string', label: '导入写入方', hint: 'human / plugin' },
-  { key: 'skillsDir', kind: 'string', label: '规则技能文件目录' },
-  { key: 'rulesInjectEnabled', kind: 'boolean', label: '向模型注入已批准规则' },
-  { key: 'distillAuto', kind: 'boolean', label: '自动提炼', hint: '关 = 纯手动按钮' },
-  { key: 'distillIntervalMinutes', kind: 'number', label: '定时提炼间隔（分钟）' },
-  { key: 'distillWindow', kind: 'number', label: '单次提炼缓冲消息数' },
-  { key: 'memoryRepoDir', kind: 'string', label: 'git 记忆仓库目录', hint: '需重启生效' },
-  { key: 'gitVersioning', kind: 'boolean', label: 'git 版本管理' },
-  { key: 'gitRemoteName', kind: 'string', label: 'git 远程名' },
-  { key: 'syncEnabled', kind: 'boolean', label: '自动跨机同步' },
-  { key: 'syncIntervalMinutes', kind: 'number', label: '自动同步间隔（分钟）' },
-  { key: 'gitBackend', kind: 'string', label: 'git 后端', hint: 'isomorphic / system' },
-  { key: 'llmProvider', kind: 'string', label: '提炼用 LLM provider', hint: '留空用 DSH 默认' },
-  { key: 'llmModel', kind: 'string', label: '提炼用 LLM 模型', hint: '留空用 DSH 默认' },
+  { key: 'dbPath', kind: 'string', label: 'SQLite 数据库文件路径', hint: '需重启生效', group: '存储' },
+  { key: 'maxEntries', kind: 'number', label: '记忆条目上限', group: '门禁' },
+  { key: 'maxBytesPerEntry', kind: 'number', label: '单条记忆字节上限', group: '门禁' },
+  { key: 'autoApprove', kind: 'boolean', label: '自动放行高置信度项目事实', group: '门禁' },
+  { key: 'autoApproveConfidence', kind: 'number', label: '自动放行置信度阈值', group: '门禁' },
+  { key: 'allowModelGlobalWrite', kind: 'boolean', label: '允许模型直接写全局记忆', group: '门禁' },
+  { key: 'blacklist', kind: 'stringList', label: '拉黑写入者', hint: '逗号分隔', group: '门禁' },
+  { key: 'injectLimit', kind: 'number', label: '每轮注入记忆条数上限', group: '注入' },
+  { key: 'injectMinHits', kind: 'number', label: '自动注入最低跨会话命中次数', group: '注入' },
+  { key: 'injectMaxBytes', kind: 'number', label: '每轮热层注入字节预算', group: '注入' },
+  { key: 'rulesInjectEnabled', kind: 'boolean', label: '向模型注入已批准规则', group: '注入' },
+  { key: 'sessionLogDirs', kind: 'stringList', label: '会话日志扫描目录', hint: '逗号分隔', group: '导入' },
+  { key: 'backfillEnabled', kind: 'boolean', label: '启动时回填历史会话日志', group: '导入' },
+  { key: 'importCaller', kind: 'string', label: '导入写入方', hint: 'human / plugin', group: '导入' },
+  { key: 'skillsDir', kind: 'string', label: '规则技能文件目录', group: '导入' },
+  { key: 'llmProvider', kind: 'string', label: '提炼用 LLM provider', hint: '留空用 DSH 默认', group: '提炼' },
+  { key: 'llmModel', kind: 'string', label: '提炼用 LLM 模型', hint: '留空用 DSH 默认', group: '提炼' },
+  { key: 'distillAuto', kind: 'boolean', label: '自动提炼', hint: '关 = 纯手动按钮', group: '提炼' },
+  { key: 'distillIntervalMinutes', kind: 'number', label: '定时提炼间隔（分钟）', group: '提炼' },
+  { key: 'distillWindow', kind: 'number', label: '单次提炼缓冲消息数', group: '提炼' },
+  { key: 'gitVersioning', kind: 'boolean', label: 'git 版本管理', group: 'git' },
+  { key: 'gitBackend', kind: 'string', label: 'git 后端', hint: 'isomorphic / system', group: 'git' },
+  { key: 'gitRemoteName', kind: 'string', label: 'git 远程名', group: 'git' },
+  { key: 'memoryRepoDir', kind: 'string', label: 'git 记忆仓库目录', hint: '需重启生效', group: 'git' },
+  { key: 'syncEnabled', kind: 'boolean', label: '自动跨机同步', group: 'git' },
+  { key: 'syncIntervalMinutes', kind: 'number', label: '自动同步间隔（分钟）', group: 'git' },
 ]
 
 /** `/mnemos/api/models` answer: DSH-configured providers/models. */
@@ -466,40 +563,44 @@ export function MnemosSettingsSection({ scope }: { scope: SettingsScopeLike }): 
       ) : null}
       {!writable ? <p className="mnemos-note">当前设置文档只读。</p> : null}
       <div className="mnemos-fields">
-        {FIELDS.map((field) => {
+        {FIELDS.map((field, index) => {
+          const groupChanged = index === 0 || FIELDS[index - 1]?.group !== field.group
           const options = field.key === 'llmProvider'
             ? providerOptions
             : field.key === 'llmModel'
               ? modelOptions
               : undefined
           return (
-            <div key={field.key} className="mnemos-field">
-              <div className="mnemos-head">
-                <label className="mnemos-label" htmlFor={`mnemos-${field.key}`}>{field.label}</label>
-                {user[field.key] !== undefined ? (
-                  <span className="mnemos-badges">
-                    <span className="mnemos-badge">已覆盖</span>
-                    <button
-                      type="button"
-                      className="mnemos-reset"
-                      disabled={!writable}
-                      onClick={() => { void scope.unset(field.key) }}
-                    >
-                      重置
-                    </button>
-                  </span>
-                ) : null}
+            <div key={field.key}>
+              {groupChanged ? <h3 className="mnemos-group">{field.group}</h3> : null}
+              <div className="mnemos-field">
+                <div className="mnemos-head">
+                  <label className="mnemos-label" htmlFor={`mnemos-${field.key}`}>{field.label}</label>
+                  {user[field.key] !== undefined ? (
+                    <span className="mnemos-badges">
+                      <span className="mnemos-badge">已覆盖</span>
+                      <button
+                        type="button"
+                        className="mnemos-reset"
+                        disabled={!writable}
+                        onClick={() => { void scope.unset(field.key) }}
+                      >
+                        重置
+                      </button>
+                    </span>
+                  ) : null}
+                </div>
+                <FieldControl
+                  field={field}
+                  value={value[field.key]}
+                  id={`mnemos-${field.key}`}
+                  disabled={!writable}
+                  options={options}
+                  onSet={(v) => { void scope.set(field.key, v) }}
+                />
+                {field.hint ? <p className="mnemos-hint">{field.hint}</p> : null}
               </div>
-              <FieldControl
-                field={field}
-                value={value[field.key]}
-                id={`mnemos-${field.key}`}
-                disabled={!writable}
-                options={options}
-                onSet={(v) => { void scope.set(field.key, v) }}
-              />
-              {field.hint ? <p className="mnemos-hint">{field.hint}</p> : null}
-          </div>
+            </div>
           )
         })}
       </div>
