@@ -44,8 +44,12 @@ export function createIsomorphicGitBackend(): GitBackend {
 
     async status(dir) {
       const matrix = await git.statusMatrix({ ...opts, dir });
+      // statusMatrix entries are [filepath, head, workdir, stage]; each of the
+      // three is 0 (absent) / 1 (present) / 2 (modified) / 3 (type change). A
+      // file changed only when workdir or the index differ from HEAD — a clean
+      // file has stage=1, which is NOT a change.
       const changed = matrix
-        .filter(([, head, workdir, stage]) => head !== workdir || stage !== 0)
+        .filter(([, head, workdir, stage]) => head !== workdir || stage !== head)
         .map(([file]) => file as string);
       return { changed };
     },
@@ -58,8 +62,16 @@ export function createIsomorphicGitBackend(): GitBackend {
       } else {
         await git.add({ ...opts, dir, filepath: '.' });
       }
+      // isomorphic-git's add() does not stage deletions; stage them explicitly
+      // so a removed mirror file lands in the commit (a deleted memory stays
+      // recoverable from history).
       const matrix = await git.statusMatrix({ ...opts, dir });
-      const staged = matrix.some(([, , , stage]) => stage !== 0);
+      for (const [file, head, workdir] of matrix) {
+        if (head !== 0 && workdir === 0) {
+          await git.remove({ ...opts, dir, filepath: file as string });
+        }
+      }
+      const staged = matrix.some(([, head, workdir, stage]) => head !== workdir || stage !== head);
       if (!staged) {
         return undefined;
       }
