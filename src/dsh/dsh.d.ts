@@ -18,6 +18,7 @@ import type {
 } from './types.js';
 import type { MemoryService } from '../domain/service.js';
 import type { MemoryBus, BusEvent } from '../domain/bus.js';
+import type { GitStore } from '../domain/gitstore.js';
 
 declare module '@deepseek-ai/cordis' {
   interface Context {
@@ -30,6 +31,8 @@ declare module '@deepseek-ai/cordis' {
     mnemos: MemoryService;
     /** The open memory bus: third-party plugins recall/record/subscribe. */
     mnemosBus: MemoryBus;
+    /** Git versioning + sync for the memory mirror. */
+    mnemosGit?: GitStore;
     /** The harness LLM seam, when an adapter is mounted. */
     llm?: DshLlm;
     /** Present only when the optional dsh-better-sidebar plugin is mounted. */

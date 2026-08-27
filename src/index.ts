@@ -19,6 +19,8 @@ import { createBackfillService, createFileCheckpoint, createJsonFileStore } from
 import { detectSource, parseAny } from './domain/imports/detect.js';
 import { runDistillIncremental, DistillCursor } from './domain/distill.js';
 import { createMemoryBus } from './domain/bus.js';
+import { createGitStore, GitStore } from './domain/gitstore.js';
+import { createSystemGitBackend } from './domain/git/system-git.js';
 import { registerTools } from './dsh/tools.js';
 import { registerCommand, CommandDeps } from './dsh/command.js';
 import { registerHooks, registerInjection, registerRuleInjection, SignalCollector } from './dsh/hooks.js';
@@ -115,6 +117,44 @@ export function registerScheduledDistill(
   });
 }
 
+export function registerGitJobs(
+  ctx: Context,
+  gitStore: GitStore,
+  config: Config,
+  logger: ReturnType<Context['logger']>,
+): void {
+  ctx.effect(() => {
+    const id = setInterval(async () => {
+      try {
+        await gitStore.recordCommit('periodic snapshot');
+      } catch (err) {
+        logger.warn(`git snapshot failed: ${err instanceof Error ? err.message : String(err)}`);
+      }
+    }, Math.max(config.syncIntervalMinutes, 5) * 60_000);
+    return () => clearInterval(id);
+  });
+  if (config.syncEnabled) {
+    ctx.effect(() => {
+      const id = setInterval(async () => {
+        try {
+          const pull = await gitStore.pull();
+          if (!pull.ok) {
+            logger.warn(`sync pull conflicted on: ${pull.conflicts.join(', ')}`);
+            return;
+          }
+          const push = await gitStore.push();
+          if (!push.ok) {
+            logger.warn('sync push failed');
+          }
+        } catch (err) {
+          logger.warn(`sync failed: ${err instanceof Error ? err.message : String(err)}`);
+        }
+      }, config.syncIntervalMinutes * 60_000);
+      return () => clearInterval(id);
+    });
+  }
+}
+
 export function apply(ctx: Context, raw: Partial<Config> = {}): void {
   const config: Config = { ...defaultConfig(), ...raw };
   const logger = ctx.logger('mnemos');
@@ -131,6 +171,20 @@ export function apply(ctx: Context, raw: Partial<Config> = {}): void {
   const bus = createMemoryBus(service, store, (event) => ctx.emit('mnemos/memory', event));
   ctx.effect(() => ctx.provide('mnemosBus', bus));
 
+  let gitStore: GitStore | undefined;
+  if (config.gitVersioning) {
+    gitStore = createGitStore({
+      backend: createSystemGitBackend(),
+      store,
+      service,
+      repoDir: config.memoryRepoDir,
+      remote: config.gitRemoteName,
+    });
+    void gitStore.ensure().catch((err) => logger.warn(`git init failed: ${String(err)}`));
+    ctx.effect(() => ctx.provide('mnemosGit', gitStore));
+    registerGitJobs(ctx, gitStore, config, logger);
+  }
+
   const llm = createLlmFromContext(ctx);
   const collector = new SignalCollector((message) => logger.debug(message), config.distillWindow);
   const cursorStore = createJsonFileStore<DistillCursor>(join(dirname(config.dbPath), 'distill-cursor.json'));
@@ -140,6 +194,7 @@ export function apply(ctx: Context, raw: Partial<Config> = {}): void {
     llm,
     collector,
     bus,
+    gitStore,
     distillCursor: cursorStore.read(),
     persistCursor: (c) => cursorStore.write(c),
   };

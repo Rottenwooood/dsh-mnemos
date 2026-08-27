@@ -2,14 +2,24 @@
 
 Cross-session memory with governance, self-evolution and an approval-gated write path for DeepSeek Harness.
 
-> 开发中（M3 完成）。领域核心、DSH 接线层、历史导入 + 回填、冷热分层注入、提炼流水线（隔离角色 + JSON 校验 + 冲突裁决 + 规则生命周期 + SKILL 合成）、开放记忆总线（recall/record/subscribe + 身份 + 拉黑 + 撤销）已实现并全部可单测。管理页签（better-sidebar）与 git 版本/同步在后续里程碑。
+> 开发中（M4 完成）。领域核心、DSH 接线层、历史导入 + 回填、冷热分层注入、提炼流水线（隔离角色 + JSON 校验 + 冲突裁决 + 规则生命周期 + SKILL 合成）、开放记忆总线（recall/record/subscribe + 身份 + 拉黑 + 撤销）、git 版本管理（历史/diff/回滚/恢复）+ 跨机同步（push/pull/逐条冲突标记）+ 备份导出已实现并全部可单测。管理页签（better-sidebar UI）与发布在最后里程碑。
 
 ## 设计要点
 
 - 所有写入收敛到 `MemoryService`：程序检查（预算 / 敏感内容 / 去重 / 作用域 / 黑名单）→ 命中即打回并留审计；通过后高置信低风险纯事实自动放行，其余进待审批队列。
-- 审计表记录每次写入 / 批准 / 拒绝 / 替换 / 撤销 / 规则状态变更，`by_agent` 标记模型发起、`denied` 标记被程序打回。
+- 审计表记录每次写入 / 批准 / 拒绝 / 替换 / 撤销 / 回滚 / 规则状态变更，`by_agent` 标记模型发起、`denied` 标记被程序打回。
 - 存储：SQLite（node:sqlite，零原生依赖）+ FTS5 全文索引 + WAL；记忆条目带 `(sessionId, eventRange)` 溯源。
 - 敏感内容：正则 + 熵检测，写前拦截；近似重复/冲突：bigram-Jaccard 相似度。
+
+## M4：git 版本管理 + 跨机同步 + 备份
+
+- **Markdown 镜像**（`src/domain/mirror.ts`）：一条记忆一个 Markdown 文件（可读 diff、逐条 git 历史）。镜像可从 store 同步，也可回灌进 store。
+- **GitStore**（`src/domain/gitstore.ts` + `src/domain/git/`）：`GitBackend` 接口抽象 git 操作，当前用**系统 git CLI** 后端（纯 JS 的 isomorphic-git 后端可无缝替换——网络恢复后加依赖即可）。
+  - `recordCommit`：同步镜像 + 提交（消息关联审计）；历史/`show`/回滚（restore 后回写 store）/恢复已删记忆。
+  - `pull`：fetch + merge，逐条文件粒度——**独立条目自动合并（最新胜出），同条目双端修改标记冲突交人裁决，程序不静默覆盖**；合并成功回灌 store。
+  - `push` / `setRemote` / `exportBundle`（git bundle 备份）。
+- 命令：`/memory git <status|log|rollback|restore|remote|push|pull|backup>`。
+- 周期快照提交 + 可选自动同步 job（`syncEnabled` 默认关）。
 
 ## M3：开放记忆总线（`src/domain/bus.ts` + `ctx.mnemosBus`）
 
@@ -39,9 +49,9 @@ Cross-session memory with governance, self-evolution and an approval-gated write
 
 ## DSH 接线
 
-- 插件入口 `src/index.ts`：存储、`MemoryService`、`MemoryBus`、工具 / 命令 / hooks / 注入 / 规则注入 / 回填 job / 定时提炼、`ctx.provide('mnemos' | 'mnemosBus', ...)`。
+- 插件入口 `src/index.ts`：存储、`MemoryService`、`MemoryBus`、`GitStore`、工具 / 命令 / hooks / 注入 / 规则注入 / 回填 job / 定时提炼 / git 快照与同步、`ctx.provide('mnemos' | 'mnemosBus' | 'mnemosGit', ...)`。
 - 模型工具：`memory_search` / `memory_record` / `memory_list` / `memory_stats`。模型写经门禁。
-- 人类命令：`/memory search|list|stats|approve|reject|import|backfill|distill|rules|skill|bus`。审批/拉黑只走人类命令。
+- 人类命令：`/memory search|list|stats|approve|reject|import|backfill|distill|rules|skill|bus|git`。审批/拉黑/回滚只走人类命令。
 - `src/dsh/dsh.d.ts` / `types.ts` / `llm-adapter.ts` 是对 DSH 上下文与 LLM 接缝的占位类型与适配（`dsh-*` 包未发布到 npm）；接入真实类型后替换即可。
 
 ## 开发

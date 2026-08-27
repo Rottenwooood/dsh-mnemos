@@ -46,6 +46,16 @@ export interface Config {
   distillIntervalMinutes: number;
   /** Max session messages buffered for distillation at once. */
   distillWindow: number;
+  /** Directory holding the git-tracked Markdown mirror (memory repo). */
+  memoryRepoDir: string;
+  /** Version the memory mirror with git on every change. */
+  gitVersioning: boolean;
+  /** Git remote name used for sync. */
+  gitRemoteName: string;
+  /** Auto pull+push on an interval (default off). */
+  syncEnabled: boolean;
+  /** How often the sync job runs, in minutes. */
+  syncIntervalMinutes: number;
 }
 
 export function defaultConfig(): Config {
@@ -69,5 +79,10 @@ export function defaultConfig(): Config {
     distillAuto: false,
     distillIntervalMinutes: 1440,
     distillWindow: 200,
+    memoryRepoDir: join(home, '.dsh', 'mnemos', 'repo'),
+    gitVersioning: true,
+    gitRemoteName: 'origin',
+    syncEnabled: false,
+    syncIntervalMinutes: 1440,
   };
 }

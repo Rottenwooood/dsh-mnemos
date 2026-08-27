@@ -20,6 +20,7 @@ import { Llm } from '../domain/llm.js';
 import { runDistillIncremental, DistillCursor } from '../domain/distill.js';
 import { promoteRuleToSkill, listSkillFiles } from '../domain/skill.js';
 import { MemoryBus } from '../domain/bus.js';
+import { GitStore } from '../domain/gitstore.js';
 import type { SignalCollector } from './hooks.js';
 
 function listJsonlFiles(dir: string): string[] {
@@ -39,6 +40,7 @@ export interface CommandDeps {
   llm?: Llm;
   collector?: SignalCollector;
   bus?: MemoryBus;
+  gitStore?: GitStore;
   distillCursor: DistillCursor;
   persistCursor: (cursor: DistillCursor) => void;
 }
@@ -326,9 +328,87 @@ export function registerCommand(ctx: Context, deps: CommandDeps): void {
           runtime.say('usage: /memory bus <blacklist|unblacklist|list|revoke|writers>');
           return;
         }
+        case 'git': {
+          const gitStore = deps.gitStore;
+          if (!gitStore) {
+            runtime.say('Git versioning is disabled.');
+            return;
+          }
+          const sub = rest[0];
+          if (sub === 'status') {
+            const { changed } = await gitStore.status();
+            runtime.say(changed.length ? `Uncommitted:\n${changed.map((c) => `- ${c}`).join('\n')}` : 'Working tree clean.');
+            return;
+          }
+          if (sub === 'log') {
+            const commits = await gitStore.history(rest[1]);
+            if (commits.length === 0) {
+              runtime.say('No history.');
+              return;
+            }
+            runtime.say(commits.map((c) => `- ${c.sha.slice(0, 8)} ${c.date} ${c.message}`).join('\n'));
+            return;
+          }
+          if (sub === 'rollback') {
+            const [id, sha] = rest.slice(1);
+            if (!id || !sha) {
+              runtime.say('usage: /memory git rollback <memoryId> <sha>');
+              return;
+            }
+            const result = await gitStore.rollback(id, sha);
+            runtime.say(result.ok ? `Rolled back ${id} to ${sha.slice(0, 8)}.` : `Cannot rollback: ${result.reason}.`);
+            return;
+          }
+          if (sub === 'restore') {
+            const id = rest[1];
+            if (!id) {
+              runtime.say('usage: /memory git restore <memoryId>');
+              return;
+            }
+            const result = await gitStore.restoreDeleted(id);
+            runtime.say(result.ok ? `Restored deleted memory ${id}.` : `Cannot restore: ${result.reason}.`);
+            return;
+          }
+          if (sub === 'remote') {
+            const url = rest[1];
+            if (!url) {
+              runtime.say('usage: /memory git remote <url>');
+              return;
+            }
+            await gitStore.setRemote(url);
+            runtime.say(`Remote set to ${url}.`);
+            return;
+          }
+          if (sub === 'push') {
+            const result = await gitStore.push();
+            runtime.say(result.ok ? 'Pushed.' : `Push failed: ${result.reason}.`);
+            return;
+          }
+          if (sub === 'pull') {
+            const result = await gitStore.pull();
+            if (result.ok) {
+              runtime.say(`Pulled (${result.applied ?? 0} entries reconciled).`);
+            } else {
+              runtime.say(`Pull conflicted on:\n${result.conflicts.map((c) => `- ${c}`).join('\n')}`);
+            }
+            return;
+          }
+          if (sub === 'backup') {
+            const out = rest[1];
+            if (!out) {
+              runtime.say('usage: /memory git backup <outPath>');
+              return;
+            }
+            await gitStore.exportBundle(out);
+            runtime.say(`Backup written to ${out}.`);
+            return;
+          }
+          runtime.say('usage: /memory git <status|log|rollback|restore|remote|push|pull|backup>');
+          return;
+        }
         default:
           runtime.say(
-            'commands: search <query> | list | stats | approve <id> | reject <id> | import <src> <path> | backfill <dir> | distill [path] | rules <list|activate|rollback|deprecate> | skill <list|promote> | bus <blacklist|unblacklist|list|revoke|writers>',
+            'commands: search <query> | list | stats | approve <id> | reject <id> | import <src> <path> | backfill <dir> | distill [path] | rules <...> | skill <...> | bus <...> | git <...>',
           );
       }
     },

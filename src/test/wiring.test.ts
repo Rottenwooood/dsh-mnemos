@@ -9,6 +9,7 @@ import { registerTools } from '../dsh/tools.js';
 import { registerCommand, CommandDeps } from '../dsh/command.js';
 import { registerInjection, registerRuleInjection, SignalCollector } from '../dsh/hooks.js';
 import { gateFrom, apply } from '../index.js';
+import type { GitStore } from '../domain/gitstore.js';
 import { defaultConfig } from '../config.js';
 import { Llm } from '../domain/llm.js';
 import type { CommandDefinition, ToolDefinition } from '../dsh/types.js';
@@ -313,6 +314,56 @@ function makeServiceWithStore() {
   return { store, service };
 }
 
+describe('/memory git command', () => {
+  it('routes git subcommands through the GitStore', async () => {
+    const { ctx, commands } = fakeContext();
+    const { service } = makeService();
+    const calls: string[] = [];
+    const gitStore = {
+      status: async () => {
+        calls.push('status');
+        return { changed: ['x.md'] };
+      },
+      history: async (id?: string) => {
+        calls.push(`log:${id ?? ''}`);
+        return [{ sha: 'abc12345', message: 'add', date: '2026-01-01' }];
+      },
+      rollback: async (id: string, sha: string) => {
+        calls.push(`rollback:${id}:${sha}`);
+        return { ok: true };
+      },
+      restoreDeleted: async (id: string) => {
+        calls.push(`restore:${id}`);
+        return { ok: true };
+      },
+      setRemote: async (url: string) => {
+        calls.push(`remote:${url}`);
+      },
+      push: async () => {
+        calls.push('push');
+        return { ok: true };
+      },
+      pull: async () => {
+        calls.push('pull');
+        return { ok: true, conflicts: [], applied: 2 };
+      },
+      exportBundle: async (out: string) => {
+        calls.push(`backup:${out}`);
+      },
+    } as unknown as GitStore;
+    registerCommand(ctx, { ...commandDeps(service), gitStore });
+    const command = commands[0]!;
+    const said: string[] = [];
+    const rt = { caller: 'human' as const, workspace: 'ws', say: (t: string) => said.push(t) };
+    await command.handler('git status', rt);
+    await command.handler('git log mm://x', rt);
+    await command.handler('git rollback mm://x abc', rt);
+    await command.handler('git pull', rt);
+    expect(calls).toEqual(['status', 'log:mm://x', 'rollback:mm://x:abc', 'pull']);
+    expect(said.join('\n')).toContain('2 entries reconciled');
+  });
+});
+
 describe('session signal collector', () => {
   it('detects an explicit remember request once', () => {
     const logs: string[] = [];
@@ -346,6 +397,11 @@ describe('gateFrom', () => {
       distillAuto: false,
       distillIntervalMinutes: 1440,
       distillWindow: 200,
+      memoryRepoDir: '/tmp/repo',
+      gitVersioning: true,
+      gitRemoteName: 'origin',
+      syncEnabled: false,
+      syncIntervalMinutes: 1440,
     });
     expect(gate.maxEntries).toBe(10);
     expect(gate.blacklist).toEqual(['bad']);
@@ -364,7 +420,7 @@ describe('apply', () => {
         return () => true;
       },
     } as unknown as Context;
-    apply(ctx2, { dbPath: ':memory:' });
+    apply(ctx2, { dbPath: ':memory:', gitVersioning: false });
     expect(provided[0]?.[0]).toBe('mnemos');
     expect(tools.length).toBe(4);
   });
