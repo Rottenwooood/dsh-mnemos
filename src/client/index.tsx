@@ -212,7 +212,15 @@ const FIELDS: MnemosField[] = [
   { key: 'syncEnabled', kind: 'boolean', label: '自动跨机同步' },
   { key: 'syncIntervalMinutes', kind: 'number', label: '自动同步间隔（分钟）' },
   { key: 'gitBackend', kind: 'string', label: 'git 后端', hint: 'isomorphic / system' },
+  { key: 'llmProvider', kind: 'string', label: '提炼用 LLM provider', hint: '留空用 DSH 默认' },
+  { key: 'llmModel', kind: 'string', label: '提炼用 LLM 模型', hint: '留空用 DSH 默认' },
 ]
+
+/** `/mnemos/api/models` answer: DSH-configured providers/models. */
+interface ModelsAnswer {
+  default: { provider: string; model: string } | null
+  providers: Array<{ id: string; name: string; models: string[] }>
+}
 
 /** One control; commits immediately on change (live settings re-apply). */
 function FieldControl({
@@ -220,14 +228,33 @@ function FieldControl({
   value,
   id,
   disabled,
+  options,
   onSet,
 }: {
   field: MnemosField
   value: unknown
   id: string
   disabled: boolean
+  options?: string[]
   onSet: (value: unknown) => void
 }): ReactNode {
+  if (options !== undefined) {
+    const selected = typeof value === 'string' ? value : ''
+    return (
+      <select
+        id={id}
+        className="mnemos-input"
+        disabled={disabled}
+        value={selected}
+        onChange={(e) => onSet(e.target.value)}
+      >
+        <option value="">（使用 DSH 默认）</option>
+        {options.map((option) => (
+          <option key={option} value={option}>{option}</option>
+        ))}
+      </select>
+    )
+  }
   switch (field.kind) {
     case 'boolean':
       return (
@@ -289,48 +316,64 @@ export function MnemosSettingsSection({ scope }: { scope: SettingsScopeLike }): 
     (cb) => scope.subscribe(cb),
     () => scope.getSnapshot(),
   )
+  const models = useJson<ModelsAnswer>('/mnemos/api/models')
   if (snapshot.status !== 'ready') {
     return null
   }
   const value = snapshot.value ?? {}
   const user = (snapshot.user ?? {}) as Record<string, unknown>
   const writable = snapshot.writable
+  const providers = models.data?.providers ?? []
+  const selectedProvider = (value['llmProvider'] as string | undefined) ?? models.data?.default?.provider
+  const providerOptions = providers.map((p) => p.id)
+  const modelOptions = providers.find((p) => p.id === selectedProvider)?.models ?? []
   return (
     <div className="mnemos-section">
       <h2 className="mnemos-heading">dsh-mnemos</h2>
       <p className="mnemos-intro">
-        跨会话记忆：写入门禁、自进化提炼、git 版本化与跨机同步。改动即时生效（结构字段需重启）。
+        跨会话记忆：写入门禁、自进化提炼、git 版本化与跨机同步。改动即时生效（结构字段需重启）。提炼复用 DSH 已配置的模型，无需单独 API key。
       </p>
+      {models.data?.default ? (
+        <p className="mnemos-note">DSH 当前默认模型：{models.data.default.provider}/{models.data.default.model}</p>
+      ) : null}
       {!writable ? <p className="mnemos-note">当前设置文档只读。</p> : null}
       <div className="mnemos-fields">
-        {FIELDS.map((field) => (
-          <div key={field.key} className="mnemos-field">
-            <div className="mnemos-head">
-              <label className="mnemos-label" htmlFor={`mnemos-${field.key}`}>{field.label}</label>
-              {user[field.key] !== undefined ? (
-                <span className="mnemos-badges">
-                  <span className="mnemos-badge">已覆盖</span>
-                  <button
-                    type="button"
-                    className="mnemos-reset"
-                    disabled={!writable}
-                    onClick={() => { void scope.unset(field.key) }}
-                  >
-                    重置
-                  </button>
-                </span>
-              ) : null}
+        {FIELDS.map((field) => {
+          const options = field.key === 'llmProvider'
+            ? providerOptions
+            : field.key === 'llmModel'
+              ? modelOptions
+              : undefined
+          return (
+            <div key={field.key} className="mnemos-field">
+              <div className="mnemos-head">
+                <label className="mnemos-label" htmlFor={`mnemos-${field.key}`}>{field.label}</label>
+                {user[field.key] !== undefined ? (
+                  <span className="mnemos-badges">
+                    <span className="mnemos-badge">已覆盖</span>
+                    <button
+                      type="button"
+                      className="mnemos-reset"
+                      disabled={!writable}
+                      onClick={() => { void scope.unset(field.key) }}
+                    >
+                      重置
+                    </button>
+                  </span>
+                ) : null}
+              </div>
+              <FieldControl
+                field={field}
+                value={value[field.key]}
+                id={`mnemos-${field.key}`}
+                disabled={!writable}
+                options={options}
+                onSet={(v) => { void scope.set(field.key, v) }}
+              />
+              {field.hint ? <p className="mnemos-hint">{field.hint}</p> : null}
             </div>
-            <FieldControl
-              field={field}
-              value={value[field.key]}
-              id={`mnemos-${field.key}`}
-              disabled={!writable}
-              onSet={(v) => { void scope.set(field.key, v) }}
-            />
-            {field.hint ? <p className="mnemos-hint">{field.hint}</p> : null}
-          </div>
-        ))}
+          )
+        })}
       </div>
     </div>
   )

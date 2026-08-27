@@ -210,28 +210,56 @@ export function apply(ctx: Context, raw: Partial<Config> = {}): void {
     registerGitJobs(ctx, gitStore, getConfig, logger);
   }
 
-  const llm = createLlmFromContext(ctx);
+  const resolveLlmTarget = async (): Promise<{ provider: string; model: string } | undefined> => {
+    const cfg = getConfig();
+    let configuredProvider: string | undefined;
+    let configuredModel: string | undefined;
+    try {
+      const settings = (ctx as unknown as { get(name: string): { get?(ns: string): unknown } | undefined }).get('settings');
+      const adm = settings?.get?.('agent-default-model') as { provider?: string; model?: string } | undefined;
+      configuredProvider = adm?.provider;
+      configuredModel = adm?.model;
+    } catch {
+      // settings absent or section unavailable — fall through to configured fields
+    }
+    const provider = cfg.llmProvider.trim() || configuredProvider;
+    const model = cfg.llmModel.trim() || configuredModel;
+    if (!provider || !model) {
+      return undefined;
+    }
+    return { provider, model };
+  };
+  const llm = createLlmFromContext(ctx, {
+    resolveTarget: resolveLlmTarget,
+    system:
+      'You are dsh-mnemos, extracting durable cross-session memories and rules from a conversation. Return only the requested JSON.',
+  });
   const collector = new SignalCollector((message) => logger.debug(message), config.distillWindow);
   const cursorStore = createJsonFileStore<DistillCursor>(join(dirname(config.dbPath), 'distill-cursor.json'));
   let distillCursor = cursorStore.read();
   const runDistillNow = async (): Promise<{ memories: number; rules: number; conflicts: number } | null> => {
-    if (!llm) {
-      return null;
-    }
     const messages = collector.drain();
     if (messages.length === 0) {
       return { memories: 0, rules: 0, conflicts: 0 };
     }
-    const result = await runDistillIncremental(llm, service, messages, distillCursor, {
-      scope: 'workspace',
-    });
-    distillCursor = result.cursor;
-    cursorStore.write(distillCursor);
-    return {
-      memories: result.stats.memories,
-      rules: result.stats.rules,
-      conflicts: result.stats.conflicts,
-    };
+    if (!llm) {
+      return null;
+    }
+    try {
+      const result = await runDistillIncremental(llm, service, messages, distillCursor, {
+        scope: 'workspace',
+      });
+      distillCursor = result.cursor;
+      cursorStore.write(distillCursor);
+      return {
+        memories: result.stats.memories,
+        rules: result.stats.rules,
+        conflicts: result.stats.conflicts,
+      };
+    } catch (err) {
+      logger.warn(`distill failed: ${err instanceof Error ? err.message : String(err)}`);
+      return null;
+    }
   };
   const commandDeps: CommandDeps = {
     service,
@@ -250,7 +278,14 @@ export function apply(ctx: Context, raw: Partial<Config> = {}): void {
   registerInjection(ctx, service, getConfig);
   registerRuleInjection(ctx, service, getConfig);
   registerBackfillJob(ctx, service, getConfig);
-  registerMnemosRoutes(ctx, { store, service, gitStore, runDistillNow });
+  registerMnemosRoutes(ctx, {
+    store,
+    service,
+    gitStore,
+    runDistillNow,
+    llm: (ctx as unknown as { get(name: string): unknown }).get('llm') as import('./dsh/llm-adapter.js').LlmRuntimeLike | undefined,
+    resolveModel: resolveLlmTarget,
+  });
   if (config.distillAuto && llm) {
     registerScheduledDistill(ctx, { llm, service, getConfig, collector });
   }

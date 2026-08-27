@@ -13,6 +13,7 @@ import type { IncomingMessage, ServerResponse } from 'node:http';
 import type { MemoryStore } from '../domain/store.js';
 import type { MemoryService } from '../domain/service.js';
 import type { GitStore } from '../domain/gitstore.js';
+import type { LlmRuntimeLike, LlmTarget } from './llm-adapter.js';
 
 /** Structural face of the node IncomingMessage/ServerResponse the routes use. */
 type Req = IncomingMessage;
@@ -26,6 +27,10 @@ export interface MnemosRouteDeps {
   gitStore?: GitStore;
   /** Manual distillation trigger ("现在提炼"); null when no LLM adapter is mounted. */
   runDistillNow: () => Promise<{ memories: number; rules: number; conflicts: number } | null>;
+  /** The harness llm service (optional; absent in llm-less profiles). */
+  llm?: LlmRuntimeLike;
+  /** Resolve the plugin's distillation model target (DSH default fallback). */
+  resolveModel: () => Promise<LlmTarget | undefined>;
 }
 
 function json(res: Res, status: number, value: unknown): void {
@@ -98,6 +103,27 @@ export function createMnemosRouteHandler(deps: MnemosRouteDeps): (req: Req, res:
           pending: deps.store.listApprovals('proposed').length,
           gate: { maxEntries: deps.service.config.maxEntries, autoApprove: deps.service.config.autoApprove },
         });
+        return;
+      }
+      if (method === 'GET' && route === '/models') {
+        const dflt = await deps.resolveModel().catch(() => undefined);
+        const llm = deps.llm as (LlmRuntimeLike & {
+          listProviders?(): Array<{ id: string; name?: string }>;
+          listModels?(provider: string): Promise<Array<{ id: string; name?: string }>>;
+        }) | undefined;
+        const providers: unknown[] = [];
+        if (llm) {
+          for (const provider of llm.listProviders?.() ?? []) {
+            let models: string[] = [];
+            try {
+              models = (await llm.listModels?.(provider.id) ?? []).map((m) => m.id).slice(0, 50);
+            } catch {
+              // an unqueryable provider endpoint degrades to no advertised models
+            }
+            providers.push({ id: provider.id, name: provider.name ?? provider.id, models });
+          }
+        }
+        json(res, 200, { default: dflt ?? null, providers });
         return;
       }
       if (method === 'POST' && route === '/approve') {

@@ -58,6 +58,10 @@ export interface Config {
   syncIntervalMinutes: number;
   /** Git backend: 'isomorphic' (pure JS, default) or 'system' (system git CLI). */
   gitBackend: 'isomorphic' | 'system';
+  /** LLM provider for distillation; empty falls back to DSH's agent-default-model. */
+  llmProvider: string;
+  /** LLM model id for distillation; empty falls back to DSH's agent-default-model. */
+  llmModel: string;
 }
 
 export function defaultConfig(): Config {
@@ -87,5 +91,7 @@ export function defaultConfig(): Config {
     syncEnabled: false,
     syncIntervalMinutes: 1440,
     gitBackend: 'isomorphic',
+    llmProvider: '',
+    llmModel: '',
   };
 }
