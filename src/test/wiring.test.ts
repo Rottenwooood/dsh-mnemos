@@ -402,6 +402,7 @@ describe('gateFrom', () => {
       gitRemoteName: 'origin',
       syncEnabled: false,
       syncIntervalMinutes: 1440,
+      gitBackend: 'isomorphic',
     });
     expect(gate.maxEntries).toBe(10);
     expect(gate.blacklist).toEqual(['bad']);

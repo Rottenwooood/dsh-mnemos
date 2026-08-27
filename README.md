@@ -14,7 +14,8 @@ Cross-session memory with governance, self-evolution and an approval-gated write
 ## M4：git 版本管理 + 跨机同步 + 备份
 
 - **Markdown 镜像**（`src/domain/mirror.ts`）：一条记忆一个 Markdown 文件（可读 diff、逐条 git 历史）。镜像可从 store 同步，也可回灌进 store。
-- **GitStore**（`src/domain/gitstore.ts` + `src/domain/git/`）：`GitBackend` 接口抽象 git 操作，当前用**系统 git CLI** 后端（纯 JS 的 isomorphic-git 后端可无缝替换——网络恢复后加依赖即可）。
+- **GitStore**（`src/domain/gitstore.ts` + `src/domain/git/`）：`GitBackend` 接口抽象 git 操作，两个后端均可单测参数化跑通：**isomorphic-git（纯 JS，默认，`gitBackend: 'isomorphic'`）** 与**系统 git CLI（`gitBackend: 'system'`）**。
+  - isomorphic 后端免除系统 git 依赖，但 v1 不支持本地路径 remote（需 http(s)/ssh remote 做同步）；系统后端支持本地裸仓库，同步测试用系统后端验证。
   - `recordCommit`：同步镜像 + 提交（消息关联审计）；历史/`show`/回滚（restore 后回写 store）/恢复已删记忆。
   - `pull`：fetch + merge，逐条文件粒度——**独立条目自动合并（最新胜出），同条目双端修改标记冲突交人裁决，程序不静默覆盖**；合并成功回灌 store。
   - `push` / `setRemote` / `exportBundle`（git bundle 备份）。

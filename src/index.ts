@@ -21,6 +21,7 @@ import { runDistillIncremental, DistillCursor } from './domain/distill.js';
 import { createMemoryBus } from './domain/bus.js';
 import { createGitStore, GitStore } from './domain/gitstore.js';
 import { createSystemGitBackend } from './domain/git/system-git.js';
+import { createIsomorphicGitBackend } from './domain/git/isomorphic-git.js';
 import { registerTools } from './dsh/tools.js';
 import { registerCommand, CommandDeps } from './dsh/command.js';
 import { registerHooks, registerInjection, registerRuleInjection, SignalCollector } from './dsh/hooks.js';
@@ -173,8 +174,11 @@ export function apply(ctx: Context, raw: Partial<Config> = {}): void {
 
   let gitStore: GitStore | undefined;
   if (config.gitVersioning) {
+    const backend = config.gitBackend === 'isomorphic'
+      ? createIsomorphicGitBackend()
+      : createSystemGitBackend();
     gitStore = createGitStore({
-      backend: createSystemGitBackend(),
+      backend,
       store,
       service,
       repoDir: config.memoryRepoDir,

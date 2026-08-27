@@ -56,6 +56,8 @@ export interface Config {
   syncEnabled: boolean;
   /** How often the sync job runs, in minutes. */
   syncIntervalMinutes: number;
+  /** Git backend: 'isomorphic' (pure JS, default) or 'system' (system git CLI). */
+  gitBackend: 'isomorphic' | 'system';
 }
 
 export function defaultConfig(): Config {
@@ -84,5 +86,6 @@ export function defaultConfig(): Config {
     gitRemoteName: 'origin',
     syncEnabled: false,
     syncIntervalMinutes: 1440,
+    gitBackend: 'isomorphic',
   };
 }
