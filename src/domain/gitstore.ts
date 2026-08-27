@@ -188,8 +188,8 @@ export function createGitStore(opts: GitStoreOptions): GitStore {
       try {
         await backend.push(repoDir, remote, branch);
         return { ok: true };
-      } catch {
-        return { ok: false, reason: 'push-failed' };
+      } catch (err) {
+        return { ok: false, reason: err instanceof Error ? err.message : String(err) };
       }
     },
 

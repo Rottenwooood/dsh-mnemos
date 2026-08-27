@@ -71,7 +71,7 @@
 - **逐条合并同步**：`pull` 时独立条目自动合并（最新胜出），**同条目双端修改标记冲突交人裁决，绝不静默覆盖**；合并成功回灌 store。
 - **回滚 / 恢复**：`show` 任意 sha 内容、一键回滚、已删除记忆从 git 历史恢复（软删除行仍在 store）。
 - **备份**：`exportBundle` 生成标准 `# v2 git bundle`，新装仓库自动播种初始提交。
-- 已知限制：isomorphic 后端 v1 不支持本地路径 remote（同步需 http(s)/ssh）；本地测试用 `gitBackend: system` + 裸仓库。
+- 已知限制：isomorphic 后端支持 **https 同步**（真实 node http 客户端 + 自动读取 `~/.git-credentials` 鉴权，与系统 git 同一套凭据）；**本地路径 remote**（`git@` 或裸目录）仍用 `gitBackend: system` + 裸仓库。push/pull 失败时返回真实错误信息（不再吞成 push-failed）。
 
 ### M5 · 真实 DSH 界面
 

@@ -11,22 +11,49 @@
  * standard `# v2 git bundle` format (refs + PACK) built from packObjects.
  */
 import git from 'isomorphic-git';
+import httpClient from 'isomorphic-git/http/node';
 import fs from 'node:fs';
-import { existsSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
+import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { GitBackend, CommitInfo, MergeResult } from './backend.js';
-import type { HttpClient } from 'isomorphic-git';
 
 const AUTHOR = { name: 'dsh-mnemos', email: 'dsh-mnemos@localhost' };
 
-/** Throws if an http remote is ever used; local sync never calls it. */
-const http: HttpClient = {
-  async request() {
-    throw new Error('http remotes are not configured for dsh-mnemos');
-  },
-};
+/** Real node http client: https remotes now work (the old stub threw). */
+const opts = { fs, http: httpClient } as const;
 
-const opts = { fs, http } as const;
+/**
+ * Read the credential for a remote host from the standard `~/.git-credentials`
+ * store (git credential.helper=store), so https push/fetch authenticate like
+ * the system git CLI without any extra plugin config. Best-effort.
+ */
+function credentialsFor(url: string): { username?: string; password?: string } {
+  let host: string | undefined;
+  try {
+    host = new URL(url).host;
+  } catch {
+    return {};
+  }
+  try {
+    const file = join(homedir(), '.git-credentials');
+    if (!existsSync(file)) {
+      return {};
+    }
+    for (const line of readFileSync(file, 'utf8').split('\n')) {
+      const match = /^(https?):\/\/([^:@/]+)(?::([^@/]*))?@([^/]+)/.exec(line.trim());
+      if (match && match[4] === host) {
+        return {
+          username: decodeURIComponent(match[2] ?? ''),
+          password: decodeURIComponent(match[3] ?? ''),
+        };
+      }
+    }
+  } catch {
+    // credential lookup is best-effort; a public remote still works
+  }
+  return {};
+}
 
 function toCommitInfo(c: Awaited<ReturnType<typeof git.log>>[number]): CommitInfo {
   return {
@@ -150,17 +177,17 @@ export function createIsomorphicGitBackend(): GitBackend {
     },
 
     async push(dir, remote, branch) {
-      await git.push({ ...opts, dir, remote, ref: branch });
+      await git.push({ ...opts, dir, remote, ref: branch, onAuth: credentialsFor });
     },
 
     async fetch(dir, remote) {
-      await git.fetch({ ...opts, dir, remote });
+      await git.fetch({ ...opts, dir, remote, onAuth: credentialsFor });
     },
 
     async merge(dir, branch): Promise<MergeResult> {
       const ours = (await this.currentBranch(dir)) ?? 'main';
       try {
-        await git.merge({ ...opts, dir, ours, theirs: branch });
+        await git.merge({ ...opts, dir, ours, theirs: branch, author: AUTHOR, committer: AUTHOR });
         return { ok: true, conflicts: [] };
       } catch (err) {
         const e = err as { code?: string; data?: { filepaths?: string[] } };
