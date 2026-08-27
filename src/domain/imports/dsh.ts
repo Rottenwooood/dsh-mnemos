@@ -21,7 +21,13 @@ function extractText(value: unknown): string {
   }
   if (value && typeof value === 'object') {
     const o = value as Record<string, unknown>;
-    return extractText(o.text ?? o.content ?? o.leaf);
+    // DSH session events wrap the payload in `data`; the message text is a
+    // content block array there, the role sits next to it.
+    if (o.data && typeof o.data === 'object' && !Array.isArray(o.data)) {
+      const inner = o.data as Record<string, unknown>;
+      return extractText(inner.content ?? inner.text ?? inner.message ?? o.data);
+    }
+    return extractText(o.text ?? o.content ?? o.leaf ?? o.message);
   }
   return '';
 }
@@ -41,13 +47,17 @@ export function parseDshSessionLog(text: string, sessionId: string): ImportedMes
       continue;
     }
     const type = typeof entry.type === 'string' ? entry.type : '';
+    const inner = entry.data && typeof entry.data === 'object' && !Array.isArray(entry.data)
+      ? entry.data as Record<string, unknown>
+      : undefined;
     const content = extractText(entry);
     if (!content) {
       continue;
     }
+    const declaredRole = inner !== undefined && typeof inner.role === 'string' ? inner.role : undefined;
     const role =
-      typeof entry.role === 'string' && ['user', 'assistant', 'tool'].includes(entry.role)
-        ? (entry.role as ImportedMessage['role'])
+      typeof declaredRole === 'string' && ['user', 'assistant', 'tool'].includes(declaredRole)
+        ? (declaredRole as ImportedMessage['role'])
         : type.startsWith('user')
           ? 'user'
           : type.startsWith('assistant')

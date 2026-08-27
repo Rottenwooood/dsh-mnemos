@@ -44,6 +44,9 @@ export function detectSource(text: string): ImportSource | undefined {
       // ignore malformed lines during detection
     }
   }
+  if (types.has('session')) {
+    return 'dsh';
+  }
   if (types.has('session_meta') || types.has('response_item') || types.has('agent')) {
     return 'codex';
   }

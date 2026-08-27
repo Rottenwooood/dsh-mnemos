@@ -222,6 +222,26 @@ interface ModelsAnswer {
   providers: Array<{ id: string; name: string; models: string[] }>
 }
 
+/** `/mnemos/api/import/preview` answer. */
+interface ImportPreview {
+  files: Array<{ path: string; source: string; messages: number; candidates: number }>
+  totalFiles: number
+  totalMessages: number
+  totalCandidates: number
+  errors: string[]
+}
+
+/** `/mnemos/api/import/run` answer. */
+interface ImportRunStats {
+  parsedMessages: number
+  candidates: number
+  committed: number
+  proposed: number
+  denied: number
+  duplicateSkipped: number
+  errors: string[]
+}
+
 /** One control; commits immediately on change (live settings re-apply). */
 function FieldControl({
   field,
@@ -310,6 +330,99 @@ function FieldControl({
   }
 }
 
+/** The import-history area inside the settings page. */
+function MnemosImportSection(): ReactNode {
+  const [source, setSource] = useState('dsh')
+  const [dir, setDir] = useState('')
+  const [preview, setPreview] = useState<ImportPreview | null>(null)
+  const [run, setRun] = useState<ImportRunStats | null>(null)
+  const [error, setError] = useState<string | null>(null)
+  const [busy, setBusy] = useState(false)
+
+  const scan = async (): Promise<void> => {
+    if (dir.length === 0) return
+    setBusy(true)
+    setError(null)
+    setRun(null)
+    try {
+      const res = await fetch(`/mnemos/api/import/preview?dir=${encodeURIComponent(dir)}`)
+      const data = (await res.json()) as ImportPreview & { error?: string }
+      if (data.error !== undefined) setError(data.error)
+      else setPreview(data)
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err))
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  const doImport = async (): Promise<void> => {
+    if (dir.length === 0) return
+    setBusy(true)
+    setError(null)
+    try {
+      const res = await fetch('/mnemos/api/import/run', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ dir }),
+      })
+      const data = (await res.json()) as ImportRunStats & { error?: string }
+      if (data.error !== undefined) setError(data.error)
+      else setRun(data)
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err))
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  return (
+    <div className="mnemos-section">
+      <h3 className="mnemos-heading">导入历史会话</h3>
+      <p className="mnemos-intro">
+        扫描目录里的会话记录（DSH 历史 / Claude Code / Codex / ChatGPT 自动识别），预览候选后导入。导入走与命令相同的门禁，重复与敏感内容会被跳过或拒绝。
+      </p>
+      <div style={{ display: 'flex', gap: 8, marginBottom: 8 }}>
+        <select className="mnemos-input" style={{ flex: '0 0 150px' }} value={source} onChange={(e) => setSource(e.target.value)}>
+          <option value="dsh">DSH 历史</option>
+          <option value="claude-code">Claude Code</option>
+          <option value="codex">Codex</option>
+          <option value="chatgpt">ChatGPT</option>
+          <option value="auto">自动检测</option>
+        </select>
+        <input
+          className="mnemos-input"
+          style={{ flex: 1 }}
+          placeholder={source === 'dsh' ? '~/.dsh/sessions' : '输入会话日志目录路径'}
+          value={dir}
+          onChange={(e) => setDir(e.target.value)}
+        />
+      </div>
+      <div>
+        <button className="mnemos-button" disabled={dir.length === 0 || busy} onClick={() => { void scan() }}>
+          扫描预览
+        </button>
+        <button className="mnemos-button" style={{ marginLeft: 8 }} disabled={preview === null || busy} onClick={() => { void doImport() }}>
+          导入
+        </button>
+      </div>
+      {error !== null ? <p className="mnemos-error">{error}</p> : null}
+      {preview !== null && run === null ? (
+        <p className="mnemos-note">
+          扫描到 {preview.totalFiles} 个文件 / {preview.totalMessages} 条消息 / {preview.totalCandidates} 个候选
+          {preview.errors.length > 0 ? `，${preview.errors.length} 个文件失败` : ''}。确认后点"导入"。
+        </p>
+      ) : null}
+      {run !== null ? (
+        <p className="mnemos-note">
+          导入完成：{run.committed} 提交 / {run.proposed} 待审批 / {run.denied} 拒绝 / {run.duplicateSkipped} 重复跳过
+          {run.errors !== undefined && run.errors.length > 0 ? `，${run.errors.length} 个文件失败` : ''}
+        </p>
+      ) : null}
+    </div>
+  )
+}
+
 /** The top-level settings page (settings.section id `mnemos`). */
 export function MnemosSettingsSection({ scope }: { scope: SettingsScopeLike }): ReactNode {
   const snapshot = useSyncExternalStore(
@@ -386,10 +499,11 @@ export function MnemosSettingsSection({ scope }: { scope: SettingsScopeLike }): 
                 onSet={(v) => { void scope.set(field.key, v) }}
               />
               {field.hint ? <p className="mnemos-hint">{field.hint}</p> : null}
-            </div>
+          </div>
           )
         })}
       </div>
+      <MnemosImportSection />
     </div>
   )
 }

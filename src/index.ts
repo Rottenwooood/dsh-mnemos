@@ -283,6 +283,7 @@ export function apply(ctx: Context, raw: Partial<Config> = {}): void {
     service,
     gitStore,
     runDistillNow,
+    getConfig,
     llm: (ctx as unknown as { get(name: string): unknown }).get('llm') as import('./dsh/llm-adapter.js').LlmRuntimeLike | undefined,
     resolveModel: resolveLlmTarget,
   });

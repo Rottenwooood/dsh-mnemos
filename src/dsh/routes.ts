@@ -9,11 +9,18 @@
  * governance. Responses are lossless JSON.
  */
 import type { Context } from '@deepseek-ai/cordis';
+import { readdirSync, readFileSync, statSync } from 'node:fs';
 import type { IncomingMessage, ServerResponse } from 'node:http';
+import { join } from 'node:path';
+import { zstdDecompressSync } from 'node:zlib';
 import type { MemoryStore } from '../domain/store.js';
 import type { MemoryService } from '../domain/service.js';
 import type { GitStore } from '../domain/gitstore.js';
+import type { Config } from '../config.js';
 import type { LlmRuntimeLike, LlmTarget } from './llm-adapter.js';
+import { detectSource, parseAny } from '../domain/imports/detect.js';
+import { extractCandidates } from '../domain/extract.js';
+import { processImported } from '../domain/backfill.js';
 
 /** Structural face of the node IncomingMessage/ServerResponse the routes use. */
 type Req = IncomingMessage;
@@ -31,11 +38,60 @@ export interface MnemosRouteDeps {
   llm?: LlmRuntimeLike;
   /** Resolve the plugin's distillation model target (DSH default fallback). */
   resolveModel: () => Promise<LlmTarget | undefined>;
+  /** Live plugin config (import caller etc.). */
+  getConfig: () => Config;
 }
 
 function json(res: Res, status: number, value: unknown): void {
   res.writeHead(status, { 'content-type': 'application/json; charset=utf-8' });
   res.end(JSON.stringify(value));
+}
+
+const IMPORT_FILE_RE = /\.(?:jsonl|json|txt|md|zstd|ln)$/;
+
+/** Recursively list transcript files under a directory, bounded to avoid runaway scans. */
+function listImportFiles(dir: string): string[] {
+  const out: string[] = [];
+  for (const name of readdirSync(dir, { recursive: true })) {
+    const path = join(dir, String(name));
+    if (statSync(path).isFile() && IMPORT_FILE_RE.test(path)) {
+      out.push(path);
+      if (out.length >= 500) break;
+    }
+  }
+  return out;
+}
+
+/** Read a transcript file, decompressing Zstandard DSH session logs (.zstd/.ln). */
+function readTranscript(path: string): string {
+  const buf = readFileSync(path);
+  if (/\.(?:zstd|ln)$/.test(path)) {
+    return decompressZstdMulti(buf);
+  }
+  return buf.toString('utf8');
+}
+
+const ZSTD_MAGIC = Buffer.from([0x28, 0xb5, 0x2f, 0xfd]);
+
+/**
+ * DSH session logs are append-only: one zstd frame per appended batch, so a
+ * file is many concatenated frames. `zstdDecompressSync` only yields the
+ * first frame, so walk every magic and decompress each frame separately.
+ */
+function decompressZstdMulti(buf: Buffer): string {
+  const parts: string[] = [];
+  let cursor = 0;
+  while (cursor <= buf.length - ZSTD_MAGIC.length) {
+    const found = buf.indexOf(ZSTD_MAGIC, cursor);
+    if (found === -1) break;
+    try {
+      parts.push(zstdDecompressSync(buf.subarray(found)).toString('utf8'));
+    } catch {
+      // a corrupt or interrupted final frame is not a failed import
+    }
+    cursor = found + ZSTD_MAGIC.length;
+  }
+  return parts.join('\n');
 }
 
 async function readJson(req: Req): Promise<Record<string, unknown>> {
@@ -133,6 +189,85 @@ export function createMnemosRouteHandler(deps: MnemosRouteDeps): (req: Req, res:
           }
         }
         json(res, 200, { default: dflt ?? null, providers });
+        return;
+      }
+      if (route === '/import/sources') {
+        json(res, 200, {
+          sources: [
+            { id: 'dsh', label: 'DSH 历史会话' },
+            { id: 'claude-code', label: 'Claude Code' },
+            { id: 'codex', label: 'Codex' },
+            { id: 'chatgpt', label: 'ChatGPT' },
+            { id: 'auto', label: '自动检测' },
+          ],
+        });
+        return;
+      }
+      if (method === 'GET' && route === '/import/preview') {
+        const dir = url.searchParams.get('dir');
+        if (!dir || !statSync(dir, { throwIfNoEntry: false })?.isDirectory()) {
+          json(res, 400, { error: 'dir is required and must be a directory' });
+          return;
+        }
+        const rows: unknown[] = [];
+        const errors: string[] = [];
+        let totalMessages = 0;
+        let totalCandidates = 0;
+        for (const file of listImportFiles(dir)) {
+          try {
+            const text = readTranscript(file);
+            const source = detectSource(text);
+            if (!source) continue;
+            const messages = parseAny(text, source);
+            const candidates = extractCandidates(messages, { scope: 'workspace' }).length;
+            totalMessages += messages.length;
+            totalCandidates += candidates;
+            rows.push({ path: file, source, messages: messages.length, candidates });
+          } catch {
+            errors.push(file);
+          }
+        }
+        json(res, 200, { files: rows, totalFiles: rows.length, totalMessages, totalCandidates, errors });
+        return;
+      }
+      if (method === 'POST' && route === '/import/run') {
+        const body = await readJson(req);
+        const dir = typeof body.dir === 'string' ? body.dir : '';
+        if (!dir || !statSync(dir, { throwIfNoEntry: false })?.isDirectory()) {
+          json(res, 400, { error: 'dir is required and must be a directory' });
+          return;
+        }
+        const config = deps.getConfig();
+        const stats = {
+          parsedMessages: 0,
+          candidates: 0,
+          committed: 0,
+          proposed: 0,
+          denied: 0,
+          duplicateSkipped: 0,
+        };
+        const errors: string[] = [];
+        for (const file of listImportFiles(dir)) {
+          try {
+            const text = readTranscript(file);
+            const source = detectSource(text);
+            if (!source) continue;
+            const messages = parseAny(text, source);
+            const s = processImported(deps.service, messages, {
+              caller: config.importCaller,
+              scope: 'workspace',
+            });
+            stats.parsedMessages += s.parsedMessages;
+            stats.candidates += s.candidates;
+            stats.committed += s.committed;
+            stats.proposed += s.proposed;
+            stats.denied += s.denied;
+            stats.duplicateSkipped += s.duplicateSkipped;
+          } catch {
+            errors.push(file);
+          }
+        }
+        json(res, 200, { ...stats, errors });
         return;
       }
       if (method === 'POST' && route === '/approve') {
