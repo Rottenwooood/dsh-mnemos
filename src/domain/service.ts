@@ -23,6 +23,7 @@ export interface GateConfig {
   autoApproveConfidence: number;
   allowModelGlobalWrite: boolean;
   blacklist: string[];
+  sensitivityCheckEnabled: boolean;
 }
 
 export const DEFAULT_GATE: GateConfig = {
@@ -32,6 +33,7 @@ export const DEFAULT_GATE: GateConfig = {
   autoApproveConfidence: 0.9,
   allowModelGlobalWrite: false,
   blacklist: [],
+  sensitivityCheckEnabled: true,
 };
 
 export type WriteOutcome = 'denied' | 'committed' | 'proposed';
@@ -154,9 +156,11 @@ export function createMemoryService(
     if (store.countActive() >= current.maxEntries) {
       return { ok: false, reason: 'budget-full' };
     }
-    const reasons = detector.detect(`${input.topic} ${input.summary} ${input.detail ?? ''}`);
-    if (reasons.length > 0) {
-      return { ok: false, reason: 'sensitive', reasons };
+    if (current.sensitivityCheckEnabled) {
+      const reasons = detector.detect(`${input.topic} ${input.summary} ${input.detail ?? ''}`);
+      if (reasons.length > 0) {
+        return { ok: false, reason: 'sensitive', reasons };
+      }
     }
     if (current.blacklist.includes(input.writer)) {
       return { ok: false, reason: 'blacklisted' };
@@ -193,9 +197,11 @@ export function createMemoryService(
   };
 
   function ruleProgramChecks(rule: Rule, caller: Caller): { ok: true } | { ok: false; reason: string } {
-    const reasons = detector.detect(`${rule.text} ${rule.kind}`);
-    if (reasons.length > 0) {
-      return { ok: false, reason: 'sensitive' };
+    if (current.sensitivityCheckEnabled) {
+      const reasons = detector.detect(`${rule.text} ${rule.kind}`);
+      if (reasons.length > 0) {
+        return { ok: false, reason: 'sensitive' };
+      }
     }
     if (current.blacklist.includes(rule.proposedBy)) {
       return { ok: false, reason: 'blacklisted' };

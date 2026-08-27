@@ -75,6 +75,15 @@ describe('memory service write path', () => {
     );
   });
 
+  it('passes sensitive content through when the sensitivity switch is off', () => {
+    const { service } = makeService({ sensitivityCheckEnabled: false });
+    const res = service.add(
+      input({ summary: 'Here is my sk-abcdefghijklmnopqrstuvwxyzABCDEFGHIKEY' }),
+      'model',
+    );
+    expect(res.outcome).toBe('committed');
+  });
+
   it('denies exact duplicates', () => {
     const { service } = makeService();
     service.add(input({ topic: 'pnpm install' }), 'human');

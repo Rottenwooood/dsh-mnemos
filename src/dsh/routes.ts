@@ -268,7 +268,7 @@ export function createMnemosRouteHandler(deps: MnemosRouteDeps): (req: Req, res:
             const source = detectSource(text);
             if (!source) continue;
             const messages = parseAny(text, source);
-            const candidates = extractCandidates(messages, { scope: 'workspace' }).length;
+            const candidates = extractCandidates(messages, { scope: deps.getConfig().defaultScope }).length;
             totalMessages += messages.length;
             totalCandidates += candidates;
             rows.push({ path: file, source, messages: messages.length, candidates });
@@ -304,7 +304,7 @@ export function createMnemosRouteHandler(deps: MnemosRouteDeps): (req: Req, res:
             const messages = parseAny(text, source);
             const s = processImported(deps.service, messages, {
               caller: config.importCaller,
-              scope: 'workspace',
+              scope: config.defaultScope,
             });
             stats.parsedMessages += s.parsedMessages;
             stats.candidates += s.candidates;

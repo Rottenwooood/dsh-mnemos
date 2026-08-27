@@ -112,6 +112,9 @@ export function registerInjection(ctx: Context, service: MemoryService, getConfi
     }
     try {
       const config = getConfig();
+      if (!config.enabled || !config.injectionEnabled) {
+        return decision;
+      }
       const injection = recallHot(service, {
         maxBytes: config.injectMaxBytes,
         limit: config.injectLimit,
@@ -157,7 +160,7 @@ export function registerRuleInjection(ctx: Context, service: MemoryService, getC
       return decision;
     }
     try {
-      if (!getConfig().rulesInjectEnabled) {
+      if (!getConfig().enabled || !getConfig().rulesInjectEnabled) {
         return decision;
       }
       const rules = service.listRules('approved');

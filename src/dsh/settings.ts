@@ -37,6 +37,7 @@ export interface MnemosSettingsField {
 
 /** The full configuration surface exposed on the settings page. */
 export const MNEMOS_SETTINGS_FIELDS: MnemosSettingsField[] = [
+  { key: 'enabled', kind: 'boolean', label: '插件总开关（关 = 全部静默）' },
   { key: 'dbPath', kind: 'string', label: 'SQLite 数据库文件路径（需重启生效）' },
   { key: 'maxEntries', kind: 'number', label: '记忆条目上限' },
   { key: 'maxBytesPerEntry', kind: 'number', label: '单条记忆字节上限' },
@@ -44,6 +45,9 @@ export const MNEMOS_SETTINGS_FIELDS: MnemosSettingsField[] = [
   { key: 'autoApproveConfidence', kind: 'number', label: '自动放行置信度阈值' },
   { key: 'allowModelGlobalWrite', kind: 'boolean', label: '允许模型直接写全局记忆' },
   { key: 'blacklist', kind: 'stringList', label: '拉黑写入者（插件 id，逗号分隔）' },
+  { key: 'sensitivityCheckEnabled', kind: 'boolean', label: '敏感内容检测' },
+  { key: 'defaultScope', kind: 'string', label: '默认作用域（workspace / global）' },
+  { key: 'injectionEnabled', kind: 'boolean', label: '跨会话记忆注入（agent/pre-step）' },
   { key: 'injectLimit', kind: 'number', label: '每轮注入记忆条数上限' },
   { key: 'injectMinHits', kind: 'number', label: '自动注入最低跨会话命中次数' },
   { key: 'injectMaxBytes', kind: 'number', label: '每轮热层注入字节预算' },
@@ -58,6 +62,7 @@ export const MNEMOS_SETTINGS_FIELDS: MnemosSettingsField[] = [
   { key: 'memoryRepoDir', kind: 'string', label: 'git 记忆仓库目录（需重启生效）' },
   { key: 'gitVersioning', kind: 'boolean', label: 'git 版本管理' },
   { key: 'gitRemoteName', kind: 'string', label: 'git 远程名' },
+  { key: 'gitRemoteUrl', kind: 'string', label: 'git 远程 URL（保存后即重定向 origin）' },
   { key: 'syncEnabled', kind: 'boolean', label: '自动跨机同步' },
   { key: 'syncIntervalMinutes', kind: 'number', label: '自动同步间隔（分钟）' },
   { key: 'gitBackend', kind: 'string', label: 'git 后端（isomorphic=纯 JS / system=系统 git）' },

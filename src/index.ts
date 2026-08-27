@@ -43,6 +43,7 @@ export function gateFrom(config: Config): GateConfig {
     autoApproveConfidence: config.autoApproveConfidence,
     allowModelGlobalWrite: config.allowModelGlobalWrite,
     blacklist: config.blacklist,
+    sensitivityCheckEnabled: config.sensitivityCheckEnabled,
   };
 }
 
@@ -64,14 +65,14 @@ export function registerBackfillJob(ctx: Context, service: MemoryService, getCon
     void (async () => {
       try {
         const config = getConfig();
-        if (stopped || !config.backfillEnabled || config.sessionLogDirs.length === 0) {
+        if (stopped || !config.enabled || !config.backfillEnabled || config.sessionLogDirs.length === 0) {
           return;
         }
         const checkpointPath = join(dirname(config.dbPath), 'backfill-checkpoint.json');
         const backfill = createBackfillService(service, {
           checkpoint: createFileCheckpoint(checkpointPath),
           caller: config.importCaller,
-          scope: 'workspace',
+          scope: config.defaultScope,
           incremental: true,
         });
         for (const dir of config.sessionLogDirs) {
@@ -115,7 +116,7 @@ export function registerScheduledDistill(
       return;
     }
     const result = await runDistillIncremental(llm, service, messages, cursor, {
-      scope: 'workspace',
+      scope: getConfig().defaultScope,
     });
     cursor = result.cursor;
     cursorStore.write(cursor);
@@ -138,6 +139,7 @@ export function registerGitJobs(
   ctx.effect(() => {
     const id = setInterval(async () => {
       try {
+        if (!getConfig().enabled) return;
         await gitStore.recordCommit('periodic snapshot');
       } catch (err) {
         logger.warn(`git snapshot failed: ${err instanceof Error ? err.message : String(err)}`);
@@ -149,6 +151,7 @@ export function registerGitJobs(
     ctx.effect(() => {
       const id = setInterval(async () => {
         try {
+          if (!getConfig().enabled) return;
           const pull = await gitStore.pull();
           if (!pull.ok) {
             logger.warn(`sync pull conflicted on: ${pull.conflicts.join(', ')}`);
@@ -201,8 +204,14 @@ export function apply(ctx: Context, raw: Partial<Config> = {}): void {
   // the gate live on every resolved change. Structural paths (dbPath, git
   // repo) still need a restart, which the form labels state.
   installMnemosSettings(ctx, config, (next) => {
+    const prev = config;
     config = next;
     service.updateGate(gateFrom(next));
+    if (next.gitRemoteUrl.trim() && gitStore && next.gitRemoteUrl !== prev.gitRemoteUrl) {
+      void gitStore.setRemote(next.gitRemoteUrl.trim()).catch((err) =>
+        logger.warn(`git remote update failed: ${err instanceof Error ? err.message : String(err)}`),
+      );
+    }
     logger.info(`mnemos settings updated (gate re-applied, dbPath=${next.dbPath})`);
   });
 
@@ -250,6 +259,11 @@ export function apply(ctx: Context, raw: Partial<Config> = {}): void {
   const cursorStore = createJsonFileStore<DistillCursor>(join(dirname(config.dbPath), 'distill-cursor.json'));
   let distillCursor = cursorStore.read();
   const runDistillNow = async (): Promise<{ memories: number; rules: number; conflicts: number } | null> => {
+    const cfg = getConfig();
+    if (!cfg.enabled) {
+      collector.drain();
+      return { memories: 0, rules: 0, conflicts: 0 };
+    }
     const messages = collector.drain();
     if (messages.length === 0) {
       return { memories: 0, rules: 0, conflicts: 0 };
@@ -259,7 +273,7 @@ export function apply(ctx: Context, raw: Partial<Config> = {}): void {
     }
     try {
       const result = await runDistillIncremental(llm, service, messages, distillCursor, {
-        scope: 'workspace',
+        scope: cfg.defaultScope,
       });
       distillCursor = result.cursor;
       cursorStore.write(distillCursor);

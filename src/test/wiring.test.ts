@@ -284,6 +284,34 @@ describe('pre-step injection', () => {
     const third = await listener({ ...payload, turn: 8, step: 0 }, async () => ({ kind: 'enter', messages: [] }));
     expect(third.messages.length).toBe(injected);
   });
+
+  it('skips injection when the injection master switch or plugin master switch is off', async () => {
+    const { ctx, listeners } = fakeContext();
+    const { service } = makeService();
+    service.add(
+      {
+        type: 'preference',
+        scope: 'workspace',
+        workspace: 'ws',
+        topic: 'pnpm',
+        summary: 'Use pnpm.',
+        evidence: [],
+        confidence: 1,
+        source: 'manual',
+        writer: 'human',
+      },
+      'human',
+    );
+    registerInjection(ctx, service, () => ({ ...defaultConfig(), injectMaxBytes: 4096, injectMinHits: 0, injectionEnabled: false }));
+    const hook = listeners.find((l) => l.name === 'agent/pre-step')!;
+    const listener = hook.listener as (
+      payload: unknown,
+      next: () => Promise<{ kind: string; messages: unknown[] }>,
+    ) => Promise<{ kind: string; messages: Array<{ content: Array<{ text: string }> }> }>;
+    const payload = { agent: { id: 'a1', session: { id: 's1' } }, messages: [], turn: 1, step: 0, signal: new AbortController().signal };
+    const decision = await listener(payload, async () => ({ kind: 'enter', messages: [] }));
+    expect(decision.messages.length).toBe(0);
+  });
 });
 
 describe('rule injection (agent/pre-step)', () => {
@@ -433,6 +461,7 @@ describe('session signal collector', () => {
 describe('gateFrom', () => {
   it('maps Config to GateConfig', () => {
     const gate = gateFrom({
+      ...defaultConfig(),
       dbPath: '/tmp/x.db',
       maxEntries: 10,
       maxBytesPerEntry: 100,
@@ -440,29 +469,12 @@ describe('gateFrom', () => {
       autoApproveConfidence: 0.7,
       allowModelGlobalWrite: true,
       blacklist: ['bad'],
-      injectLimit: 3,
-      injectMinHits: 2,
-      injectMaxBytes: 1024,
-      sessionLogDirs: [],
-      backfillEnabled: true,
-      importCaller: 'human',
-      skillsDir: '/tmp/skills',
-      rulesInjectEnabled: true,
-      distillAuto: false,
-      distillIntervalMinutes: 1440,
-      distillWindow: 200,
-      memoryRepoDir: '/tmp/repo',
-      gitVersioning: true,
-      gitRemoteName: 'origin',
-      syncEnabled: false,
-      syncIntervalMinutes: 1440,
-      gitBackend: 'isomorphic',
-      llmProvider: '',
-      llmModel: '',
+      sensitivityCheckEnabled: false,
     });
     expect(gate.maxEntries).toBe(10);
     expect(gate.blacklist).toEqual(['bad']);
     expect(gate.allowModelGlobalWrite).toBe(true);
+    expect(gate.sensitivityCheckEnabled).toBe(false);
   });
 });
 

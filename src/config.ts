@@ -10,6 +10,8 @@ import { homedir } from 'node:os';
 import { join } from 'node:path';
 
 export interface Config {
+  /** Master switch: false silences every active behaviour (injection, collection, distill, backfill, sync). */
+  enabled: boolean;
   /** SQLite database file location. */
   dbPath: string;
   /** Hard cap on active memory entries. */
@@ -24,6 +26,12 @@ export interface Config {
   allowModelGlobalWrite: boolean;
   /** Writers (plugin ids / callers) that are always denied. */
   blacklist: string[];
+  /** False disables the sensitive-content gate entirely. */
+  sensitivityCheckEnabled: boolean;
+  /** Default scope applied by extraction / import / distillation when the source has none. */
+  defaultScope: 'workspace' | 'global';
+  /** Master switch for cross-session memory injection (agent/pre-step). */
+  injectionEnabled: boolean;
   /** Max memories injected into one model request. */
   injectLimit: number;
   /** Minimum cross-session hits before a memory is injected automatically. */
@@ -52,6 +60,8 @@ export interface Config {
   gitVersioning: boolean;
   /** Git remote name used for sync. */
   gitRemoteName: string;
+  /** Git remote URL for sync (empty = not configured; set live to re-point origin). */
+  gitRemoteUrl: string;
   /** Auto pull+push on an interval (default off). */
   syncEnabled: boolean;
   /** How often the sync job runs, in minutes. */
@@ -67,6 +77,7 @@ export interface Config {
 export function defaultConfig(): Config {
   const home = homedir();
   return {
+    enabled: true,
     dbPath: join(home, '.dsh', 'mnemos', 'mnemos.db'),
     maxEntries: 5000,
     maxBytesPerEntry: 8192,
@@ -74,6 +85,9 @@ export function defaultConfig(): Config {
     autoApproveConfidence: 0.9,
     allowModelGlobalWrite: false,
     blacklist: [],
+    sensitivityCheckEnabled: true,
+    defaultScope: 'workspace',
+    injectionEnabled: true,
     injectLimit: 8,
     injectMinHits: 0,
     injectMaxBytes: 2048,
@@ -88,6 +102,7 @@ export function defaultConfig(): Config {
     memoryRepoDir: join(home, '.dsh', 'mnemos', 'repo'),
     gitVersioning: true,
     gitRemoteName: 'origin',
+    gitRemoteUrl: '',
     syncEnabled: false,
     syncIntervalMinutes: 1440,
     gitBackend: 'isomorphic',

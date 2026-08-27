@@ -6,6 +6,7 @@ import {
   installMnemosSettings,
 } from '../dsh/settings.js';
 import { defaultConfig, Config } from '../config.js';
+import { DEFAULT_GATE } from '../domain/service.js';
 import { openMemoryStore } from '../domain/store.js';
 import { createSensitiveDetector } from '../domain/sensitive.js';
 import { createMemoryService, GateConfig } from '../domain/service.js';
@@ -98,14 +99,10 @@ describe('live gate re-apply', () => {
   it('updateGate swaps the gate in place and future writes use it', () => {
     const store = openMemoryStore(':memory:');
     const service = createMemoryService(store, createSensitiveDetector(), {
-      maxEntries: 5000,
-      maxBytesPerEntry: 8192,
-      autoApprove: true,
-      autoApproveConfidence: 0.9,
-      allowModelGlobalWrite: false,
-      blacklist: [],
+      ...DEFAULT_GATE,
     });
     const next: GateConfig = {
+      ...DEFAULT_GATE,
       maxEntries: 2,
       maxBytesPerEntry: 64,
       autoApprove: false,

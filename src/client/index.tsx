@@ -539,6 +539,9 @@ interface MnemosField {
 }
 
 const FIELDS: MnemosField[] = [
+  { key: 'enabled', kind: 'boolean', label: '插件总开关', hint: '关 = 注入、提炼、回填、同步全部静默', group: '开关' },
+  { key: 'injectionEnabled', kind: 'boolean', label: '跨会话记忆注入', hint: 'agent/pre-step 注入记忆投影', group: '开关' },
+  { key: 'sensitivityCheckEnabled', kind: 'boolean', label: '敏感内容检测', group: '开关' },
   { key: 'dbPath', kind: 'string', label: 'SQLite 数据库文件路径', hint: '需重启生效', group: '存储' },
   { key: 'maxEntries', kind: 'number', label: '记忆条目上限', group: '门禁' },
   { key: 'maxBytesPerEntry', kind: 'number', label: '单条记忆字节上限', group: '门禁' },
@@ -546,6 +549,7 @@ const FIELDS: MnemosField[] = [
   { key: 'autoApproveConfidence', kind: 'number', label: '自动放行置信度阈值', group: '门禁' },
   { key: 'allowModelGlobalWrite', kind: 'boolean', label: '允许模型直接写全局记忆', group: '门禁' },
   { key: 'blacklist', kind: 'stringList', label: '拉黑写入者', hint: '逗号分隔', group: '门禁' },
+  { key: 'defaultScope', kind: 'string', label: '默认作用域', hint: '提炼/导入/回填的默认作用域', group: '门禁' },
   { key: 'injectLimit', kind: 'number', label: '每轮注入记忆条数上限', group: '注入' },
   { key: 'injectMinHits', kind: 'number', label: '自动注入最低跨会话命中次数', group: '注入' },
   { key: 'injectMaxBytes', kind: 'number', label: '每轮热层注入字节预算', group: '注入' },
@@ -562,6 +566,7 @@ const FIELDS: MnemosField[] = [
   { key: 'gitVersioning', kind: 'boolean', label: 'git 版本管理', group: 'git' },
   { key: 'gitBackend', kind: 'string', label: 'git 后端', hint: 'isomorphic / system', group: 'git' },
   { key: 'gitRemoteName', kind: 'string', label: 'git 远程名', group: 'git' },
+  { key: 'gitRemoteUrl', kind: 'string', label: 'git 远程 URL', hint: '保存后即重定向 origin', group: 'git' },
   { key: 'memoryRepoDir', kind: 'string', label: 'git 记忆仓库目录', hint: '需重启生效', group: 'git' },
   { key: 'syncEnabled', kind: 'boolean', label: '自动跨机同步', group: 'git' },
   { key: 'syncIntervalMinutes', kind: 'number', label: '自动同步间隔（分钟）', group: 'git' },
@@ -823,7 +828,9 @@ export function MnemosSettingsSection({ scope }: { scope: SettingsScopeLike }): 
             ? providerOptions
             : field.key === 'llmModel'
               ? modelOptions
-              : undefined
+              : field.key === 'defaultScope'
+                ? ['workspace', 'global']
+                : undefined
           return (
             <div key={field.key}>
               {groupChanged ? <h3 className="mnemos-group">{field.group}</h3> : null}
