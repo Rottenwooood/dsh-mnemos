@@ -39,6 +39,7 @@
     "vitest": "^3.2.7"
   },
   "dependencies": {
+    "@deepseek-ai/schemastery": ">=3.0.0",
     "isomorphic-git": "^1.41.9"
   }
 }
