@@ -35,7 +35,6 @@ const TYPES = new Set<MemoryType>([
   'preference',
   'error_fix',
   'decision',
-  'protocol',
 ]);
 
 /** A `{ type: 'text' }` content block as the real harness renders it. */

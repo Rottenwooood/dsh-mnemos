@@ -247,44 +247,6 @@ export interface PreStepPayload {
   signal: AbortSignal;
 }
 
-/**
- * Protocol effect: inject active `protocol` memories (environment / tool-
- * calling conventions, e.g. sandbox rules, background-job usage) once per
- * session at the first pre-step. Unlike keyword-triggered user-fact injection,
- * protocol knowledge must be in context before the agent acts — a bash call
- * should never happen without the sandbox rules already present.
- */
-export function registerProtocolInjection(
-  ctx: Context,
-  service: MemoryService,
-  getConfig: () => Config,
-): void {
-  const injectedSessions = new Set<string>();
-  ctx.on('agent/pre-step', async (payload: PreStepPayload, next) => {
-    const decision = (await next()) as PreStepDecision;
-    if (decision.kind === 'reject') return decision;
-    payload.signal.throwIfAborted();
-    const sessionId = (payload.agent as { session?: { id?: string } })?.session?.id;
-    if (sessionId !== undefined && injectedSessions.has(sessionId)) {
-      return decision;
-    }
-    try {
-      if (!getConfig().enabled || !getConfig().protocolInjectEnabled) {
-        return decision;
-      }
-      const protos = service.listActive().filter((m) => m.type === 'protocol').slice(0, 8);
-      if (sessionId !== undefined) injectedSessions.add(sessionId);
-      if (protos.length > 0) {
-        const text = `# dsh-mnemos 环境约定\n${protos.map((p) => `- ${p.summary}`).join('\n')}`;
-        return { kind: 'enter', messages: [...decision.messages, makeUserMessage(text)] };
-      }
-    } catch {
-      // protocol injection is best-effort; never fail a request
-    }
-    return decision;
-  });
-}
-
 /** Structural face of the real `PreStepDecision`. */
 export type PreStepDecision =
   | { kind: 'reject' }

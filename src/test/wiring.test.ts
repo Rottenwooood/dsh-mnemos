@@ -7,7 +7,7 @@ import { createMemoryService } from '../domain/service.js';
 import { createMemoryBus } from '../domain/bus.js';
 import { registerTools, ToolDeps } from '../dsh/tools.js';
 import { registerCommand, CommandDeps } from '../dsh/command.js';
-import { registerInjection, registerRuleInjection, registerProtocolInjection, SignalCollector } from '../dsh/hooks.js';
+import { registerInjection, registerRuleInjection, SignalCollector } from '../dsh/hooks.js';
 import { gateFrom, apply } from '../index.js';
 import type { GitStore } from '../domain/gitstore.js';
 import { defaultConfig } from '../config.js';
@@ -340,41 +340,6 @@ describe('rule injection (agent/pre-step)', () => {  it('injects approved rules 
     expect(decision.kind).toBe('enter');
     const texts = decision.messages.flatMap((m) => m.content.map((c) => c.text));
     expect(texts.join('\n')).toContain('Always use pnpm');
-  });
-});
-
-describe('protocol injection (agent/pre-step)', () => {
-  it('injects active protocol memories once per session, before any tool call', async () => {
-    const { ctx, listeners } = fakeContext();
-    const { service } = makeService();
-    service.add(
-      {
-        type: 'protocol',
-        scope: 'workspace',
-        workspace: 'ws',
-        topic: 'sandbox',
-        summary: 'Every bash call runs in a fresh bwrap sandbox; /tmp is tmpfs.',
-        keywords: ['bash', 'sandbox'],
-        evidence: [],
-        confidence: 1,
-        source: 'manual',
-        writer: 'human',
-      },
-      'human',
-    );
-    registerProtocolInjection(ctx, service, () => defaultConfig());
-    const hook = listeners.find((l) => l.name === 'agent/pre-step')!;
-    const listener = hook.listener as (
-      payload: unknown,
-      next: () => Promise<{ kind: string; messages: unknown[] }>,
-    ) => Promise<{ kind: string; messages: Array<{ content: Array<{ text: string }> }> }>;
-    const payload = { agent: { id: 'a1', session: { id: 's1' } }, messages: [], turn: 0, step: 0, signal: new AbortController().signal };
-    const first = await listener(payload, async () => ({ kind: 'enter', messages: [] }));
-    const texts = first.messages.flatMap((m) => m.content.map((c) => c.text));
-    expect(texts.join('\n')).toContain('bwrap sandbox');
-    // Once per session: later steps do not re-inject.
-    const second = await listener({ ...payload, turn: 3, step: 0 }, async () => ({ kind: 'enter', messages: [] }));
-    expect(second.messages.length).toBe(0);
   });
 });
 

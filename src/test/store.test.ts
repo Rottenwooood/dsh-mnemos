@@ -107,12 +107,14 @@ describe('memory store', () => {
   it('keeps only the 5 most recent deleted memories (prunes older ones)', () => {
     const store = openMemoryStore(':memory:');
     for (let i = 0; i < 8; i++) {
-      store.addMemory(mem({ id: `d${i}`, topic: `t${i}`, updatedAt: `2026-01-0${(i % 9) + 1}T00:00:00.000Z` } as Partial<MemoryInput> & { id: string; topic: string; updatedAt: string }));
+      store.addMemory(mem({ id: `d${i}`, topic: `t${i}`, updatedAt: `2026-01-01T00:00:00.000Z` } as Partial<MemoryInput> & { id: string; topic: string; updatedAt: string }));
       store.setMemoryStatus(`d${i}`, 'deleted');
     }
+    // setMemoryStatus stamps updated_at, so the last deleted rows are newest and kept.
     expect(store.listDeleted().length).toBe(5);
-    expect(store.getMemory('d7')).toBeUndefined();
-    expect(store.getMemory('d2')).toBeDefined();
+    expect(store.listDeleted().map((r) => r.id).sort()).toEqual(['d3', 'd4', 'd5', 'd6', 'd7']);
+    expect(store.getMemory('d2')).toBeUndefined();
+    expect(store.getMemory('d7')).toBeDefined();
     store.close();
   });
 

@@ -20,7 +20,7 @@ export const DISTILL_SYSTEM_PROMPT = `You are a memory curator for a coding-assi
 Read the conversation and extract durable, reusable facts the user would want remembered across sessions.
 Follow the JSON schema exactly. Output ONLY a JSON array, no prose, no markdown fences.
 Each item:
-{"type":"project_fact"|"procedure"|"preference"|"error_fix"|"decision"|"protocol",
+{"type":"project_fact"|"procedure"|"preference"|"error_fix"|"decision",
  "topic":"short normalized title",
  "summary":"one-sentence fact",
  "detail":"optional longer context",
@@ -30,7 +30,6 @@ Rules:
 - Extract only high-signal facts: explicit user instructions/preferences, workflows, errors that were fixed, decisions with reasons.
 - Do NOT extract one-off trivia, code snippets, or credentials.
 - A "procedure" is a repeatable workflow; a "preference" is a stated user preference; an "error_fix" is a problem that was solved a specific way.
-- A "protocol" is an ENVIRONMENT or TOOL-CALLING convention the agent must always operate under (e.g. "every bash call runs in a fresh bwrap sandbox; /tmp is tmpfs and is wiped", "background jobs need run_in_background:true and job_list/job_output"). Protocol memories are injected every session, so keep them few and general — not per-task details.
 - Set confidence low (<=0.6) when unsure.
 - "keywords" must contain 2-5 SHORT, DISCRIMINATIVE terms or phrases the user would type verbatim later (e.g. "pnpm", "deploy to us-east-1", "git hooks"). Keywords drive automatic injection later, so pick terms that uniquely surface THIS memory and are unlikely to appear in unrelated talk. One word or a short noun phrase each; lowercase; no punctuation; never the whole sentence.`;
 
@@ -129,7 +128,7 @@ export function parseDistillResponse(text: string): DistillEntry[] {
   }
 }
 
-const TYPES = new Set<MemoryType>(['project_fact', 'procedure', 'preference', 'error_fix', 'decision', 'protocol']);
+const TYPES = new Set<MemoryType>(['project_fact', 'procedure', 'preference', 'error_fix', 'decision']);
 
 function isValidEntry(v: unknown): v is DistillEntry {
   if (!v || typeof v !== 'object') {
