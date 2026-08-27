@@ -99,10 +99,17 @@ export function registerHooks(ctx: Context, collector: SignalCollector): void {
  * `agent/pre-step` contract (payload + next waterfall).
  */
 export function registerInjection(ctx: Context, service: MemoryService, getConfig: () => Config): void {
+  // Inject once per (session, turn): a turn's later steps (tool loops) would
+  // otherwise repeat the same projection on every model request, wasting tokens.
+  const lastTurnBySession = new Map<string, number>();
   ctx.on('agent/pre-step', async (payload: PreStepPayload, next) => {
     const decision = (await next()) as PreStepDecision;
     if (decision.kind === 'reject') return decision;
     payload.signal.throwIfAborted();
+    const sessionId = (payload.agent as { session?: { id?: string } })?.session?.id;
+    if (sessionId !== undefined && lastTurnBySession.get(sessionId) === payload.turn) {
+      return decision;
+    }
     try {
       const config = getConfig();
       const injection = recallHot(service, {
@@ -112,10 +119,10 @@ export function registerInjection(ctx: Context, service: MemoryService, getConfi
         minHits: config.injectMinHits,
       });
       if (injection.injectedCount > 0) {
+        if (sessionId !== undefined) lastTurnBySession.set(sessionId, payload.turn);
         // A memory that actually reached a request counts as used: record the
         // hit so cross-session frequency is real (and satisfies injectMinHits
         // on later sessions) instead of staying 0 forever.
-        const sessionId = (payload.agent as { session?: { id?: string } })?.session?.id;
         for (const id of injection.injectedIds) {
           try {
             service.recordHit(id, sessionId);
@@ -139,16 +146,23 @@ export function registerInjection(ctx: Context, service: MemoryService, getConfi
  * system/messages), so rules inject here, beside the memory projection.
  */
 export function registerRuleInjection(ctx: Context, service: MemoryService, getConfig: () => Config): void {
+  // Same turn-level dedup as memory injection: rules are static per turn.
+  const lastTurnBySession = new Map<string, number>();
   ctx.on('agent/pre-step', async (payload: PreStepPayload, next) => {
     const decision = (await next()) as PreStepDecision;
     if (decision.kind === 'reject') return decision;
     payload.signal.throwIfAborted();
+    const sessionId = (payload.agent as { session?: { id?: string } })?.session?.id;
+    if (sessionId !== undefined && lastTurnBySession.get(sessionId) === payload.turn) {
+      return decision;
+    }
     try {
       if (!getConfig().rulesInjectEnabled) {
         return decision;
       }
       const rules = service.listRules('approved');
       if (rules.length > 0) {
+        if (sessionId !== undefined) lastTurnBySession.set(sessionId, payload.turn);
         const text = `# dsh-mnemos 生效规则\n${rules.map((r) => `- [${r.kind}] ${r.text}`).join('\n')}`;
         return { kind: 'enter', messages: [...decision.messages, makeUserMessage(text)] };
       }

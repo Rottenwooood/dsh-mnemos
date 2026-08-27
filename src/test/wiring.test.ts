@@ -245,6 +245,45 @@ describe('pre-step injection', () => {
     const texts = decision.messages.flatMap((m) => m.content.map((c) => c.text));
     expect(texts.join('\n')).toContain('Use pnpm');
   });
+
+  it('injects only once per turn (later steps do not repeat the projection)', async () => {
+    const { ctx, listeners } = fakeContext();
+    const { service } = makeService();
+    service.add(
+      {
+        type: 'preference',
+        scope: 'workspace',
+        workspace: 'ws',
+        topic: 'pnpm',
+        summary: 'Use pnpm.',
+        evidence: [],
+        confidence: 1,
+        source: 'manual',
+        writer: 'human',
+      },
+      'human',
+    );
+    registerInjection(ctx, service, () => ({
+      ...defaultConfig(),
+      injectMaxBytes: 4096,
+      injectMinHits: 0,
+    }));
+    const hook = listeners.find((l) => l.name === 'agent/pre-step')!;
+    const listener = hook.listener as (
+      payload: unknown,
+      next: () => Promise<{ kind: string; messages: unknown[] }>,
+    ) => Promise<{ kind: string; messages: Array<{ content: Array<{ text: string }> }> }>;
+    const payload = { agent: { id: 'a1', session: { id: 's1' } }, messages: [], turn: 7, step: 0, signal: new AbortController().signal };
+    const first = await listener(payload, async () => ({ kind: 'enter', messages: [] }));
+    const injected = first.messages.length;
+    expect(injected).toBeGreaterThan(0);
+    // Same turn, later step: no further injection.
+    const second = await listener({ ...payload, step: 2 }, async () => ({ kind: 'enter', messages: [] }));
+    expect(second.messages.length).toBe(0);
+    // New turn: injects again.
+    const third = await listener({ ...payload, turn: 8, step: 0 }, async () => ({ kind: 'enter', messages: [] }));
+    expect(third.messages.length).toBe(injected);
+  });
 });
 
 describe('rule injection (agent/pre-step)', () => {
