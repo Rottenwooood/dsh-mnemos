@@ -137,24 +137,27 @@ export function createMnemosRouteHandler(deps: MnemosRouteDeps): (req: Req, res:
         return;
       }
       if (method === 'GET' && route === '/memories') {
-        const scope = url.searchParams.get('scope') ?? undefined;
-        const workspace = url.searchParams.get('workspace') ?? undefined;
-        const type = url.searchParams.get('type') ?? undefined;
-        const status = url.searchParams.get('status') ?? 'active';
+        // Normalize empty query values to undefined: `?type=` (the client sends
+        // it when the "all types" filter is selected) must mean "no filter",
+        // not "type == ''", which would match nothing.
+        const scope = url.searchParams.get('scope') || undefined;
+        const workspace = url.searchParams.get('workspace') || undefined;
+        const type = url.searchParams.get('type') || undefined;
+        const status = url.searchParams.get('status') || 'active';
         if (status === 'deleted') {
           const rows = deps.service.listDeleted();
           json(res, 200, { count: rows.length, memories: rows });
           return;
         }
         if (status === 'all') {
-          const rows = deps.store.listSummaries(scope === 'global' ? 'global' : 'workspace', workspace ?? undefined, undefined, type ?? undefined);
+          const rows = deps.store.listSummaries(scope === 'global' ? 'global' : 'workspace', workspace, undefined, type);
           json(res, 200, { count: rows.length, memories: rows });
           return;
         }
         const rows = deps.service.listActive(
           scope === 'global' ? 'global' : 'workspace',
-          workspace ?? undefined,
-          type ?? undefined,
+          workspace,
+          type,
         );
         json(res, 200, { count: rows.length, memories: rows });
         return;
@@ -353,8 +356,8 @@ export function createMnemosRouteHandler(deps: MnemosRouteDeps): (req: Req, res:
         return;
       }
       if (method === 'GET' && route === '/history') {
-        const state = url.searchParams.get('state') ?? 'rejected';
-        const source = url.searchParams.get('source') ?? undefined;
+        const state = url.searchParams.get('state') || 'rejected';
+        const source = url.searchParams.get('source') || undefined;
         const rows = deps.store.listApprovals(state as never).filter(
           (r) => source === undefined || r.proposedBy === source,
         );
@@ -362,7 +365,7 @@ export function createMnemosRouteHandler(deps: MnemosRouteDeps): (req: Req, res:
         return;
       }
       if (method === 'GET' && route === '/export') {
-        const id = url.searchParams.get('id') ?? undefined;
+          const id = url.searchParams.get('id') || undefined;
         const ids = id ? [id] : deps.store.listSummaries(undefined, undefined, undefined, undefined).map((m) => m.id);
         const memories = ids
           .map((m) => deps.store.getMemory(m))
@@ -406,7 +409,7 @@ export function createMnemosRouteHandler(deps: MnemosRouteDeps): (req: Req, res:
           return;
         }
         if (method === 'GET' && route === '/git/history') {
-          const id = url.searchParams.get('id') ?? undefined;
+        const id = url.searchParams.get('id') || undefined;
           json(res, 200, { history: await deps.gitStore.history(id) });
           return;
         }
