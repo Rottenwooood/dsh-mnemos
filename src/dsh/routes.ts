@@ -116,7 +116,16 @@ export function createMnemosRouteHandler(deps: MnemosRouteDeps): (req: Req, res:
           for (const provider of llm.listProviders?.() ?? []) {
             let models: string[] = [];
             try {
-              models = (await llm.listModels?.(provider.id) ?? []).map((m) => m.id).slice(0, 50);
+              const listed = llm.listModels?.(provider.id) ?? Promise.resolve([]);
+              // An unqueryable provider endpoint must never stall the page:
+              // race the directory read against a short budget and degrade.
+              const rows = await Promise.race([
+                listed,
+                new Promise<never>((_, reject) => {
+                  setTimeout(() => reject(new Error('model discovery timed out')), 3000);
+                }),
+              ]);
+              models = rows.map((m) => m.id).slice(0, 50);
             } catch {
               // an unqueryable provider endpoint degrades to no advertised models
             }

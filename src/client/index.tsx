@@ -17,7 +17,7 @@
  * are structural.
  */
 
-import { useState, useEffect, useCallback, useSyncExternalStore, type ReactNode } from 'react'
+import { useState, useEffect, useCallback, useSyncExternalStore, Component, type ReactNode } from 'react'
 import css from './mnemos.css'
 
 /** JSON result of one /mnemos/api call. */
@@ -317,8 +317,23 @@ export function MnemosSettingsSection({ scope }: { scope: SettingsScopeLike }): 
     () => scope.getSnapshot(),
   )
   const models = useJson<ModelsAnswer>('/mnemos/api/models')
-  if (snapshot.status !== 'ready') {
-    return null
+  if (snapshot.status === 'loading') {
+    return (
+      <div className="mnemos-section">
+        <h2 className="mnemos-heading">dsh-mnemos</h2>
+        <p className="mnemos-intro">正在加载设置…</p>
+      </div>
+    )
+  }
+  if (snapshot.status === 'unavailable') {
+    return (
+      <div className="mnemos-section">
+        <h2 className="mnemos-heading">dsh-mnemos</h2>
+        <p className="mnemos-intro">
+          mnemos 设置命名空间尚未暴露：Host 未注册该命名空间，或连接处于内存模式。请确认 dsh-mnemos 已加载（`dsh plugin add dsh-mnemos`），并刷新页面。
+        </p>
+      </div>
+    )
   }
   const value = snapshot.value ?? {}
   const user = (snapshot.user ?? {}) as Record<string, unknown>
@@ -382,6 +397,25 @@ export function MnemosSettingsSection({ scope }: { scope: SettingsScopeLike }): 
 /** Cordis client plugin face (browser half). */
 export const name = 'dsh-mnemos'
 
+/** Catches a settings-page render error so it cannot blank the whole settings panel. */
+class SettingsBoundary extends Component<{ children: ReactNode }, { error: string | null }> {
+  state: { error: string | null } = { error: null }
+  static getDerivedStateFromError(error: unknown): { error: string | null } {
+    return { error: error instanceof Error ? error.message : String(error) }
+  }
+  render(): ReactNode {
+    if (this.state.error !== null) {
+      return (
+        <div className="mnemos-section">
+          <h2 className="mnemos-heading">dsh-mnemos</h2>
+          <p className="mnemos-error">设置页渲染出错：{this.state.error}</p>
+        </div>
+      )
+    }
+    return this.props.children
+  }
+}
+
 /** Services the browser half needs: the sidebar registry, the slot system and the settings-scope mirror. */
 export const inject = ['betterSidebar', 'slots', 'settingsScope']
 
@@ -423,7 +457,11 @@ export function apply(ctx: unknown): void {
         order: 25,
         label: 'dsh-mnemos',
       },
-      () => <MnemosSettingsSection scope={scope} />,
+      () => (
+        <SettingsBoundary>
+          <MnemosSettingsSection scope={scope} />
+        </SettingsBoundary>
+      ),
     )
   })
 }
