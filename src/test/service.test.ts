@@ -41,6 +41,12 @@ describe('memory service write path', () => {
     expect(res.outcome).toBe('committed');
   });
 
+  it('queues a high-confidence model write that carries no evidence (user-anchored gate)', () => {
+    const { service } = makeService();
+    const res = service.add(input({ writer: 'model', confidence: 0.95, evidence: [] }), 'model');
+    expect(res.outcome).toBe('proposed');
+  });
+
   it('sends low-confidence model writes to the proposal queue', () => {
     const { service } = makeService();
     const res = service.add(input({ writer: 'model', confidence: 0.5 }), 'model');

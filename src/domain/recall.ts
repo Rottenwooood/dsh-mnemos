@@ -9,7 +9,6 @@
 import { SummaryRow } from './store.js';
 import { MemoryScope } from './types.js';
 import { MemoryService } from './service.js';
-import { similarity } from './dedup.js';
 
 export interface RankedMemory {
   id: string;
@@ -75,18 +74,9 @@ export function buildInjection(ranked: RankedMemory[], maxBytes: number): Inject
   return { text, injectedCount: injected, droppedCount: ranked.length - injected, injectedIds };
 }
 
-function rowScore(row: SummaryRow, query: string): number {
-  const q = query.trim().toLowerCase();
-  if (!q) {
-    return 0;
-  }
-  const rel = similarity(`${row.topic} ${row.summary}`, q);
-  return rel * 100 + row.crossSessionHits;
-}
-
 /**
- * Hot layer: top memories by recency and cross-session use, no query. Usually
- * injected every turn, so it stays small and cheap.
+ * Hot layer: top memories by cross-session use, no query. Usually injected
+ * every turn, so it stays small and cheap.
  */
 export function recallHot(
   service: MemoryService,
@@ -107,7 +97,10 @@ export function recallHot(
 }
 
 /**
- * Warm/cold layer: search then rank by topic overlap + usage, fit the budget.
+ * Warm/cold layer: search then rank, fit the budget. Ranking is the shared
+ * hybrid search in MemoryService — reciprocal rank fusion of the store's FTS5
+ * BM25 (or LIKE) ranking with a bigram-Jaccard ranking (dsh-evolve's zero-token
+ * deterministic recall, no LLM, no embeddings).
  */
 export function recallQuery(
   service: MemoryService,
@@ -117,7 +110,7 @@ export function recallQuery(
   const maxBytes = opts.maxBytes ?? 4096;
   const limit = opts.limit ?? 10;
   const rows = service.search(query, limit);
-  const ranked = rows.map((r) => toRanked(r, rowScore(r, query)));
+  const ranked = rows.map((r) => toRanked(r, rows.length - rows.indexOf(r)));
   ranked.sort((a, b) => b.score - a.score);
   return buildInjection(ranked, maxBytes);
 }

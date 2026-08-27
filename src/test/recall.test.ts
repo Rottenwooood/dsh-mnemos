@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { openMemoryStore } from '../domain/store.js';
 import { createSensitiveDetector } from '../domain/sensitive.js';
-import { createMemoryService } from '../domain/service.js';
+import { createMemoryService, rrfFuse } from '../domain/service.js';
 import { buildInjection, recallHot, recallQuery, RankedMemory } from '../domain/recall.js';
 
 function ranked(partial: Partial<RankedMemory> = {}): RankedMemory {
@@ -83,5 +83,26 @@ describe('layered recall', () => {
     const inj = recallQuery(service, 'pnpm', { maxBytes: 4096 });
     expect(inj.text).toContain('pnpm');
     expect(inj.injectedCount).toBe(1);
+  });
+
+  it('rrfFuse merges independent rank lists by reciprocal rank', () => {
+    // y is rank 1 in both lists -> outranks x (rank 1 only in list A) and z.
+    const scores = rrfFuse([
+      [{ id: 'x' }, { id: 'y' }],
+      [{ id: 'y' }, { id: 'z' }],
+    ]);
+    const order = [...scores.entries()].sort((a, b) => b[1] - a[1]).map(([id]) => id);
+    expect(order).toEqual(['y', 'x', 'z']);
+    expect(scores.get('y')).toBeGreaterThan(scores.get('x')!);
+  });
+
+  it('service.search returns the fused union of both rankers', () => {
+    const service = serviceWith({
+      hits: [0, 0],
+      summaries: ['Build with pnpm and vitest.', 'Prefer pnpm for package management.'],
+    });
+    const res = service.search('pnpm', 10);
+    expect(res.length).toBe(2);
+    expect(res.every((r) => r.summary.includes('pnpm'))).toBe(true);
   });
 });

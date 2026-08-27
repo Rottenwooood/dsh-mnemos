@@ -11,10 +11,10 @@
  *    `autoApprove` enabled; everything else goes to the approval queue.
  */
 import { randomUUID } from 'node:crypto';
-import { MemoryStore } from './store.js';
+import { MemoryStore, SummaryRow } from './store.js';
 import { Memory, MemoryInput, Caller, Rule, RuleState } from './types.js';
 import { SensitiveDetector } from './sensitive.js';
-import { exactDedupKey } from './dedup.js';
+import { exactDedupKey, similarity } from './dedup.js';
 
 export interface GateConfig {
   maxEntries: number;
@@ -71,6 +71,47 @@ export interface ReplacementPayload {
 
 export function isReplacementPayload(v: unknown): v is ReplacementPayload {
   return !!v && typeof v === 'object' && (v as { __replace?: unknown }).__replace === true;
+}
+
+/**
+ * Reciprocal Rank Fusion (dsh-evolve's zero-token hybrid): combine independent
+ * ranked lists by summing 1/(k + rank) per item (standard k=60).
+ */
+export function rrfFuse(lists: Array<Array<{ id: string }>>, k = 60): Map<string, number> {
+  const scores = new Map<string, number>();
+  for (const list of lists) {
+    list.slice(0, 50).forEach((item, rank) => {
+      scores.set(item.id, (scores.get(item.id) ?? 0) + 1 / (k + rank + 1));
+    });
+  }
+  return scores;
+}
+
+/**
+ * Deterministic hybrid search (no LLM, no embeddings): reciprocal rank fusion of
+ * the store's FTS5 BM25 (or LIKE fallback) ranking with a bigram-Jaccard ranking
+ * over the active memories. Every search path (memory_search tool, /api/search)
+ * goes through this, so the whole recall layer matches dsh-evolve's mechanism.
+ */
+function hybridSearch(store: MemoryStore, query: string, limit: number): SummaryRow[] {
+  const pool = Math.max(limit, 20);
+  const fts = store.searchMemories(query, pool);
+  const active = store.listSummaries(undefined, undefined, 'active');
+  const bigram = active
+    .map((r) => ({ id: r.id, rel: similarity(`${r.topic} ${r.summary}`, query) }))
+    .filter((r) => r.rel > 0)
+    .sort((a, b) => b.rel - a.rel)
+    .slice(0, pool);
+  const scores = rrfFuse([fts, bigram]);
+  const byId = new Map([...active, ...fts].map((r) => [r.id, r]));
+  const out: SummaryRow[] = [];
+  for (const [id, score] of scores) {
+    const row = byId.get(id);
+    if (row) {
+      out.push(row);
+    }
+  }
+  return out.slice(0, limit);
 }
 
 export interface RuleStateResult {
@@ -178,11 +219,15 @@ export function createMemoryService(
     if (caller === 'human') {
       return true;
     }
+    // dsh-evolve: a model-supplied kind/type deciding its own exemption is no
+    // gate at all. Auto-approval must hinge on what the model cannot flatter:
+    // workspace-local (reversible), traced back to the conversation (evidence
+    // quoting actual messages) and a high confidence.
     return (
       current.autoApprove &&
-      input.type === 'project_fact' &&
       input.scope === 'workspace' &&
-      input.confidence >= current.autoApproveConfidence
+      input.confidence >= current.autoApproveConfidence &&
+      (input.evidence?.length ?? 0) > 0
     );
   }
 
@@ -404,7 +449,7 @@ export function createMemoryService(
     },
 
     search(query, limit = 10) {
-      return store.searchMemories(query, limit);
+      return hybridSearch(store, query, limit);
     },
 
     listActive(scope, workspace, type) {
