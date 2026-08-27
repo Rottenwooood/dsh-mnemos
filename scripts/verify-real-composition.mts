@@ -13,6 +13,7 @@
 import { Context } from '@deepseek-ai/cordis'
 import SessionStore, { SessionId } from '@deepseek-ai/dsh-session'
 import CommandRuntime, { type Agent } from '@deepseek-ai/dsh-commands'
+import { unlinkSync, writeFileSync } from 'node:fs'
 import { openMemoryStore } from '/home/c6h4o2/dsh-mnemos/src/domain/store.ts'
 import { apply as applyMnemos } from '/home/c6h4o2/dsh-mnemos/src/index.ts'
 
@@ -21,7 +22,6 @@ const DB = '/tmp/mnemos-real-composition.db'
 async function main(): Promise<void> {
   // Pre-seed one memory so /memory list/search return real data.
   for (const suffix of ['', '-wal', '-shm']) {
-    const { unlinkSync } = await import('node:fs')
     try { unlinkSync(`${DB}${suffix}`) } catch { /* fresh */ }
   }
   const seed = openMemoryStore(DB)
@@ -53,7 +53,8 @@ async function main(): Promise<void> {
 
   applyMnemos(ctx, {
     dbPath: DB,
-    gitVersioning: false,
+    gitVersioning: true,
+    memoryRepoDir: '/tmp/mnemos-real-composition-repo',
     backfillEnabled: false,
     distillAuto: false,
   })
@@ -63,32 +64,72 @@ async function main(): Promise<void> {
 
   const session = ctx.sessions.create(SessionId('real-verify'))
   const agent = { id: session.id, session } as Agent
-  const c = ctx as unknown as { commands: { find(agent: Agent, name: string): unknown; execute(agent: Agent, line: string, images: readonly unknown[], signal: AbortSignal): Promise<{ result: { kind: string; text?: string } } | undefined> } }
+  const c = ctx as unknown as {
+    get<T = unknown>(name: string): T
+    commands: {
+      find(agent: Agent, name: string): unknown
+      execute(agent: Agent, line: string, images: readonly unknown[], signal: AbortSignal): Promise<{ result: { kind: string; text?: string } } | undefined>
+    }
+  }
 
   const results: string[] = []
   const registered = c.commands.find(agent, 'memory') !== undefined
   results.push(`command 'memory' resolved by real registry: ${registered}`)
   results.push(`tools registered: ${JSON.stringify(registeredTools)}`)
 
-  const list = await c.commands.execute(agent, '/memory list', [], new AbortController().signal)
-  results.push(`/memory list -> ${JSON.stringify(list?.result)}`)
+  const run = async (line: string): Promise<string> => {
+    const exec = await c.commands.execute(agent, line, [], new AbortController().signal)
+    return `${exec?.result.kind}: ${exec?.result.text ?? ''}`
+  }
 
-  const search = await c.commands.execute(agent, '/memory search real-composition', [], new AbortController().signal)
-  results.push(`/memory search -> ${JSON.stringify(search?.result)}`)
+  const list = await run('/memory list')
+  results.push(`/memory list -> ${list}`)
 
-  const usage = await c.commands.execute(agent, '/memory bogus-verb', [], new AbortController().signal)
-  results.push(`/memory bogus -> ${JSON.stringify(usage?.result)}`)
+  const search = await run('/memory search real-composition')
+  results.push(`/memory search -> ${search}`)
+
+  const stats = await run('/memory stats')
+  results.push(`/memory stats -> ${stats}`)
+
+  const usage = await run('/memory bogus-verb')
+  results.push(`/memory bogus -> ${usage}`)
+
+  // /memory approve: seed a proposed (model) write, then approve it.
+  const service = c.get<{ add(input: unknown, caller: string): { outcome: string; approvalId?: number } }>('mnemos')
+  const proposed = service.add(
+    { type: 'preference', scope: 'workspace', workspace: '/ws', topic: 'naming', summary: 'Use kebab-case.', evidence: [], confidence: 0.4, source: 'manual', writer: 'model' },
+    'model',
+  )
+  const approve = await run(`/memory approve ${proposed.approvalId ?? 0}`)
+  results.push(`/memory approve -> ${approve}`)
+
+  // /memory import from a claude-code fixture.
+  const importFile = '/tmp/opencode/mnemos-real-import.jsonl'
+  writeFileSync(importFile, JSON.stringify({ type: 'user', message: { role: 'user', content: [{ type: 'text', text: '记住：real import works' }] }, timestamp: '2025-01-01T00:00:00.000Z' }))
+  const imported = await run(`/memory import auto ${importFile}`)
+  unlinkSync(importFile)
+  results.push(`/memory import -> ${imported}`)
+
+  // /memory rules + git status round trip.
+  const rules = await run('/memory rules list')
+  results.push(`/memory rules list -> ${rules}`)
+
+  const gitStatus = await run('/memory git status')
+  results.push(`/memory git status -> ${gitStatus}`)
 
   console.log(results.join('\n'))
 
   const ok =
     registered &&
     registeredTools.length === 4 &&
-    list?.result.kind === 'success' &&
-    (list.result.text ?? '').includes('real-composition') &&
-    (search?.result.text ?? '').includes('real-composition') &&
-    usage?.result.kind === 'success' &&
-    (usage.result.text ?? '').includes('commands:')
+    list.includes('real-composition') &&
+    search.includes('real-composition') &&
+    stats.includes('Active memories') &&
+    usage.includes('commands:') &&
+    approve.includes('Approved memory') &&
+    imported.includes('committed') &&
+    rules.includes('No rules.') &&
+    gitStatus.includes('Uncommitted') || gitStatus.includes('clean')
   console.log(`RESULT: ${ok ? 'PASS' : 'FAIL'}`)
   process.exit(ok ? 0 : 1)
 }
