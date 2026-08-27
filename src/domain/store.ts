@@ -94,6 +94,12 @@ CREATE TABLE IF NOT EXISTS usage_ledger (
 CREATE INDEX IF NOT EXISTS idx_audit_target ON audit(target_type, target_id);
 CREATE INDEX IF NOT EXISTS idx_approval_state ON approval(state);
 CREATE INDEX IF NOT EXISTS idx_usage_mem ON usage_ledger(memory_id);
+CREATE TABLE IF NOT EXISTS bus_blacklist (
+  name TEXT PRIMARY KEY,
+  reason TEXT,
+  blocked_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_mem_writer ON memories(writer, status);
 `;
 
 export interface SummaryRow {
@@ -128,6 +134,11 @@ export interface MemoryStore {
   updateApprovalState(id: number, state: ApprovalCandidate['state'], editedPayload?: unknown): void;
   insertAudit(e: Omit<AuditEntry, 'id'>): number;
   listAudit(limit: number): AuditEntry[];
+  listByWriter(writer: string): SummaryRow[];
+  isBlacklisted(name: string): boolean;
+  upsertBlacklist(name: string, reason?: string): void;
+  removeBlacklist(name: string): void;
+  listBlacklist(): Array<{ name: string; reason?: string; blockedAt: string }>;
 }
 
 function toMemory(row: Record<string, unknown>): Memory {
@@ -235,6 +246,18 @@ export function openMemoryStore(path: string): MemoryStore {
     `INSERT INTO audit (ts, action, target_type, target_id, payload, denied, by_agent, reason) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
   );
   const listAuditStmt = db.prepare('SELECT * FROM audit ORDER BY id DESC LIMIT ?');
+
+  const listByWriterStmt = db.prepare(
+    `SELECT id, summary, type, scope, workspace, topic, updated_at, cross_session_hits, status
+       FROM memories WHERE writer LIKE ? AND status='active' ORDER BY updated_at DESC`,
+  );
+  const blacklistGet = db.prepare('SELECT 1 FROM bus_blacklist WHERE name = ? LIMIT 1');
+  const blacklistUpsert = db.prepare(
+    `INSERT INTO bus_blacklist (name, reason, blocked_at) VALUES (?, ?, ?)
+     ON CONFLICT(name) DO UPDATE SET reason = COALESCE(excluded.reason, bus_blacklist.reason), blocked_at = excluded.blocked_at`,
+  );
+  const blacklistRemove = db.prepare('DELETE FROM bus_blacklist WHERE name = ?');
+  const blacklistList = db.prepare('SELECT * FROM bus_blacklist ORDER BY blocked_at');
 
   const insApproval = db.prepare(
     `INSERT INTO approval (kind, payload, state, proposed_by, evidence, created_at) VALUES (?, ?, 'proposed', ?, ?, ?)`,
@@ -423,6 +446,26 @@ export function openMemoryStore(path: string): MemoryStore {
         denied: Number(row.denied),
         byAgent: Number(row.by_agent),
         reason: (row.reason as string | null) ?? undefined,
+      }));
+    },
+    listByWriter(writer) {
+      const rows = listByWriterStmt.all(writer) as Record<string, unknown>[];
+      return rows.map(toSummary);
+    },    isBlacklisted(name) {
+      return blacklistGet.get(name) !== undefined;
+    },
+    upsertBlacklist(name, reason) {
+      blacklistUpsert.run(name, reason ?? null, now());
+    },
+    removeBlacklist(name) {
+      blacklistRemove.run(name);
+    },
+    listBlacklist() {
+      const rows = blacklistList.all() as Array<Record<string, unknown>>;
+      return rows.map((row) => ({
+        name: String(row.name),
+        reason: (row.reason as string | null) ?? undefined,
+        blockedAt: String(row.blocked_at),
       }));
     },
   };

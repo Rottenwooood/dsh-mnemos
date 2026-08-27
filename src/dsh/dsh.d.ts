@@ -17,6 +17,7 @@ import type {
   DshTools,
 } from './types.js';
 import type { MemoryService } from '../domain/service.js';
+import type { MemoryBus, BusEvent } from '../domain/bus.js';
 
 declare module '@deepseek-ai/cordis' {
   interface Context {
@@ -27,6 +28,8 @@ declare module '@deepseek-ai/cordis' {
     sessions: DshSessions;
     /** The dsh-mnemos memory service (the approval-gated write path). */
     mnemos: MemoryService;
+    /** The open memory bus: third-party plugins recall/record/subscribe. */
+    mnemosBus: MemoryBus;
     /** The harness LLM seam, when an adapter is mounted. */
     llm?: DshLlm;
     /** Present only when the optional dsh-better-sidebar plugin is mounted. */
@@ -36,6 +39,8 @@ declare module '@deepseek-ai/cordis' {
   interface Events {
     /** Durable session events; see DshSessionEvent. */
     'session/event'(event: DshSessionEvent): void;
+    /** Memory-bus change notifications (committed/proposed/replaced/revoked/rule-approved). */
+    'mnemos/memory'(event: BusEvent): void;
     /**
      * Waterfall deciding what the model sees; listeners must call next().
      * @mode waterfall

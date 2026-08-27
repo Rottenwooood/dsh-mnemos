@@ -18,6 +18,7 @@ import { createMemoryService, DEFAULT_GATE, GateConfig, MemoryService } from './
 import { createBackfillService, createFileCheckpoint, createJsonFileStore } from './domain/backfill.js';
 import { detectSource, parseAny } from './domain/imports/detect.js';
 import { runDistillIncremental, DistillCursor } from './domain/distill.js';
+import { createMemoryBus } from './domain/bus.js';
 import { registerTools } from './dsh/tools.js';
 import { registerCommand, CommandDeps } from './dsh/command.js';
 import { registerHooks, registerInjection, registerRuleInjection, SignalCollector } from './dsh/hooks.js';
@@ -127,6 +128,9 @@ export function apply(ctx: Context, raw: Partial<Config> = {}): void {
   });
   ctx.effect(() => ctx.provide('mnemos', service));
 
+  const bus = createMemoryBus(service, store, (event) => ctx.emit('mnemos/memory', event));
+  ctx.effect(() => ctx.provide('mnemosBus', bus));
+
   const llm = createLlmFromContext(ctx);
   const collector = new SignalCollector((message) => logger.debug(message), config.distillWindow);
   const cursorStore = createJsonFileStore<DistillCursor>(join(dirname(config.dbPath), 'distill-cursor.json'));
@@ -135,6 +139,7 @@ export function apply(ctx: Context, raw: Partial<Config> = {}): void {
     config,
     llm,
     collector,
+    bus,
     distillCursor: cursorStore.read(),
     persistCursor: (c) => cursorStore.write(c),
   };

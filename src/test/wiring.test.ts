@@ -4,6 +4,7 @@ import type { Context } from '@deepseek-ai/cordis';
 import { openMemoryStore } from '../domain/store.js';
 import { createSensitiveDetector } from '../domain/sensitive.js';
 import { createMemoryService } from '../domain/service.js';
+import { createMemoryBus } from '../domain/bus.js';
 import { registerTools } from '../dsh/tools.js';
 import { registerCommand, CommandDeps } from '../dsh/command.js';
 import { registerInjection, registerRuleInjection, SignalCollector } from '../dsh/hooks.js';
@@ -20,7 +21,6 @@ function commandDeps(service: ReturnType<typeof makeService>['service']): Comman
     persistCursor: () => {},
   };
 }
-
 function fakeContext() {
   const tools: ToolDefinition[] = [];
   const commands: CommandDefinition[] = [];
@@ -283,6 +283,35 @@ describe('/memory distill command', () => {
     expect(said[0]).toContain('Distilled');
   });
 });
+
+describe('/memory bus command', () => {
+  it('blacklists and lists a plugin via the human command', async () => {
+    const { ctx, commands } = fakeContext();
+    const { store, service } = makeServiceWithStore();
+    const bus = createMemoryBus(service, store);
+    registerCommand(ctx, { ...commandDeps(service), bus });
+    const command = commands[0]!;
+    const said: string[] = [];
+    await command.handler('bus blacklist spam-plugin "too noisy"', {
+      caller: 'human',
+      workspace: 'ws',
+      say: (t) => said.push(t),
+    });
+    expect(bus.isBlacklisted('spam-plugin')).toBe(true);
+    await command.handler('bus list', {
+      caller: 'human',
+      workspace: 'ws',
+      say: (t) => said.push(t),
+    });
+    expect(said.join('\n')).toContain('spam-plugin');
+  });
+});
+
+function makeServiceWithStore() {
+  const store = openMemoryStore(':memory:');
+  const service = createMemoryService(store, createSensitiveDetector());
+  return { store, service };
+}
 
 describe('session signal collector', () => {
   it('detects an explicit remember request once', () => {

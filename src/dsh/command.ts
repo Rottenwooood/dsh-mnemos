@@ -19,6 +19,7 @@ import { ImportSource } from '../domain/imports/types.js';
 import { Llm } from '../domain/llm.js';
 import { runDistillIncremental, DistillCursor } from '../domain/distill.js';
 import { promoteRuleToSkill, listSkillFiles } from '../domain/skill.js';
+import { MemoryBus } from '../domain/bus.js';
 import type { SignalCollector } from './hooks.js';
 
 function listJsonlFiles(dir: string): string[] {
@@ -37,6 +38,7 @@ export interface CommandDeps {
   config: Config;
   llm?: Llm;
   collector?: SignalCollector;
+  bus?: MemoryBus;
   distillCursor: DistillCursor;
   persistCursor: (cursor: DistillCursor) => void;
 }
@@ -269,9 +271,64 @@ export function registerCommand(ctx: Context, deps: CommandDeps): void {
           runtime.say('usage: /memory skill <list|promote <ruleId>>');
           return;
         }
+        case 'bus': {
+          const bus = deps.bus;
+          if (!bus) {
+            runtime.say('Memory bus unavailable.');
+            return;
+          }
+          const sub = rest[0];
+          if (sub === 'blacklist') {
+            const name = rest[1];
+            if (!name) {
+              runtime.say('usage: /memory bus blacklist <pluginName> [reason]');
+              return;
+            }
+            bus.blacklistPlugin(name, rest.slice(2).join(' ') || undefined);
+            runtime.say(`Blacklisted ${name}.`);
+            return;
+          }
+          if (sub === 'unblacklist') {
+            const name = rest[1];
+            if (!name) {
+              runtime.say('usage: /memory bus unblacklist <pluginName>');
+              return;
+            }
+            bus.unblacklistPlugin(name);
+            runtime.say(`Unblacklisted ${name}.`);
+            return;
+          }
+          if (sub === 'list' || sub === 'blacklist-list') {
+            const entries = bus.listBlacklist();
+            runtime.say(entries.length ? entries.map((e) => `- ${e.name}${e.reason ? `: ${e.reason}` : ''}`).join('\n') : 'No blacklisted plugins.');
+            return;
+          }
+          if (sub === 'revoke') {
+            const id = rest[1];
+            if (!id) {
+              runtime.say('usage: /memory bus revoke <memoryId>');
+              return;
+            }
+            const result = bus.revoke(id, { name: 'human', version: '1' });
+            runtime.say(result.ok ? `Revoked ${id}.` : `Cannot revoke: ${result.reason}.`);
+            return;
+          }
+          if (sub === 'writers') {
+            const name = rest[1];
+            const rows = name ? bus.listByWriter(name) : [];
+            if (!name) {
+              runtime.say('usage: /memory bus writers <pluginName>');
+              return;
+            }
+            runtime.say(rows.length ? rows.map((r) => `- ${r.topic}: ${r.summary}`).join('\n') : `No active memories by ${name}.`);
+            return;
+          }
+          runtime.say('usage: /memory bus <blacklist|unblacklist|list|revoke|writers>');
+          return;
+        }
         default:
           runtime.say(
-            'commands: search <query> | list | stats | approve <id> | reject <id> | import <src> <path> | backfill <dir> | distill [path] | rules <list|activate|rollback|deprecate> | skill <list|promote>',
+            'commands: search <query> | list | stats | approve <id> | reject <id> | import <src> <path> | backfill <dir> | distill [path] | rules <list|activate|rollback|deprecate> | skill <list|promote> | bus <blacklist|unblacklist|list|revoke|writers>',
           );
       }
     },
