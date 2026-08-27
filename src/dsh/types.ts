@@ -24,7 +24,13 @@ export interface ToolDefinition {
   description: string;
   /** JSON-schema-ish parameter description that joins prompt assembly. */
   parameters: Record<string, unknown>;
-  run(args: Record<string, unknown>, runtime: ToolRuntime): Promise<unknown>;
+  /** Canonical output schema plus a pure Native render projection. */
+  output: {
+    schema: Record<string, unknown>;
+    render(args: unknown, value: unknown): Array<{ type: string; text?: string; [key: string]: unknown }>;
+    presentationMeta?: unknown;
+  };
+  execute(args: unknown, exec: { agent?: unknown; signal?: AbortSignal }): Promise<unknown>;
 }
 
 export interface DshTools {
