@@ -68,7 +68,7 @@ interface PendingRow {
   kind: string
   proposedBy: string
   createdAt: string
-  payload?: { topic?: string; summary?: string; scope?: string; type?: string; confidence?: number }
+  payload?: { topic?: string; summary?: string; text?: string; scope?: string; type?: string; confidence?: number }
 }
 
 interface MemoryRow {
@@ -125,6 +125,30 @@ function Heatmap({ daily }: { daily: Array<{ day: string; count: number }> }): R
   )
 }
 
+/** Material-Design-Icon-style inline SVG (mdi path data), colored by the harness token. */
+function Icon({ path, size = 15 }: { path: string; size?: number }): ReactNode {
+  return (
+    <svg
+      viewBox="0 0 24 24"
+      width={size}
+      height={size}
+      fill="currentColor"
+      style={{ flex: '0 0 auto', verticalAlign: '-2px', marginRight: 5, color: 'var(--dsw-alias-color-icon-secondary, currentColor)', opacity: 0.85 }}
+      aria-hidden="true"
+    >
+      <path d={path} />
+    </svg>
+  )
+}
+
+// mdi paths (Material Design Icons, Apache-2.0)
+const ICON_OVERVIEW = 'M13,3V9H21V3M13,21H21V11H13M3,21H11V15H3M3,13H11V3H3V13Z'
+const ICON_HEATMAP = 'M22,21H2V3H4V19H6V10H10V19H12V6H16V19H18V14H22V21Z'
+const ICON_PENDING = 'M12,20A8,8 0 0,0 20,12A8,8 0 0,0 12,4A8,8 0 0,0 4,12A8,8 0 0,0 12,20M12,2A10,10 0 0,1 22,12A10,10 0 0,1 12,22C6.47,22 2,17.5 2,12A10,10 0 0,1 12,2M12.5,7V12.25L17,14.92L16.25,16.15L11,13V7H12.5Z'
+const ICON_MEMORY = 'M12,3C7.58,3 4,4.79 4,7C4,9.21 7.58,11 12,11C16.42,11 20,9.21 20,7C20,4.79 16.42,3 12,3M4,9V12C4,14.21 7.58,16 12,16C16.42,16 20,14.21 20,12V9C20,11.21 16.42,13 12,13C7.58,13 4,11.21 4,9M4,14V17C4,19.21 7.58,21 12,21C16.42,21 20,19.21 20,17V14C20,16.21 16.42,18 12,18C7.58,18 4,16.21 4,14Z'
+const ICON_RESTORE = 'M12,3A9,9 0 0,0 3,12H0L4,16L8,12H5A7,7 0 0,1 12,5A7,7 0 0,1 19,12A7,7 0 0,1 12,19C10.5,19 9.1,18.5 8,17.6L6.6,19A9,9 0 0,0 12,21A9,9 0 0,0 21,12A9,9 0 0,0 12,3Z'
+const ICON_GIT = 'M6,2A2,2 0 0,1 8,4C8,4.88 7.39,5.61 6.56,5.88L7.42,9H15.5C16.34,9 17,9.66 17,10.5V12.56C17.83,12.83 18.5,13.61 18.5,14.5A2,2 0 0,1 16.5,16.5C15.61,16.5 14.83,15.83 14.56,15H9.5V16.5C9.5,17.34 8.84,18 8,18C7.16,18 6.5,17.34 6.5,16.5C6.5,15.61 7.17,14.83 8.06,14.56L7.42,11.75C6.45,11.47 5.75,10.64 5.53,9.62L4.19,4.44C3.87,4.22 3.65,3.88 3.65,3.5A2,2 0 0,1 5.65,1.5H6M8,4C8,2.9 7.1,2 6,2S4,2.9 4,4C4,4.88 4.61,5.61 5.44,5.88L6.3,9.23C7.34,9.5 8.2,10.27 8.58,11.25H11.42C11.8,10.27 12.66,9.5 13.7,9.23L14.56,5.88C13.39,5.61 12.75,4.88 12.75,4C12.75,2.9 13.65,2 14.75,2S16.75,2.9 16.75,4C16.75,4.88 16.14,5.61 15.31,5.88L14.45,9.23C13.41,9.5 12.55,10.27 12.17,11.25H9.83C9.45,10.27 8.59,9.5 7.55,9.23L6.69,5.88C7.86,5.61 8,4.88 8,4M8,18C8,16.9 7.1,16 6,16S4,16.9 4,18C4,19.1 4.9,20 6,20S8,19.1 8,18M16,14C16,15.1 16.9,16 18,16S20,15.1 20,14C20,12.9 19.1,12 18,12S16,12.9 16,14Z'
+
 /** The memory-console tab body (better-sidebar). */
 export function MnemosTab(): ReactNode {
   const stats = useJson<{ totalActive: number; pending: number; gate: { maxEntries: number } }>('/mnemos/api/stats')
@@ -133,7 +157,6 @@ export function MnemosTab(): ReactNode {
   const memories = useJson<{ memories: MemoryRow[] }>(`/mnemos/api/memories?scope=workspace&type=${encodeURIComponent(typeFilter)}`)
   const deleted = useJson<{ memories: MemoryRow[] }>('/mnemos/api/memories?status=deleted')
   const usage = useJson<UsageStats>('/mnemos/api/usage')
-  const history = useJson<{ state: string; count: number; items: PendingRow[] }>('/mnemos/api/history?state=rejected')
   const git = useJson<{ changed: string[] }>('/mnemos/api/git/status')
   const [search, setSearch] = useState('')
   const [notice, setNotice] = useState<{ kind: 'ok' | 'err'; text: string } | null>(null)
@@ -142,7 +165,6 @@ export function MnemosTab(): ReactNode {
   const [draft, setDraft] = useState('')
   const [editingApproval, setEditingApproval] = useState<number | null>(null)
   const [approvalDraft, setApprovalDraft] = useState('')
-  const [historySource, setHistorySource] = useState('')
   const [gitView, setGitView] = useState<{ id: string; history: GitCommit[] } | null>(null)
   const [gitContent, setGitContent] = useState<{ sha: string; content: string } | null>(null)
 
@@ -152,9 +174,8 @@ export function MnemosTab(): ReactNode {
     memories.reload()
     deleted.reload()
     usage.reload()
-    history.reload()
     git.reload()
-  }, [stats, pending, memories, deleted, usage, history, git])
+  }, [stats, pending, memories, deleted, usage, git])
 
   // Keep the console current while the panel is open.
   useEffect(() => {
@@ -276,7 +297,7 @@ export function MnemosTab(): ReactNode {
     .slice(0, 20)
 
   return (
-    <div style={{ padding: 10, font: 'inherit' }}>
+    <div style={{ padding: 10, font: 'inherit', overflowY: 'auto', height: '100%', boxSizing: 'border-box' }}>
       {notice !== null ? (
         <div
           className="mnemos-notice"
@@ -288,7 +309,7 @@ export function MnemosTab(): ReactNode {
       ) : null}
 
       <div className="mnemos-section" style={{ padding: 0 }}>
-        <div className="mnemos-heading" style={{ fontSize: 13 }}>概览</div>
+        <div className="mnemos-heading" style={{ fontSize: 13 }}> <Icon path={ICON_OVERVIEW} />概览</div>
         <div className="mnemos-intro" style={{ margin: '4px 0 8px' }}>
           {stats.data ? `${stats.data.totalActive} 条记忆 · ${stats.data.pending} 待审批 · 上限 ${stats.data.gate.maxEntries}` : stats.error ?? '加载中…'}
         </div>
@@ -307,11 +328,11 @@ export function MnemosTab(): ReactNode {
       </div>
 
       <div className="mnemos-section" style={{ padding: 0 }}>
-        <div className="mnemos-heading" style={{ fontSize: 13 }}>待审批</div>
+        <div className="mnemos-heading" style={{ fontSize: 13 }}> <Icon path={ICON_PENDING} />待审批</div>
         {(pending.data?.pending ?? []).map((p) => (
           <div key={p.id} style={{ marginTop: 8 }}>
             <div className="mnemos-intro" style={{ margin: 0 }}>
-              [{p.kind}] {p.payload?.topic ?? p.id} — {p.payload?.summary ?? ''}（by {p.proposedBy}）
+              [{p.kind}] {p.payload?.topic ?? p.id} — {p.payload?.summary ?? p.payload?.text ?? ''}（by {p.proposedBy}）
               {p.kind === 'memory' && p.payload?.scope ? ` · ${p.payload.scope}/${p.payload.type}` : ''}
             </div>
             {editingApproval === p.id ? (
@@ -321,13 +342,13 @@ export function MnemosTab(): ReactNode {
                   style={{ marginTop: 6 }}
                   value={approvalDraft}
                   onChange={(e) => setApprovalDraft(e.target.value)}
-                  placeholder="修改摘要后批准"
+                  placeholder="修改后批准"
                 />
                 <button
                   className="mnemos-button"
                   style={{ marginRight: 6, marginTop: 6 }}
                   disabled={busy || approvalDraft.trim().length === 0}
-                  onClick={() => void act('/mnemos/api/approve', { approvalId: p.id, decision: 'approve', edited: { summary: approvalDraft.trim() } }, '已编辑并批准').then(() => setEditingApproval(null))}
+                  onClick={() => void act('/mnemos/api/approve', { approvalId: p.id, decision: 'approve', edited: p.kind === 'rule' ? { text: approvalDraft.trim() } : { summary: approvalDraft.trim() } }, '已编辑并批准').then(() => setEditingApproval(null))}
                 >
                   保存并批准
                 </button>
@@ -363,7 +384,7 @@ export function MnemosTab(): ReactNode {
       </div>
 
       <div className="mnemos-section" style={{ padding: 0 }}>
-        <div className="mnemos-heading" style={{ fontSize: 13 }}>命中热力图</div>
+        <div className="mnemos-heading" style={{ fontSize: 13 }}> <Icon path={ICON_HEATMAP} />命中热力图</div>
         {usage.data ? (
           <>
             <div className="mnemos-intro" style={{ margin: '4px 0 0' }}>
@@ -377,7 +398,7 @@ export function MnemosTab(): ReactNode {
       </div>
 
       <div className="mnemos-section" style={{ padding: 0 }}>
-        <div className="mnemos-heading" style={{ fontSize: 13 }}>记忆</div>
+        <div className="mnemos-heading" style={{ fontSize: 13 }}> <Icon path={ICON_MEMORY} />记忆</div>
         <div style={{ display: 'flex', gap: 6, marginTop: 6, flexWrap: 'wrap' }}>
           <input
             className="mnemos-input"
@@ -466,7 +487,7 @@ export function MnemosTab(): ReactNode {
       </div>
 
       <div className="mnemos-section" style={{ padding: 0 }}>
-        <div className="mnemos-heading" style={{ fontSize: 13 }}>已删除（可从 git 恢复）</div>
+        <div className="mnemos-heading" style={{ fontSize: 13 }}> <Icon path={ICON_RESTORE} />已删除（可从 git 恢复）</div>
         {(deleted.data?.memories ?? []).map((m) => (
           <div key={m.id} style={{ marginTop: 6 }}>
             <span className="mnemos-intro" style={{ margin: 0 }}>{m.topic} — {m.summary}</span>
@@ -480,30 +501,7 @@ export function MnemosTab(): ReactNode {
       </div>
 
       <div className="mnemos-section" style={{ padding: 0 }}>
-        <div className="mnemos-heading" style={{ fontSize: 13 }}>被拒历史</div>
-        <div style={{ display: 'flex', gap: 6, marginTop: 6, flexWrap: 'wrap' }}>
-          <input
-            className="mnemos-input"
-            style={{ flex: 1, minWidth: 140 }}
-            placeholder="按来源（proposedBy）过滤…"
-            value={historySource}
-            onChange={(e) => setHistorySource(e.target.value)}
-          />
-        </div>
-        {(history.data?.items ?? [])
-          .filter((r) => historySource.length === 0 || r.proposedBy.includes(historySource))
-          .slice(0, 20)
-          .map((r) => (
-            <div key={r.id} className="mnemos-intro" style={{ margin: '6px 0 0' }}>
-              [{r.kind}] {r.payload?.topic ?? r.id} — {r.payload?.summary ?? ''}（by {r.proposedBy}）
-            </div>
-          ))}
-        {history.data && history.data.items.length === 0 ? <div className="mnemos-intro" style={{ margin: 0 }}>无被拒记录</div> : null}
-        {history.error ? <div className="mnemos-error">{history.error}</div> : null}
-      </div>
-
-      <div className="mnemos-section" style={{ padding: 0 }}>
-        <div className="mnemos-heading" style={{ fontSize: 13 }}>git 同步</div>
+        <div className="mnemos-heading" style={{ fontSize: 13 }}> <Icon path={ICON_GIT} />git 同步</div>
         <div className="mnemos-intro" style={{ margin: '4px 0 6px' }}>
           {git.data ? `${git.data.changed.length} 未提交变更` : git.error ?? '加载中…'}
         </div>

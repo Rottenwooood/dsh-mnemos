@@ -75,15 +75,13 @@ async function main(): Promise<void> {
     expect(Array.isArray(all.json.memories), 'all list not an array')
   })
 
-  await check('search (RRF) + usage + pending + history', async () => {
+  await check('search (RRF) + usage + pending', async () => {
     const search = await api('/search?q=pnpm')
     expect(Array.isArray(search.json.hits), 'search hits not array')
     const usage = await api('/usage?days=7')
     expect((usage.json.daily as unknown[]).length === 7, 'usage daily length')
     const pending = await api('/pending')
     expect(Array.isArray(pending.json.pending), 'pending not array')
-    const hist = await api('/history?state=rejected')
-    expect(Array.isArray(hist.json.items), 'history items not array')
   })
 
   await check('models discovery (real DSH llm settings)', async () => {

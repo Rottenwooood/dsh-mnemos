@@ -197,7 +197,8 @@ export function createMnemosRouteHandler(deps: MnemosRouteDeps): (req: Req, res:
         const result = deps.service.add(
           {
             type: (typeof body.type === 'string' && ['project_fact', 'procedure', 'preference', 'error_fix', 'decision'].includes(body.type) ? body.type : 'project_fact') as MemoryInput['type'],
-            scope: body.scope === 'global' ? 'global' : 'workspace',
+            // User preferences apply everywhere, not just the current workspace.
+            scope: body.scope === 'global' || (body.type === 'preference' && body.scope === undefined) ? 'global' : 'workspace',
             topic,
             summary,
             detail: typeof body.detail === 'string' ? body.detail : undefined,
@@ -402,15 +403,6 @@ export function createMnemosRouteHandler(deps: MnemosRouteDeps): (req: Req, res:
           else failed += 1;
         }
         json(res, 200, { approved, skipped: candidates.length - lowRisk.length, failed });
-        return;
-      }
-      if (method === 'GET' && route === '/history') {
-        const state = url.searchParams.get('state') || 'rejected';
-        const source = url.searchParams.get('source') || undefined;
-        const rows = deps.store.listApprovals(state as never).filter(
-          (r) => source === undefined || r.proposedBy === source,
-        );
-        json(res, 200, { state, count: rows.length, items: rows.map(approvalView) });
         return;
       }
       if (method === 'GET' && route === '/export') {

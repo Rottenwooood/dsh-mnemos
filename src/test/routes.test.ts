@@ -143,28 +143,12 @@ describe('/mnemos/api route handler', () => {
     expect(after.json.pending).toHaveLength(0);
   });
 
-  it('returns rejected history and exports all memories', async () => {
+  it('exports all memories', async () => {
     const deps = makeDeps();
-    const added = deps.service.add(
-      {
-        type: 'preference',
-        scope: 'workspace',
-        workspace: '/ws',
-        topic: 'naming',
-        summary: 'Use kebab-case.',
-        evidence: [],
-        confidence: 0.5,
-        source: 'manual',
-        writer: 'model',
-      },
-      'model',
-    );
-    deps.service.approve(added.approvalId!, 'reject');
+    seed(deps.service);
     const handler = createMnemosRouteHandler(deps);
-    const reject = await call(handler, 'GET', '/mnemos/api/history?state=rejected');
-    expect(reject.json.count).toBe(1);
     const exported = await call(handler, 'GET', '/mnemos/api/export');
-    expect((exported.json.memories as unknown[]).length).toBeGreaterThanOrEqual(0);
+    expect((exported.json.memories as unknown[]).length).toBeGreaterThanOrEqual(1);
   });
 
   it('reports cleanup candidates and deletes them on POST', async () => {

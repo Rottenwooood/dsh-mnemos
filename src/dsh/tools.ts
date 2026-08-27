@@ -226,8 +226,9 @@ export function registerTools(ctx: Context, deps: ToolDeps): void {
       if (!topic || !summary) {
         throw new Error('topic and summary are required');
       }
-      const scope = (asString(a.scope) ?? 'workspace') as MemoryScope;
       const type = (asString(a.type) ?? 'project_fact') as MemoryType;
+      // User preferences apply everywhere, not just the current workspace.
+      const scope = (asString(a.scope) ?? (type === 'preference' ? 'global' : 'workspace')) as MemoryScope;
       const caller: Caller = 'model';
       const sessionId = exec.agent?.id ?? exec.agent?.session?.id;
       const keywords = asString(a.keywords)

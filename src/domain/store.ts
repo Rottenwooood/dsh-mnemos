@@ -252,7 +252,13 @@ export function openMemoryStore(path: string): MemoryStore {
   const listDeletedStmt = db.prepare(
     `SELECT id, summary, type, scope, workspace, topic, keywords, updated_at, cross_session_hits, status
        FROM memories WHERE status='deleted'
-      ORDER BY updated_at DESC`,
+      ORDER BY updated_at DESC LIMIT 5`,
+  );
+  // Hard-delete deleted rows beyond the 5 most recent (deleted history is capped).
+  const pruneDeletedStmt = db.prepare(
+    `DELETE FROM memories WHERE status='deleted' AND id NOT IN (
+       SELECT id FROM memories WHERE status='deleted' ORDER BY updated_at DESC LIMIT 5
+     )`,
   );
   const listStaleStmt = db.prepare(
     `SELECT m.id FROM memories m
@@ -418,6 +424,9 @@ export function openMemoryStore(path: string): MemoryStore {
     },
     setMemoryStatus(id, status) {
       setStatus.run(status, now(), id);
+      if (status === 'deleted') {
+        pruneDeletedStmt.run();
+      }
     },
     recordHit(id, sessionId) {
       hitStmt.run(now(), id);

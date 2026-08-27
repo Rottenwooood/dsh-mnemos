@@ -104,6 +104,18 @@ describe('memory store', () => {
     store.close();
   });
 
+  it('keeps only the 5 most recent deleted memories (prunes older ones)', () => {
+    const store = openMemoryStore(':memory:');
+    for (let i = 0; i < 8; i++) {
+      store.addMemory(mem({ id: `d${i}`, topic: `t${i}`, updatedAt: `2026-01-0${(i % 9) + 1}T00:00:00.000Z` } as Partial<MemoryInput> & { id: string; topic: string; updatedAt: string }));
+      store.setMemoryStatus(`d${i}`, 'deleted');
+    }
+    expect(store.listDeleted().length).toBe(5);
+    expect(store.getMemory('d7')).toBeUndefined();
+    expect(store.getMemory('d2')).toBeDefined();
+    store.close();
+  });
+
   it('round-trips rules and approvals', () => {
     const store = openMemoryStore(':memory:');
     const rule: Rule = {
