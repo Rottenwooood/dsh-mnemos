@@ -12,7 +12,7 @@ import { gateFrom, apply } from '../index.js';
 import type { GitStore } from '../domain/gitstore.js';
 import { defaultConfig } from '../config.js';
 import { Llm } from '../domain/llm.js';
-import type { CommandDefinition, ToolDefinition } from '../dsh/types.js';
+import type { CommandDefinition, CommandResult, ToolDefinition } from '../dsh/types.js';
 
 function commandDeps(service: ReturnType<typeof makeService>['service']): CommandDeps {
   return {
@@ -21,6 +21,15 @@ function commandDeps(service: ReturnType<typeof makeService>['service']): Comman
     distillCursor: {},
     persistCursor: () => {},
   };
+}
+async function invokeCommand(command: CommandDefinition, rawInput: string): Promise<CommandResult> {
+  return await command.handler({
+    commandId: 'cid-1',
+    agent: { id: 'agent-1', session: { id: 'sess-1', header: { cwd: 'ws' } } },
+    rawInput,
+    attachments: [],
+    signal: new AbortController().signal,
+  });
 }
 function fakeContext() {
   const tools: ToolDefinition[] = [];
@@ -165,16 +174,12 @@ describe('command wiring', () => {
       'human',
     );
     const command = commands[0]!;
-    const said: string[] = [];
-    await command.handler('search semicolons', {
-      caller: 'human',
-      workspace: 'ws',
-      say: (t) => said.push(t),
-    });
-    expect(said.join('\n')).toContain('No semicolons');
+    const result = await invokeCommand(command, 'search semicolons');
+    expect(result.kind).toBe('success');
+    expect(result.text).toContain('No semicolons');
   });
 
-  it('/mnemos import commits a remember candidate from a claude file', async () => {
+  it('/memory import commits a remember candidate from a claude file', async () => {
     const { ctx, commands } = fakeContext();
     const { service } = makeService();
     registerCommand(ctx, commandDeps(service));
@@ -188,14 +193,10 @@ describe('command wiring', () => {
       }),
     );
     const command = commands[0]!;
-    const said: string[] = [];
-    await command.handler(`import auto ${file}`, {
-      caller: 'human',
-      workspace: 'ws',
-      say: (t) => said.push(t),
-    });
+    const result = await invokeCommand(command, `import auto ${file}`);
     unlinkSync(file);
-    expect(said[0]).toContain('1 committed');
+    expect(result.kind).toBe('success');
+    expect(result.text).toContain('1 committed');
     expect(service.listActive('workspace', 'ws')).toHaveLength(1);
   });
 
@@ -204,9 +205,9 @@ describe('command wiring', () => {
     const { service } = makeService();
     registerCommand(ctx, commandDeps(service));
     const command = commands[0]!;
-    const said: string[] = [];
-    await command.handler('bogus', { caller: 'human', say: (t) => said.push(t) });
-    expect(said[0]).toContain('commands:');
+    const result = await invokeCommand(command, 'bogus');
+    expect(result.kind).toBe('success');
+    expect(result.text).toContain('commands:');
   });
 });
 
@@ -364,37 +365,23 @@ describe('/mnemos distill command', () => {
     };
     registerCommand(ctx, { ...commandDeps(service), llm, collector });
     const command = commands[0]!;
-    const said: string[] = [];
-    await command.handler('distill', {
-      caller: 'human',
-      workspace: 'ws',
-      say: (t) => said.push(t),
-    });
+    const result = await invokeCommand(command, 'distill');
     expect(service.listRules('proposed')).toHaveLength(1);
-    expect(said[0]).toContain('Distilled');
+    expect(result.text).toContain('Distilled');
   });
 });
 
-describe('/mnemos bus command', () => {
+describe('/memory bus command', () => {
   it('blacklists and lists a plugin via the human command', async () => {
     const { ctx, commands } = fakeContext();
     const { store, service } = makeServiceWithStore();
     const bus = createMemoryBus(service, store);
     registerCommand(ctx, { ...commandDeps(service), bus });
     const command = commands[0]!;
-    const said: string[] = [];
-    await command.handler('bus blacklist spam-plugin "too noisy"', {
-      caller: 'human',
-      workspace: 'ws',
-      say: (t) => said.push(t),
-    });
+    await invokeCommand(command, 'bus blacklist spam-plugin "too noisy"');
     expect(bus.isBlacklisted('spam-plugin')).toBe(true);
-    await command.handler('bus list', {
-      caller: 'human',
-      workspace: 'ws',
-      say: (t) => said.push(t),
-    });
-    expect(said.join('\n')).toContain('spam-plugin');
+    const list = await invokeCommand(command, 'bus list');
+    expect(list.text).toContain('spam-plugin');
   });
 });
 
@@ -443,14 +430,13 @@ describe('/mnemos git command', () => {
     } as unknown as GitStore;
     registerCommand(ctx, { ...commandDeps(service), gitStore });
     const command = commands[0]!;
-    const said: string[] = [];
-    const rt = { caller: 'human' as const, workspace: 'ws', say: (t: string) => said.push(t) };
-    await command.handler('git status', rt);
-    await command.handler('git log mm://x', rt);
-    await command.handler('git rollback mm://x abc', rt);
-    await command.handler('git pull', rt);
+    const status = await invokeCommand(command, 'git status');
+    expect(status.text).toContain('Uncommitted');
+    await invokeCommand(command, 'git log mm://x');
+    await invokeCommand(command, 'git rollback mm://x abc');
+    const pull = await invokeCommand(command, 'git pull');
     expect(calls).toEqual(['status', 'log:mm://x', 'rollback:mm://x:abc', 'pull']);
-    expect(said.join('\n')).toContain('2 entries reconciled');
+    expect(pull.text).toContain('2 entries reconciled');
   });
 });
 

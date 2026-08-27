@@ -11,7 +11,6 @@ import { existsSync, readFileSync, readdirSync, statSync } from 'node:fs';
 import { join } from 'node:path';
 import type { Context } from '@deepseek-ai/cordis';
 import type { MemoryService } from '../domain/service.js';
-import type { CommandDefinition } from './types.js';
 import type { Config } from '../config.js';
 import { detectSource, parseAny } from '../domain/imports/detect.js';
 import { processImported } from '../domain/backfill.js';
@@ -22,6 +21,7 @@ import { promoteRuleToSkill, listSkillFiles } from '../domain/skill.js';
 import { MemoryBus } from '../domain/bus.js';
 import { GitStore } from '../domain/gitstore.js';
 import type { SignalCollector } from './hooks.js';
+import type { CommandDefinition, CommandResult } from './types.js';
 
 function listJsonlFiles(dir: string): string[] {
   const out: string[] = [];
@@ -47,27 +47,29 @@ export interface CommandDeps {
 
 export function registerCommand(ctx: Context, deps: CommandDeps): void {
   const { service, config, llm, collector } = deps;
+  const ok = (text: string): CommandResult => ({ kind: 'success', text });
   const command: CommandDefinition = {
     name: 'memory',
-    usage: 'memory <search|list|stats|approve|reject|import|backfill|distill|rules|skill> ...',
     description:
       'Manage dsh-mnemos memories: search across sessions, list active entries, show stats, approve/reject proposals, import/backfill history, distill sessions, manage rules and promote skills.',
-    async handler(args, runtime) {
-      const [verb, ...rest] = args.trim().split(/\s+/);
-      const scope = runtime.workspace ? 'workspace' : ('global' as const);
+    input: { hint: 'search <query> | list | stats | approve <id> | reject <id> | import <src> <path> | backfill <dir> | distill [path] | rules <...> | skill <...> | bus <...> | git <...>' },
+    async handler(invocation) {
+      const raw = invocation.rawInput.trim();
+      const [verb, ...rest] = raw.split(/\s+/);
+      const workspace = invocation.agent.session?.header?.cwd;
+      const sessionId = invocation.agent.id ?? invocation.agent.session?.id;
+      const scope = workspace ? 'workspace' : ('global' as const);
       switch (verb) {
         case 'search': {
           const query = rest.join(' ').trim();
           if (!query) {
-            runtime.say('usage: /memory search <query>');
-            return;
+            return ok('usage: /memory search <query>');
           }
           const rows = service.search(query, 10);
           if (rows.length === 0) {
-            runtime.say('No memories matched.');
-            return;
+            return ok('No memories matched.');
           }
-          runtime.say(
+          return ok(
             rows
               .map(
                 (r) =>
@@ -77,77 +79,64 @@ export function registerCommand(ctx: Context, deps: CommandDeps): void {
               )
               .join('\n'),
           );
-          return;
         }
         case 'list': {
-          const rows = service.listActive(runtime.workspace ? 'workspace' : undefined, runtime.workspace);
+          const rows = service.listActive(workspace ? 'workspace' : undefined, workspace);
           if (rows.length === 0) {
-            runtime.say('No active memories.');
-            return;
+            return ok('No active memories.');
           }
-          runtime.say(rows.map((r) => `- [${r.type}] ${r.topic}: ${r.summary}`).join('\n'));
-          return;
+          return ok(rows.map((r) => `- [${r.type}] ${r.topic}: ${r.summary}`).join('\n'));
         }
         case 'stats': {
           const rows = service.listActive();
-          runtime.say(`Active memories: ${rows.length}`);
-          return;
+          return ok(`Active memories: ${rows.length}`);
         }
         case 'approve': {
           const id = Number(rest[0]);
           if (!Number.isInteger(id)) {
-            runtime.say('usage: /memory approve <approvalId>');
-            return;
+            return ok('usage: /memory approve <approvalId>');
           }
           const result = service.approve(id, 'approve');
-          runtime.say(result.ok ? `Approved memory ${result.memory?.id ?? id}.` : `Cannot approve: ${result.reason}.`);
-          return;
+          return ok(result.ok ? `Approved memory ${result.memory?.id ?? id}.` : `Cannot approve: ${result.reason}.`);
         }
         case 'reject': {
           const id = Number(rest[0]);
           if (!Number.isInteger(id)) {
-            runtime.say('usage: /memory reject <approvalId>');
-            return;
+            return ok('usage: /memory reject <approvalId>');
           }
           const result = service.approve(id, 'reject');
-          runtime.say(result.ok ? `Rejected proposal ${id}.` : `Cannot reject: ${result.reason}.`);
-          return;
+          return ok(result.ok ? `Rejected proposal ${id}.` : `Cannot reject: ${result.reason}.`);
         }
         case 'import': {
           const kind = (rest[0] ?? 'auto') as ImportSource | 'auto';
           const path = rest[1];
           if (!path || !existsSync(path)) {
-            runtime.say('usage: /memory import <auto|claude|codex|chatgpt|dsh> <path>');
-            return;
+            return ok('usage: /memory import <auto|claude|codex|chatgpt|dsh> <path>');
           }
           const text = readFileSync(path, 'utf8');
           const source = kind === 'auto' ? detectSource(text) : kind;
           if (!source) {
-            runtime.say('Cannot detect transcript format; pass one explicitly.');
-            return;
+            return ok('Cannot detect transcript format; pass one explicitly.');
           }
           const messages = parseAny(text, source);
           const stats = processImported(service, messages, {
             caller: config.importCaller,
             scope,
-            workspace: runtime.workspace,
+            workspace,
           });
-          runtime.say(
+          return ok(
             `Imported ${stats.parsedMessages} messages from ${source}; ${stats.candidates} candidates → ` +
               `${stats.committed} committed, ${stats.proposed} proposed, ${stats.denied} denied, ${stats.duplicateSkipped} duplicates skipped.`,
           );
-          return;
         }
         case 'backfill': {
           const dir = rest[0];
           if (!dir || !existsSync(dir) || !statSync(dir).isDirectory()) {
-            runtime.say('usage: /memory backfill <session-log-dir>');
-            return;
+            return ok('usage: /memory backfill <session-log-dir>');
           }
           const files = listJsonlFiles(dir);
           if (files.length === 0) {
-            runtime.say('No .jsonl session logs found in that directory.');
-            return;
+            return ok('No .jsonl session logs found in that directory.');
           }
           const stats = {
             scannedFiles: 0,
@@ -167,7 +156,7 @@ export function registerCommand(ctx: Context, deps: CommandDeps): void {
               const s = processImported(service, parseAny(text, source, file), {
                 caller: config.importCaller,
                 scope,
-                workspace: runtime.workspace,
+                workspace,
               }, seen);
               stats.parsedMessages += s.parsedMessages;
               stats.candidates += s.candidates;
@@ -179,16 +168,14 @@ export function registerCommand(ctx: Context, deps: CommandDeps): void {
               // skip unreadable/unsupported files
             }
           }
-          runtime.say(
+          return ok(
             `Backfilled ${stats.scannedFiles} files, ${stats.parsedMessages} messages, ${stats.candidates} candidates → ` +
               `${stats.committed} committed, ${stats.proposed} proposed, ${stats.denied} denied, ${stats.duplicateSkipped} duplicates skipped.`,
           );
-          return;
         }
         case 'distill': {
           if (!llm) {
-            runtime.say('LLM unavailable; distillation is disabled until a model adapter is mounted.');
-            return;
+            return ok('LLM unavailable; distillation is disabled until a model adapter is mounted.');
           }
           const path = rest[0];
           let messages = collector ? collector.drain() : [];
@@ -197,47 +184,41 @@ export function registerCommand(ctx: Context, deps: CommandDeps): void {
             const source = detectSource(text);
             messages = source ? parseAny(text, source) : [];
             if (messages.length === 0) {
-              runtime.say('No parseable messages in that file.');
-              return;
+              return ok('No parseable messages in that file.');
             }
           } else if (messages.length === 0) {
-            runtime.say('No buffered session messages to distill (or pass a transcript path).');
-            return;
+            return ok('No buffered session messages to distill (or pass a transcript path).');
           }
           const result = await runDistillIncremental(
             llm,
             service,
             messages,
             deps.distillCursor,
-            { scope, workspace: runtime.workspace, sessionId: runtime.sessionId },
+            { scope, workspace, sessionId },
           );
           deps.persistCursor(result.cursor);
-          runtime.say(
+          return ok(
             `Distilled ${result.stats.requested} messages → ${result.stats.memories} memory candidate(s), ` +
               `${result.stats.rules} rule proposal(s), ${result.stats.conflicts} conflict(s), ` +
               `${result.stats.dropped} dropped.`,
           );
-          return;
         }
         case 'rules': {
           const sub = rest[0];
           if (sub === 'list' || sub === undefined) {
             const rules = service.listRules();
             if (rules.length === 0) {
-              runtime.say('No rules.');
-              return;
+              return ok('No rules.');
             }
-            runtime.say(
+            return ok(
               rules
                 .map((r) => `- [${r.state}] ${r.id} (${r.kind}) ${r.text}`)
                 .join('\n'),
             );
-            return;
           }
           const id = rest[1];
           if (!id) {
-            runtime.say('usage: /memory rules <list|activate|rollback|deprecate> [ruleId]');
-            return;
+            return ok('usage: /memory rules <list|activate|rollback|deprecate> [ruleId]');
           }
           const stateMap: Record<string, 'approved' | 'rolled_back' | 'deprecated'> = {
             activate: 'approved',
@@ -246,168 +227,135 @@ export function registerCommand(ctx: Context, deps: CommandDeps): void {
           };
           const target = stateMap[sub];
           if (!target) {
-            runtime.say('usage: /memory rules <list|activate|rollback|deprecate> [ruleId]');
-            return;
+            return ok('usage: /memory rules <list|activate|rollback|deprecate> [ruleId]');
           }
           const result = service.setRuleState(id, target);
-          runtime.say(result.ok ? `Rule ${id} → ${target}.` : `Cannot update rule: ${result.reason}.`);
-          return;
+          return ok(result.ok ? `Rule ${id} → ${target}.` : `Cannot update rule: ${result.reason}.`);
         }
         case 'skill': {
           const sub = rest[0];
           if (sub === 'list') {
             const files = listSkillFiles(config.skillsDir);
-            runtime.say(files.length ? files.map((f) => `- ${f}`).join('\n') : 'No skill files yet.');
-            return;
+            return ok(files.length ? files.map((f) => `- ${f}`).join('\n') : 'No skill files yet.');
           }
           if (sub === 'promote') {
             const id = rest[1];
             if (!id) {
-              runtime.say('usage: /memory skill promote <ruleId>');
-              return;
+              return ok('usage: /memory skill promote <ruleId>');
             }
             const result = promoteRuleToSkill(service, id, config.skillsDir);
-            runtime.say(result.ok ? `Promoted ${id} → ${result.path}.` : `Cannot promote: ${result.reason}.`);
-            return;
+            return ok(result.ok ? `Promoted ${id} → ${result.path}.` : `Cannot promote: ${result.reason}.`);
           }
-          runtime.say('usage: /memory skill <list|promote <ruleId>>');
-          return;
+          return ok('usage: /memory skill <list|promote <ruleId>>');
         }
         case 'bus': {
           const bus = deps.bus;
           if (!bus) {
-            runtime.say('Memory bus unavailable.');
-            return;
+            return ok('Memory bus unavailable.');
           }
           const sub = rest[0];
           if (sub === 'blacklist') {
             const name = rest[1];
             if (!name) {
-              runtime.say('usage: /memory bus blacklist <pluginName> [reason]');
-              return;
+              return ok('usage: /memory bus blacklist <pluginName> [reason]');
             }
             bus.blacklistPlugin(name, rest.slice(2).join(' ') || undefined);
-            runtime.say(`Blacklisted ${name}.`);
-            return;
+            return ok(`Blacklisted ${name}.`);
           }
           if (sub === 'unblacklist') {
             const name = rest[1];
             if (!name) {
-              runtime.say('usage: /memory bus unblacklist <pluginName>');
-              return;
+              return ok('usage: /memory bus unblacklist <pluginName>');
             }
             bus.unblacklistPlugin(name);
-            runtime.say(`Unblacklisted ${name}.`);
-            return;
+            return ok(`Unblacklisted ${name}.`);
           }
           if (sub === 'list' || sub === 'blacklist-list') {
             const entries = bus.listBlacklist();
-            runtime.say(entries.length ? entries.map((e) => `- ${e.name}${e.reason ? `: ${e.reason}` : ''}`).join('\n') : 'No blacklisted plugins.');
-            return;
+            return ok(entries.length ? entries.map((e) => `- ${e.name}${e.reason ? `: ${e.reason}` : ''}`).join('\n') : 'No blacklisted plugins.');
           }
           if (sub === 'revoke') {
             const id = rest[1];
             if (!id) {
-              runtime.say('usage: /memory bus revoke <memoryId>');
-              return;
+              return ok('usage: /memory bus revoke <memoryId>');
             }
             const result = bus.revoke(id, { name: 'human', version: '1' });
-            runtime.say(result.ok ? `Revoked ${id}.` : `Cannot revoke: ${result.reason}.`);
-            return;
+            return ok(result.ok ? `Revoked ${id}.` : `Cannot revoke: ${result.reason}.`);
           }
           if (sub === 'writers') {
             const name = rest[1];
             const rows = name ? bus.listByWriter(name) : [];
             if (!name) {
-              runtime.say('usage: /memory bus writers <pluginName>');
-              return;
+              return ok('usage: /memory bus writers <pluginName>');
             }
-            runtime.say(rows.length ? rows.map((r) => `- ${r.topic}: ${r.summary}`).join('\n') : `No active memories by ${name}.`);
-            return;
+            return ok(rows.length ? rows.map((r) => `- ${r.topic}: ${r.summary}`).join('\n') : `No active memories by ${name}.`);
           }
-          runtime.say('usage: /memory bus <blacklist|unblacklist|list|revoke|writers>');
-          return;
+          return ok('usage: /memory bus <blacklist|unblacklist|list|revoke|writers>');
         }
         case 'git': {
           const gitStore = deps.gitStore;
           if (!gitStore) {
-            runtime.say('Git versioning is disabled.');
-            return;
+            return ok('Git versioning is disabled.');
           }
           const sub = rest[0];
           if (sub === 'status') {
             const { changed } = await gitStore.status();
-            runtime.say(changed.length ? `Uncommitted:\n${changed.map((c) => `- ${c}`).join('\n')}` : 'Working tree clean.');
-            return;
+            return ok(changed.length ? `Uncommitted:\n${changed.map((c) => `- ${c}`).join('\n')}` : 'Working tree clean.');
           }
           if (sub === 'log') {
             const commits = await gitStore.history(rest[1]);
             if (commits.length === 0) {
-              runtime.say('No history.');
-              return;
+              return ok('No history.');
             }
-            runtime.say(commits.map((c) => `- ${c.sha.slice(0, 8)} ${c.date} ${c.message}`).join('\n'));
-            return;
+            return ok(commits.map((c) => `- ${c.sha.slice(0, 8)} ${c.date} ${c.message}`).join('\n'));
           }
           if (sub === 'rollback') {
             const [id, sha] = rest.slice(1);
             if (!id || !sha) {
-              runtime.say('usage: /memory git rollback <memoryId> <sha>');
-              return;
+              return ok('usage: /memory git rollback <memoryId> <sha>');
             }
             const result = await gitStore.rollback(id, sha);
-            runtime.say(result.ok ? `Rolled back ${id} to ${sha.slice(0, 8)}.` : `Cannot rollback: ${result.reason}.`);
-            return;
+            return ok(result.ok ? `Rolled back ${id} to ${sha.slice(0, 8)}.` : `Cannot rollback: ${result.reason}.`);
           }
           if (sub === 'restore') {
             const id = rest[1];
             if (!id) {
-              runtime.say('usage: /memory git restore <memoryId>');
-              return;
+              return ok('usage: /memory git restore <memoryId>');
             }
             const result = await gitStore.restoreDeleted(id);
-            runtime.say(result.ok ? `Restored deleted memory ${id}.` : `Cannot restore: ${result.reason}.`);
-            return;
+            return ok(result.ok ? `Restored deleted memory ${id}.` : `Cannot restore: ${result.reason}.`);
           }
           if (sub === 'remote') {
             const url = rest[1];
             if (!url) {
-              runtime.say('usage: /memory git remote <url>');
-              return;
+              return ok('usage: /memory git remote <url>');
             }
             await gitStore.setRemote(url);
-            runtime.say(`Remote set to ${url}.`);
-            return;
+            return ok(`Remote set to ${url}.`);
           }
           if (sub === 'push') {
             const result = await gitStore.push();
-            runtime.say(result.ok ? 'Pushed.' : `Push failed: ${result.reason}.`);
-            return;
+            return ok(result.ok ? 'Pushed.' : `Push failed: ${result.reason}.`);
           }
           if (sub === 'pull') {
             const result = await gitStore.pull();
             if (result.ok) {
-              runtime.say(`Pulled (${result.applied ?? 0} entries reconciled).`);
-            } else {
-              runtime.say(`Pull conflicted on:\n${result.conflicts.map((c) => `- ${c}`).join('\n')}`);
+              return ok(`Pulled (${result.applied ?? 0} entries reconciled).`);
             }
-            return;
+            return ok(`Pull conflicted on:\n${result.conflicts.map((c) => `- ${c}`).join('\n')}`);
           }
           if (sub === 'backup') {
             const out = rest[1];
             if (!out) {
-              runtime.say('usage: /memory git backup <outPath>');
-              return;
+              return ok('usage: /memory git backup <outPath>');
             }
             await gitStore.exportBundle(out);
-            runtime.say(`Backup written to ${out}.`);
-            return;
+            return ok(`Backup written to ${out}.`);
           }
-          runtime.say('usage: /memory git <status|log|rollback|restore|remote|push|pull|backup>');
-          return;
+          return ok('usage: /memory git <status|log|rollback|restore|remote|push|pull|backup>');
         }
         default:
-          runtime.say(
+          return ok(
             'commands: search <query> | list | stats | approve <id> | reject <id> | import <src> <path> | backfill <dir> | distill [path] | rules <...> | skill <...> | bus <...> | git <...>',
           );
       }

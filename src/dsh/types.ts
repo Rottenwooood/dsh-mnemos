@@ -38,11 +38,36 @@ export interface CommandRuntime {
   say(text: string): void;
 }
 
+/**
+ * The real `@deepseek-ai/dsh-commands` command contract: the handler receives
+ * ONE invocation object (not `(args, runtime)`) and must return a
+ * `CommandResult`. The registry validates the return shape; anything else
+ * throws "handler must return a CommandResult".
+ */
+export interface CommandInvocation {
+  readonly commandId: unknown;
+  readonly agent: {
+    readonly id: string;
+    readonly session?: { readonly id?: string; readonly header?: { readonly cwd?: string } };
+  };
+  /** Exact text after the command name, including separator whitespace. */
+  readonly rawInput: string;
+  readonly attachments: readonly unknown[];
+  readonly signal: AbortSignal;
+}
+
+export type CommandResult =
+  | { readonly kind: 'success'; readonly text?: string; readonly sourceEventSeq?: number }
+  | { readonly kind: 'error'; readonly text: string };
+
 export interface CommandDefinition {
+  /** Lowercase command name without the leading slash. */
   name: string;
-  usage: string;
-  description?: string;
-  handler(args: string, runtime: CommandRuntime): void | Promise<void>;
+  /** Human-readable summary used in discovery UI. */
+  description: string;
+  /** Optional free-form input hint advertised to capable clients. */
+  input?: { hint: string };
+  handler(invocation: CommandInvocation): CommandResult | Promise<CommandResult>;
 }
 
 export interface DshCommands {
