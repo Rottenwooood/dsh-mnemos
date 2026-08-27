@@ -139,7 +139,7 @@ export function installMnemosSettings(
   void Promise.resolve().then(async () => {
     if (disposed) return;
     const mod = await import('@deepseek-ai/schemastery').catch(() => null);
-    if (!mod || typeof mod.default !== 'object' || mod.default === null || disposed) {
+    if (!mod || typeof mod.default !== 'function' || disposed) {
       return;
     }
     const Schema = mod.default as {

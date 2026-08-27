@@ -31,6 +31,9 @@ import { Llm } from './domain/llm.js';
 
 export const name = 'dsh-mnemos';
 
+/** Required harness services this plugin registers against. */
+export const inject = ['tools', 'commands'];
+
 export function gateFrom(config: Config): GateConfig {
   return {
     maxEntries: config.maxEntries,
@@ -54,13 +57,14 @@ function listJsonlFiles(dir: string): string[] {
 }
 
 export function registerBackfillJob(ctx: Context, service: MemoryService, getConfig: () => Config): void {
-  ctx.effect(() =>
-    ctx.jobs.register({
-      name: 'mnemos-backfill',
-      run: async () => {
+  const logger = ctx.logger('mnemos');
+  let stopped = false;
+  ctx.effect(() => {
+    void (async () => {
+      try {
         const config = getConfig();
-        if (!config.backfillEnabled || config.sessionLogDirs.length === 0) {
-          return { scannedFiles: 0, candidates: 0, committed: 0, proposed: 0, denied: 0 };
+        if (stopped || !config.backfillEnabled || config.sessionLogDirs.length === 0) {
+          return;
         }
         const checkpointPath = join(dirname(config.dbPath), 'backfill-checkpoint.json');
         const backfill = createBackfillService(service, {
@@ -70,6 +74,7 @@ export function registerBackfillJob(ctx: Context, service: MemoryService, getCon
           incremental: true,
         });
         for (const dir of config.sessionLogDirs) {
+          if (stopped) return;
           if (!statSync(dir, { throwIfNoEntry: false })?.isDirectory()) {
             continue;
           }
@@ -80,16 +85,18 @@ export function registerBackfillJob(ctx: Context, service: MemoryService, getCon
           backfill.run(files);
         }
         backfill.saveCheckpoint();
-        return {
-          scannedFiles: backfill.stats.scannedFiles,
-          candidates: backfill.stats.candidates,
-          committed: backfill.stats.committed,
-          proposed: backfill.stats.proposed,
-          denied: backfill.stats.denied,
-        };
-      },
-    }),
-  );
+        logger.info(
+          `backfill: scanned ${backfill.stats.scannedFiles} file(s), ` +
+            `${backfill.stats.committed} committed, ${backfill.stats.proposed} proposed, ${backfill.stats.denied} denied`,
+        );
+      } catch (err) {
+        logger.warn(`backfill failed: ${err instanceof Error ? err.message : String(err)}`);
+      }
+    })();
+    return () => {
+      stopped = true;
+    };
+  });
 }
 
 export function registerScheduledDistill(

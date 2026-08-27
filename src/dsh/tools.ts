@@ -3,6 +3,13 @@
  *
  * Every write path goes through MemoryService (the approval gate). The model
  * can propose memories and read/search them, but never bypasses governance.
+ *
+ * The tools are built against the real `@deepseek-ai/dsh-tools`
+ * `ToolDefinition` contract (name/description/parameters + mandatory
+ * `output { schema, render, presentationMeta? }` + `execute`). The real
+ * registry validates that contract at registration; this module constructs
+ * the objects structurally and does not hard-depend on the package, so the
+ * plugin's own install stays dependency-free (the profile provides it).
  */
 import type { Context } from '@deepseek-ai/cordis';
 import type { MemoryService } from '../domain/service.js';
@@ -17,6 +24,39 @@ const TYPES = new Set<MemoryType>([
   'error_fix',
   'decision',
 ]);
+
+/** A `{ type: 'text' }` content block as the real harness renders it. */
+interface ContentBlock {
+  type: 'text';
+  text: string;
+}
+
+/** Structural face of the executing agent the tool registry hands to tools. */
+interface ToolAgentLike {
+  readonly id?: string;
+  readonly session?: {
+    readonly id?: string;
+    readonly header?: { readonly cwd?: string };
+  };
+}
+
+/** Structural face of `ToolRunContext` — only the fields the tools read. */
+interface ToolExecLike {
+  readonly agent?: ToolAgentLike;
+  readonly signal?: AbortSignal;
+}
+
+/** Structural `ToolDefinition` mirror used to build the registered tools. */
+interface MnemosTool {
+  name: string;
+  description: string;
+  parameters: Record<string, unknown>;
+  output: {
+    schema: Record<string, unknown>;
+    render(args: unknown, value: unknown): ContentBlock[];
+  };
+  execute(args: unknown, exec: ToolExecLike): Promise<unknown>;
+}
 
 function asString(v: unknown): string | undefined {
   return typeof v === 'string' && v.length > 0 ? v : undefined;
@@ -35,8 +75,17 @@ function asNumber(v: unknown, fallback: number): number {
   return fallback;
 }
 
+function text(content: string): ContentBlock[] {
+  return [{ type: 'text', text: content }];
+}
+
+/** Workspace (cwd) of the calling agent, when the agent carries a session. */
+function workspaceOf(exec: ToolExecLike): string | undefined {
+  return exec.agent?.session?.header?.cwd;
+}
+
 export function registerTools(ctx: Context, service: MemoryService): void {
-  const search: ToolDefinition = {
+  const search: MnemosTool = {
     name: 'memory_search',
     description:
       'Search previously remembered facts across sessions. Returns matching memory entries with their source session and cross-session hit count.',
@@ -49,15 +98,53 @@ export function registerTools(ctx: Context, service: MemoryService): void {
       },
       required: ['query'],
     },
-    async run(args, runtime) {
-      const query = asString(args.query);
+    output: {
+      schema: {
+        type: 'object',
+        additionalProperties: false,
+        required: ['query', 'scope', 'hits'],
+        properties: {
+          query: { type: 'string' },
+          scope: { type: 'string' },
+          hits: {
+            type: 'array',
+            items: {
+              type: 'object',
+              additionalProperties: false,
+              required: ['id', 'topic', 'summary', 'type', 'scope'],
+              properties: {
+                id: { type: 'string' },
+                topic: { type: 'string' },
+                summary: { type: 'string' },
+                type: { type: 'string' },
+                scope: { type: 'string' },
+                workspace: { oneOf: [{ type: 'string' }, { type: 'null' }] },
+                crossSessionHits: { type: 'number' },
+                updatedAt: { type: 'string' },
+              },
+            },
+          },
+        },
+      },
+      render: (_args, value) => {
+        const hits = (value as { hits: Array<{ topic: string; summary: string }> }).hits;
+        return text(
+          hits.length === 0
+            ? 'memory_search: no matches.'
+            : `memory_search: ${hits.length} match(es).\n${hits.map((h) => `- ${h.topic}: ${h.summary}`).join('\n')}`,
+        );
+      },
+    },
+    execute(args: unknown, exec: ToolExecLike): Promise<unknown> {
+      const a = args as { query?: unknown; scope?: unknown; limit?: unknown };
+      const query = asString(a.query);
       if (!query) {
-        return { error: 'query is required' };
+        throw new Error('query is required');
       }
-      const scope = asString(args.scope);
-      const limit = asNumber(args.limit, 10);
+      const scope = asString(a.scope);
+      const limit = asNumber(a.limit, 10);
       const rows = service.search(query, limit);
-      return {
+      return Promise.resolve({
         query,
         scope: scope ?? 'workspace',
         hits: rows.map((r) => ({
@@ -70,11 +157,11 @@ export function registerTools(ctx: Context, service: MemoryService): void {
           crossSessionHits: r.crossSessionHits,
           updatedAt: r.updatedAt,
         })),
-      };
+      });
     },
   };
 
-  const record: ToolDefinition = {
+  const record: MnemosTool = {
     name: 'memory_record',
     description:
       'Propose a memory entry. The write goes through an approval gate: sensitive content, duplicates, budget and scope policy are checked, low-risk project facts may auto-approve, everything else is queued for the user to approve.',
@@ -90,44 +177,73 @@ export function registerTools(ctx: Context, service: MemoryService): void {
       },
       required: ['topic', 'summary'],
     },
-    async run(args, runtime) {
-      const topic = asString(args.topic);
-      const summary = asString(args.summary);
+    output: {
+      schema: {
+        type: 'object',
+        additionalProperties: false,
+        required: ['outcome', 'reason', 'memoryId', 'approvalId', 'auditId'],
+        properties: {
+          outcome: { type: 'string' },
+          reason: { oneOf: [{ type: 'string' }, { type: 'null' }] },
+          memoryId: { oneOf: [{ type: 'string' }, { type: 'null' }] },
+          approvalId: { oneOf: [{ type: 'number' }, { type: 'null' }] },
+          auditId: { type: 'number' },
+        },
+      },
+      render: (_args, value) => {
+        const v = value as { outcome: string; reason: string | null; memoryId: string | null };
+        return text(
+          `memory_record: ${v.outcome}${v.reason ? ` (${v.reason})` : ''}${v.memoryId ? ` id=${v.memoryId}` : ''}`,
+        );
+      },
+    },
+    execute(args: unknown, exec: ToolExecLike): Promise<unknown> {
+      const a = args as {
+        topic?: unknown;
+        summary?: unknown;
+        detail?: unknown;
+        type?: unknown;
+        scope?: unknown;
+        confidence?: unknown;
+      };
+      const topic = asString(a.topic);
+      const summary = asString(a.summary);
       if (!topic || !summary) {
-        return { error: 'topic and summary are required' };
+        throw new Error('topic and summary are required');
       }
-      const scope = (asString(args.scope) ?? 'workspace') as MemoryScope;
-      const type = (asString(args.type) ?? 'project_fact') as MemoryType;
-      const caller = (runtime.caller ?? 'model') as Caller;
+      const scope = (asString(a.scope) ?? 'workspace') as MemoryScope;
+      const type = (asString(a.type) ?? 'project_fact') as MemoryType;
+      const caller: Caller = 'model';
+      const sessionId = exec.agent?.id ?? exec.agent?.session?.id;
       const result = service.add(
         {
           type,
           scope,
-          workspace: scope === 'workspace' ? runtime.workspace : undefined,
+          workspace: scope === 'workspace' ? workspaceOf(exec) : undefined,
           topic,
           summary,
-          detail: asString(args.detail),
+          detail: asString(a.detail),
           evidence:
-            runtime.sessionId && caller !== 'plugin'
-              ? [{ sessionId: runtime.sessionId, eventRange: [0, 0], quote: summary }]
+            sessionId !== undefined
+              ? [{ sessionId, eventRange: [0, 0], quote: summary }]
               : [],
-          confidence: asNumber(args.confidence, 0.9),
-          source: caller === 'model' ? 'manual' : 'third_party',
+          confidence: asNumber(a.confidence, 0.9),
+          source: 'manual',
           writer: caller,
         },
         caller,
       );
-      return {
+      return Promise.resolve({
         outcome: result.outcome,
         reason: result.reason ?? null,
         memoryId: result.memory?.id ?? null,
         approvalId: result.approvalId ?? null,
         auditId: result.auditId,
-      };
+      });
     },
   };
 
-  const list: ToolDefinition = {
+  const list: MnemosTool = {
     name: 'memory_list',
     description: 'List active memory entries, filtered by scope/workspace/type.',
     parameters: {
@@ -138,13 +254,50 @@ export function registerTools(ctx: Context, service: MemoryService): void {
         type: { type: 'string', enum: [...TYPES] },
       },
     },
-    async run(args) {
-      const scope = asString(args.scope) as MemoryScope | undefined;
-      const workspace = asString(args.workspace);
+    output: {
+      schema: {
+        type: 'object',
+        additionalProperties: false,
+        required: ['count', 'memories'],
+        properties: {
+          count: { type: 'number' },
+          memories: {
+            type: 'array',
+            items: {
+              type: 'object',
+              additionalProperties: false,
+              required: ['id', 'topic', 'summary', 'type', 'scope'],
+              properties: {
+                id: { type: 'string' },
+                topic: { type: 'string' },
+                summary: { type: 'string' },
+                type: { type: 'string' },
+                scope: { type: 'string' },
+                workspace: { oneOf: [{ type: 'string' }, { type: 'null' }] },
+                crossSessionHits: { type: 'number' },
+                updatedAt: { type: 'string' },
+              },
+            },
+          },
+        },
+      },
+      render: (_args, value) => {
+        const v = value as { count: number; memories: Array<{ topic: string; summary: string }> };
+        return text(
+          `memory_list: ${v.count} active entr${v.count === 1 ? 'y' : 'ies'}.\n${v.memories
+            .map((m) => `- ${m.topic}: ${m.summary}`)
+            .join('\n')}`,
+        );
+      },
+    },
+    execute(args: unknown): Promise<unknown> {
+      const a = args as { scope?: unknown; workspace?: unknown; type?: unknown };
+      const scope = asString(a.scope) as MemoryScope | undefined;
+      const workspace = asString(a.workspace);
       const rows = service.listActive(scope, workspace);
-      const type = asString(args.type);
+      const type = asString(a.type);
       const filtered = type ? rows.filter((r) => r.type === type) : rows;
-      return {
+      return Promise.resolve({
         count: filtered.length,
         memories: filtered.map((r) => ({
           id: r.id,
@@ -156,15 +309,42 @@ export function registerTools(ctx: Context, service: MemoryService): void {
           crossSessionHits: r.crossSessionHits,
           updatedAt: r.updatedAt,
         })),
-      };
+      });
     },
   };
 
-  const stats: ToolDefinition = {
+  const stats: MnemosTool = {
     name: 'memory_stats',
     description: 'Report memory store statistics: counts by scope/type/status.',
     parameters: { type: 'object', properties: {} },
-    async run() {
+    output: {
+      schema: {
+        type: 'object',
+        additionalProperties: false,
+        required: ['totalActive', 'byScope', 'byType', 'gate'],
+        properties: {
+          totalActive: { type: 'number' },
+          byScope: { type: 'object' },
+          byType: { type: 'object' },
+          gate: {
+            type: 'object',
+            additionalProperties: false,
+            required: ['maxEntries', 'autoApprove'],
+            properties: {
+              maxEntries: { type: 'number' },
+              autoApprove: { type: 'boolean' },
+            },
+          },
+        },
+      },
+      render: (_args, value) => {
+        const v = value as { totalActive: number; byScope: Record<string, number>; byType: Record<string, number> };
+        return text(
+          `memory_stats: ${v.totalActive} active; byScope=${JSON.stringify(v.byScope)}; byType=${JSON.stringify(v.byType)}`,
+        );
+      },
+    },
+    execute(): Promise<unknown> {
       const active = service.listActive();
       const byScope = new Map<string, number>();
       const byType = new Map<string, number>();
@@ -172,7 +352,7 @@ export function registerTools(ctx: Context, service: MemoryService): void {
         byScope.set(m.scope, (byScope.get(m.scope) ?? 0) + 1);
         byType.set(m.type, (byType.get(m.type) ?? 0) + 1);
       }
-      return {
+      return Promise.resolve({
         totalActive: active.length,
         byScope: Object.fromEntries(byScope),
         byType: Object.fromEntries(byType),
@@ -180,11 +360,11 @@ export function registerTools(ctx: Context, service: MemoryService): void {
           maxEntries: service.config.maxEntries,
           autoApprove: service.config.autoApprove,
         },
-      };
+      });
     },
   };
 
   for (const tool of [search, record, list, stats]) {
-    ctx.effect(() => ctx.tools.register(tool));
+    ctx.effect(() => ctx.tools.register(tool as unknown as ToolDefinition));
   }
 }

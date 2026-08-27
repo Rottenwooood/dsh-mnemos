@@ -48,8 +48,8 @@ export interface CommandDeps {
 export function registerCommand(ctx: Context, deps: CommandDeps): void {
   const { service, config, llm, collector } = deps;
   const command: CommandDefinition = {
-    name: 'memory',
-    usage: 'memory <search|list|stats|approve|reject|import|backfill|distill|rules|skill> ...',
+    name: 'mnemos',
+    usage: 'mnemos <search|list|stats|approve|reject|import|backfill|distill|rules|skill> ...',
     description:
       'Manage dsh-mnemos memories: search across sessions, list active entries, show stats, approve/reject proposals, import/backfill history, distill sessions, manage rules and promote skills.',
     async handler(args, runtime) {
@@ -59,7 +59,7 @@ export function registerCommand(ctx: Context, deps: CommandDeps): void {
         case 'search': {
           const query = rest.join(' ').trim();
           if (!query) {
-            runtime.say('usage: /memory search <query>');
+            runtime.say('usage: /mnemos search <query>');
             return;
           }
           const rows = service.search(query, 10);
@@ -96,7 +96,7 @@ export function registerCommand(ctx: Context, deps: CommandDeps): void {
         case 'approve': {
           const id = Number(rest[0]);
           if (!Number.isInteger(id)) {
-            runtime.say('usage: /memory approve <approvalId>');
+            runtime.say('usage: /mnemos approve <approvalId>');
             return;
           }
           const result = service.approve(id, 'approve');
@@ -106,7 +106,7 @@ export function registerCommand(ctx: Context, deps: CommandDeps): void {
         case 'reject': {
           const id = Number(rest[0]);
           if (!Number.isInteger(id)) {
-            runtime.say('usage: /memory reject <approvalId>');
+            runtime.say('usage: /mnemos reject <approvalId>');
             return;
           }
           const result = service.approve(id, 'reject');
@@ -117,7 +117,7 @@ export function registerCommand(ctx: Context, deps: CommandDeps): void {
           const kind = (rest[0] ?? 'auto') as ImportSource | 'auto';
           const path = rest[1];
           if (!path || !existsSync(path)) {
-            runtime.say('usage: /memory import <auto|claude|codex|chatgpt|dsh> <path>');
+            runtime.say('usage: /mnemos import <auto|claude|codex|chatgpt|dsh> <path>');
             return;
           }
           const text = readFileSync(path, 'utf8');
@@ -141,7 +141,7 @@ export function registerCommand(ctx: Context, deps: CommandDeps): void {
         case 'backfill': {
           const dir = rest[0];
           if (!dir || !existsSync(dir) || !statSync(dir).isDirectory()) {
-            runtime.say('usage: /memory backfill <session-log-dir>');
+            runtime.say('usage: /mnemos backfill <session-log-dir>');
             return;
           }
           const files = listJsonlFiles(dir);
@@ -236,7 +236,7 @@ export function registerCommand(ctx: Context, deps: CommandDeps): void {
           }
           const id = rest[1];
           if (!id) {
-            runtime.say('usage: /memory rules <list|activate|rollback|deprecate> [ruleId]');
+            runtime.say('usage: /mnemos rules <list|activate|rollback|deprecate> [ruleId]');
             return;
           }
           const stateMap: Record<string, 'approved' | 'rolled_back' | 'deprecated'> = {
@@ -246,7 +246,7 @@ export function registerCommand(ctx: Context, deps: CommandDeps): void {
           };
           const target = stateMap[sub];
           if (!target) {
-            runtime.say('usage: /memory rules <list|activate|rollback|deprecate> [ruleId]');
+            runtime.say('usage: /mnemos rules <list|activate|rollback|deprecate> [ruleId]');
             return;
           }
           const result = service.setRuleState(id, target);
@@ -263,14 +263,14 @@ export function registerCommand(ctx: Context, deps: CommandDeps): void {
           if (sub === 'promote') {
             const id = rest[1];
             if (!id) {
-              runtime.say('usage: /memory skill promote <ruleId>');
+              runtime.say('usage: /mnemos skill promote <ruleId>');
               return;
             }
             const result = promoteRuleToSkill(service, id, config.skillsDir);
             runtime.say(result.ok ? `Promoted ${id} → ${result.path}.` : `Cannot promote: ${result.reason}.`);
             return;
           }
-          runtime.say('usage: /memory skill <list|promote <ruleId>>');
+          runtime.say('usage: /mnemos skill <list|promote <ruleId>>');
           return;
         }
         case 'bus': {
@@ -283,7 +283,7 @@ export function registerCommand(ctx: Context, deps: CommandDeps): void {
           if (sub === 'blacklist') {
             const name = rest[1];
             if (!name) {
-              runtime.say('usage: /memory bus blacklist <pluginName> [reason]');
+              runtime.say('usage: /mnemos bus blacklist <pluginName> [reason]');
               return;
             }
             bus.blacklistPlugin(name, rest.slice(2).join(' ') || undefined);
@@ -293,7 +293,7 @@ export function registerCommand(ctx: Context, deps: CommandDeps): void {
           if (sub === 'unblacklist') {
             const name = rest[1];
             if (!name) {
-              runtime.say('usage: /memory bus unblacklist <pluginName>');
+              runtime.say('usage: /mnemos bus unblacklist <pluginName>');
               return;
             }
             bus.unblacklistPlugin(name);
@@ -308,7 +308,7 @@ export function registerCommand(ctx: Context, deps: CommandDeps): void {
           if (sub === 'revoke') {
             const id = rest[1];
             if (!id) {
-              runtime.say('usage: /memory bus revoke <memoryId>');
+              runtime.say('usage: /mnemos bus revoke <memoryId>');
               return;
             }
             const result = bus.revoke(id, { name: 'human', version: '1' });
@@ -319,13 +319,13 @@ export function registerCommand(ctx: Context, deps: CommandDeps): void {
             const name = rest[1];
             const rows = name ? bus.listByWriter(name) : [];
             if (!name) {
-              runtime.say('usage: /memory bus writers <pluginName>');
+              runtime.say('usage: /mnemos bus writers <pluginName>');
               return;
             }
             runtime.say(rows.length ? rows.map((r) => `- ${r.topic}: ${r.summary}`).join('\n') : `No active memories by ${name}.`);
             return;
           }
-          runtime.say('usage: /memory bus <blacklist|unblacklist|list|revoke|writers>');
+          runtime.say('usage: /mnemos bus <blacklist|unblacklist|list|revoke|writers>');
           return;
         }
         case 'git': {
@@ -352,7 +352,7 @@ export function registerCommand(ctx: Context, deps: CommandDeps): void {
           if (sub === 'rollback') {
             const [id, sha] = rest.slice(1);
             if (!id || !sha) {
-              runtime.say('usage: /memory git rollback <memoryId> <sha>');
+              runtime.say('usage: /mnemos git rollback <memoryId> <sha>');
               return;
             }
             const result = await gitStore.rollback(id, sha);
@@ -362,7 +362,7 @@ export function registerCommand(ctx: Context, deps: CommandDeps): void {
           if (sub === 'restore') {
             const id = rest[1];
             if (!id) {
-              runtime.say('usage: /memory git restore <memoryId>');
+              runtime.say('usage: /mnemos git restore <memoryId>');
               return;
             }
             const result = await gitStore.restoreDeleted(id);
@@ -372,7 +372,7 @@ export function registerCommand(ctx: Context, deps: CommandDeps): void {
           if (sub === 'remote') {
             const url = rest[1];
             if (!url) {
-              runtime.say('usage: /memory git remote <url>');
+              runtime.say('usage: /mnemos git remote <url>');
               return;
             }
             await gitStore.setRemote(url);
@@ -396,14 +396,14 @@ export function registerCommand(ctx: Context, deps: CommandDeps): void {
           if (sub === 'backup') {
             const out = rest[1];
             if (!out) {
-              runtime.say('usage: /memory git backup <outPath>');
+              runtime.say('usage: /mnemos git backup <outPath>');
               return;
             }
             await gitStore.exportBundle(out);
             runtime.say(`Backup written to ${out}.`);
             return;
           }
-          runtime.say('usage: /memory git <status|log|rollback|restore|remote|push|pull|backup>');
+          runtime.say('usage: /mnemos git <status|log|rollback|restore|remote|push|pull|backup>');
           return;
         }
         default:

@@ -41,9 +41,15 @@ function fakeContext() {
       },
     },
     jobs: {
-      register() {
-        return () => true;
+      start() {
+        return 'mnemos-backfill-1';
       },
+      kill() {
+        return 'requested';
+      },
+    },
+    get() {
+      return undefined;
     },
     effect(fn: () => unknown) {
       effects.push(fn);
@@ -108,10 +114,10 @@ describe('tools wiring', () => {
       'human',
     );
     const search = tools.find((t) => t.name === 'memory_search')!;
-    const out = (await search.run(
-      { query: 'pnpm' },
-      { caller: 'model', workspace: 'ws', sessionId: 's2' },
-    )) as { hits: unknown[] };
+    const exec = { agent: { id: 's2', session: { id: 's2', header: { cwd: 'ws' } } } };
+    const out = (await (search as unknown as {
+      execute(args: unknown, e: unknown): Promise<{ hits: unknown[] }>;
+    }).execute({ query: 'pnpm' }, exec)) as { hits: unknown[] };
     expect(out.hits.length).toBeGreaterThan(0);
   });
 
@@ -120,29 +126,27 @@ describe('tools wiring', () => {
     const { service } = makeService();
     registerTools(ctx, service);
     const record = tools.find((t) => t.name === 'memory_record')!;
+    const run = async (args: unknown): Promise<{ outcome: string }> =>
+      (record as unknown as {
+        execute(args: unknown, e: unknown): Promise<{ outcome: string }>;
+      }).execute(args, { agent: { id: 's1', session: { id: 's1', header: { cwd: 'ws' } } } });
 
-    const approved = (await record.run(
-      { topic: 'pnpm', summary: 'Uses pnpm.', confidence: 0.95 },
-      { caller: 'model', workspace: 'ws', sessionId: 's1' },
-    )) as { outcome: string };
+    const approved = await run({ topic: 'pnpm', summary: 'Uses pnpm.', confidence: 0.95 });
     expect(approved.outcome).toBe('committed');
 
-    const queued = (await record.run(
-      { topic: 'todo', summary: 'Maybe refactor later.', confidence: 0.4 },
-      { caller: 'model', workspace: 'ws', sessionId: 's1' },
-    )) as { outcome: string };
+    const queued = await run({ topic: 'todo', summary: 'Maybe refactor later.', confidence: 0.4 });
     expect(queued.outcome).toBe('proposed');
 
-    const denied = (await record.run(
-      { topic: 'secret', summary: 'Key is sk-abcdefghijklmnopqrstuvwxyzABCDEFGHI' },
-      { caller: 'model', workspace: 'ws', sessionId: 's1' },
-    )) as { outcome: string };
+    const denied = await run({
+      topic: 'secret',
+      summary: 'Key is sk-abcdefghijklmnopqrstuvwxyzABCDEFGHI',
+    });
     expect(denied.outcome).toBe('denied');
   });
 });
 
 describe('command wiring', () => {
-  it('registers /memory and prints search results', async () => {
+  it('registers /mnemos and prints search results', async () => {
     const { ctx, commands } = fakeContext();
     const { service } = makeService();
     registerCommand(ctx, commandDeps(service));
@@ -170,7 +174,7 @@ describe('command wiring', () => {
     expect(said.join('\n')).toContain('No semicolons');
   });
 
-  it('/memory import commits a remember candidate from a claude file', async () => {
+  it('/mnemos import commits a remember candidate from a claude file', async () => {
     const { ctx, commands } = fakeContext();
     const { service } = makeService();
     registerCommand(ctx, commandDeps(service));
@@ -266,7 +270,7 @@ describe('rule injection (agent/request)', () => {
   });
 });
 
-describe('/memory distill command', () => {
+describe('/mnemos distill command', () => {
   it('distills buffered session messages and proposes a rule', async () => {
     const { ctx, commands } = fakeContext();
     const { service } = makeService();
@@ -290,7 +294,7 @@ describe('/memory distill command', () => {
   });
 });
 
-describe('/memory bus command', () => {
+describe('/mnemos bus command', () => {
   it('blacklists and lists a plugin via the human command', async () => {
     const { ctx, commands } = fakeContext();
     const { store, service } = makeServiceWithStore();
@@ -319,7 +323,7 @@ function makeServiceWithStore() {
   return { store, service };
 }
 
-describe('/memory git command', () => {
+describe('/mnemos git command', () => {
   it('routes git subcommands through the GitStore', async () => {
     const { ctx, commands } = fakeContext();
     const { service } = makeService();
