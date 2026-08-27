@@ -7,6 +7,7 @@
  * requests) and logs them; the extraction pipeline lands in M2.
  */
 import type { Context } from '@deepseek-ai/cordis';
+import { randomUUID } from 'node:crypto';
 import type { MemoryService } from '../domain/service.js';
 import { recallHot } from '../domain/recall.js';
 import type { Config } from '../config.js';
@@ -63,12 +64,15 @@ export function registerHooks(ctx: Context, collector: SignalCollector): void {
 
 /**
  * Cold/hot layered injection (M1): on each agent step, build the hot-layer
- * projection under the hard byte budget and queue it into the same request via
- * `agent.inject()` — no second API call. The waterfall always delegates with
- * next().
+ * projection under the hard byte budget and append it as one injected
+ * UserMessage, returning `{ kind: 'enter', messages: [...] }` per the real
+ * `agent/pre-step` contract (payload + next waterfall).
  */
 export function registerInjection(ctx: Context, service: MemoryService, getConfig: () => Config): void {
-  ctx.on('agent/pre-step', async (agent, _input, next) => {
+  ctx.on('agent/pre-step', async (payload: PreStepPayload, next) => {
+    const decision = (await next()) as PreStepDecision;
+    if (decision.kind === 'reject') return decision;
+    payload.signal.throwIfAborted();
     try {
       const config = getConfig();
       const injection = recallHot(service, {
@@ -78,35 +82,62 @@ export function registerInjection(ctx: Context, service: MemoryService, getConfi
         minHits: config.injectMinHits,
       });
       if (injection.injectedCount > 0) {
-        agent.inject(injection.text);
+        return { kind: 'enter', messages: [...decision.messages, makeUserMessage(injection.text)] };
       }
     } catch {
       // injection is best-effort; never fail a step because of memory recall
     }
-    return next();
+    return decision;
   });
 }
 
 /**
- * Rule effect (M2): inject approved rules into agent/request with a marker, so
- * the model sees the standing preferences/instructions the user approved. The
- * waterfall always delegates with next().
+ * Rule effect (M2): append approved rules as one injected UserMessage on the
+ * step, so the model sees the standing preferences the user approved. The
+ * real `agent/request` waterfall only configures the model call (no
+ * system/messages), so rules inject here, beside the memory projection.
  */
 export function registerRuleInjection(ctx: Context, service: MemoryService, getConfig: () => Config): void {
-  ctx.on('agent/request', async (agent, _request, next) => {
+  ctx.on('agent/pre-step', async (payload: PreStepPayload, next) => {
+    const decision = (await next()) as PreStepDecision;
+    if (decision.kind === 'reject') return decision;
+    payload.signal.throwIfAborted();
     try {
       if (!getConfig().rulesInjectEnabled) {
-        return next();
+        return decision;
       }
       const rules = service.listRules('approved');
       if (rules.length > 0) {
-        agent.inject(
-          `# dsh-mnemos 生效规则\n${rules.map((r) => `- [${r.kind}] ${r.text}`).join('\n')}`,
-        );
+        const text = `# dsh-mnemos 生效规则\n${rules.map((r) => `- [${r.kind}] ${r.text}`).join('\n')}`;
+        return { kind: 'enter', messages: [...decision.messages, makeUserMessage(text)] };
       }
     } catch {
       // rule injection is best-effort; never fail a request
     }
-    return next();
+    return decision;
   });
+}
+
+/** Structural face of the real `agent/pre-step` payload (see dsh.d.ts). */
+export interface PreStepPayload {
+  agent: unknown;
+  messages: unknown[];
+  turn: number;
+  step: number;
+  signal: AbortSignal;
+}
+
+/** Structural face of the real `PreStepDecision`. */
+export type PreStepDecision =
+  | { kind: 'reject' }
+  | { kind: 'enter'; messages: unknown[] };
+
+/** Build one injected UserMessage (structural dsh Message shape). */
+function makeUserMessage(text: string): unknown {
+  return {
+    id: randomUUID(),
+    role: 'user',
+    content: [{ type: 'text', text }],
+    source: { kind: 'plugin', plugin: 'dsh-mnemos', form: 'instructions' },
+  };
 }

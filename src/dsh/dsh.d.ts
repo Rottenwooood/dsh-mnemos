@@ -48,21 +48,21 @@ declare module '@deepseek-ai/cordis' {
     /** Memory-bus change notifications (committed/proposed/replaced/revoked/rule-approved). */
     'mnemos/memory'(event: BusEvent): void;
     /**
-     * Waterfall deciding what the model sees; listeners must call next().
+     * Waterfall deciding the next step; listeners call next() then may return
+     * `{ kind: 'enter', messages }` with injected UserMessages.
      * @mode waterfall
      */
     'agent/pre-step'(
-      agent: DshAgent,
-      input: unknown,
+      payload: { agent: DshAgent; messages: unknown[]; turn: number; step: number; signal: AbortSignal },
       next: () => Promise<unknown>,
     ): Promise<unknown>;
     /**
-     * Waterfall before a model request is sent; listeners must call next().
+     * Waterfall configuring a model call; listeners call next() and may
+     * adjust the LlmCallConfig (provider/model/parameters only — no content).
      * @mode waterfall
      */
     'agent/request'(
-      agent: DshAgent,
-      request: unknown,
+      payload: { agent: DshAgent; turn: number; step: number; signal: AbortSignal },
       next: () => Promise<unknown>,
     ): Promise<unknown>;
   }

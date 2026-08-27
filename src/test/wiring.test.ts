@@ -237,15 +237,18 @@ describe('pre-step injection', () => {
       injectMinHits: 0,
     }));
     const hook = listeners.find((l) => l.name === 'agent/pre-step')!;
-    const inject = vi.fn();
-    const delegated = await hook.listener({ inject } as never, {}, async () => 'delegated');
-    expect(inject).toHaveBeenCalledWith(expect.stringContaining('Use pnpm'));
-    expect(delegated).toBe('delegated');
+    const decision = await hook.listener(
+      { agent: { id: 'a1' }, messages: [], turn: 0, step: 0, signal: new AbortController().signal },
+      async () => ({ kind: 'enter', messages: [] }),
+    ) as { kind: string; messages: Array<{ content: Array<{ text: string }> }> };
+    expect(decision.kind).toBe('enter');
+    const texts = decision.messages.flatMap((m) => m.content.map((c) => c.text));
+    expect(texts.join('\n')).toContain('Use pnpm');
   });
 });
 
-describe('rule injection (agent/request)', () => {
-  it('injects approved rules with a marker and delegates via next', async () => {
+describe('rule injection (agent/pre-step)', () => {
+  it('injects approved rules as an appended message and delegates via next', async () => {
     const { ctx, listeners } = fakeContext();
     const { service } = makeService();
     const proposed = service.proposeRule(
@@ -262,11 +265,14 @@ describe('rule injection (agent/request)', () => {
     );
     service.approve(proposed.approvalId!, 'approve');
     registerRuleInjection(ctx, service, () => defaultConfig());
-    const hook = listeners.find((l) => l.name === 'agent/request')!;
-    const inject = vi.fn();
-    const delegated = await hook.listener({ inject } as never, {}, async () => 'delegated');
-    expect(inject).toHaveBeenCalledWith(expect.stringContaining('Always use pnpm'));
-    expect(delegated).toBe('delegated');
+    const hook = listeners.find((l) => l.name === 'agent/pre-step')!;
+    const decision = await hook.listener(
+      { agent: { id: 'a1' }, messages: [], turn: 0, step: 0, signal: new AbortController().signal },
+      async () => ({ kind: 'enter', messages: [] }),
+    ) as { kind: string; messages: Array<{ content: Array<{ text: string }> }> };
+    expect(decision.kind).toBe('enter');
+    const texts = decision.messages.flatMap((m) => m.content.map((c) => c.text));
+    expect(texts.join('\n')).toContain('Always use pnpm');
   });
 });
 
