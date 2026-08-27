@@ -164,12 +164,12 @@ export function createMnemosRouteHandler(deps: MnemosRouteDeps): (req: Req, res:
           return;
         }
         if (status === 'all') {
-          const rows = deps.store.listSummaries(scope === 'global' ? 'global' : 'workspace', workspace, undefined, type);
+          const rows = deps.store.listSummaries(scope === 'all' ? undefined : scope === 'global' ? 'global' : 'workspace', workspace, undefined, type);
           json(res, 200, { count: rows.length, memories: rows });
           return;
         }
         const rows = deps.service.listActive(
-          scope === 'global' ? 'global' : 'workspace',
+          scope === 'all' ? undefined : scope === 'global' ? 'global' : 'workspace',
           workspace,
           type,
         );

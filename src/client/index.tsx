@@ -155,7 +155,7 @@ export function MnemosTab(): ReactNode {
   const stats = useJson<{ totalActive: number; pending: number; gate: { maxEntries: number } }>('/mnemos/api/stats')
   const pending = useJson<{ pending: PendingRow[] }>('/mnemos/api/pending')
   const [typeFilter, setTypeFilter] = useState('')
-  const memories = useJson<{ memories: MemoryRow[] }>(`/mnemos/api/memories?scope=workspace&type=${encodeURIComponent(typeFilter)}`)
+  const memories = useJson<{ memories: MemoryRow[] }>(`/mnemos/api/memories?scope=all&type=${encodeURIComponent(typeFilter)}`)
   const deleted = useJson<{ memories: MemoryRow[] }>('/mnemos/api/memories?status=deleted')
   const usage = useJson<UsageStats>('/mnemos/api/usage')
   const git = useJson<{ changed: string[] }>('/mnemos/api/git/status')
@@ -441,6 +441,7 @@ export function MnemosTab(): ReactNode {
             ) : (
               <>
                 <div className="mnemos-intro" style={{ margin: 0 }}>
+                  <span className="mnemos-badge">{m.scope === 'global' ? '全局' : '项目'}</span>{' '}
                   {m.topic} — {m.summary}（{usageByMemory.get(m.id)?.hits ?? m.crossSessionHits} 命中
                   {usageByMemory.get(m.id)?.sessions ? ` · ${usageByMemory.get(m.id)!.sessions} 会话` : ''}）
                 </div>
