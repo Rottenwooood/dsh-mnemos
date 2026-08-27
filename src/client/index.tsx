@@ -67,7 +67,8 @@ interface PendingRow {
   id: number
   kind: string
   proposedBy: string
-  payload?: { topic?: string; summary?: string }
+  createdAt: string
+  payload?: { topic?: string; summary?: string; scope?: string; type?: string; confidence?: number }
 }
 
 interface MemoryRow {
@@ -75,9 +76,21 @@ interface MemoryRow {
   topic: string
   summary: string
   type: string
+  scope: string
+  workspace: string | null
   crossSessionHits: number
   updatedAt: string
+  status: string
 }
+
+/** One git commit from /mnemos/api/git/history. */
+interface GitCommit {
+  sha: string
+  message: string
+  date: string
+}
+
+const MEMORY_TYPES = ['project_fact', 'preference', 'protocol', 'learned']
 
 /** `/mnemos/api/usage` answer: ledger-derived cross-session stats. */
 interface UsageStats {
@@ -116,22 +129,32 @@ function Heatmap({ daily }: { daily: Array<{ day: string; count: number }> }): R
 export function MnemosTab(): ReactNode {
   const stats = useJson<{ totalActive: number; pending: number; gate: { maxEntries: number } }>('/mnemos/api/stats')
   const pending = useJson<{ pending: PendingRow[] }>('/mnemos/api/pending')
-  const memories = useJson<{ memories: MemoryRow[] }>('/mnemos/api/memories?scope=workspace')
+  const [typeFilter, setTypeFilter] = useState('')
+  const memories = useJson<{ memories: MemoryRow[] }>(`/mnemos/api/memories?scope=workspace&type=${encodeURIComponent(typeFilter)}`)
+  const deleted = useJson<{ memories: MemoryRow[] }>('/mnemos/api/memories?status=deleted')
   const usage = useJson<UsageStats>('/mnemos/api/usage')
+  const history = useJson<{ state: string; count: number; items: PendingRow[] }>('/mnemos/api/history?state=rejected')
   const git = useJson<{ changed: string[] }>('/mnemos/api/git/status')
   const [search, setSearch] = useState('')
   const [notice, setNotice] = useState<{ kind: 'ok' | 'err'; text: string } | null>(null)
   const [busy, setBusy] = useState(false)
   const [editingId, setEditingId] = useState<string | null>(null)
   const [draft, setDraft] = useState('')
+  const [editingApproval, setEditingApproval] = useState<number | null>(null)
+  const [approvalDraft, setApprovalDraft] = useState('')
+  const [historySource, setHistorySource] = useState('')
+  const [gitView, setGitView] = useState<{ id: string; history: GitCommit[] } | null>(null)
+  const [gitContent, setGitContent] = useState<{ sha: string; content: string } | null>(null)
 
   const refreshAll = useCallback(() => {
     stats.reload()
     pending.reload()
     memories.reload()
+    deleted.reload()
     usage.reload()
+    history.reload()
     git.reload()
-  }, [stats, pending, memories, usage, git])
+  }, [stats, pending, memories, deleted, usage, history, git])
 
   // Keep the console current while the panel is open.
   useEffect(() => {
@@ -178,6 +201,74 @@ export function MnemosTab(): ReactNode {
     setDraft(memory.summary)
   }
 
+  const cleanupStale = async (): Promise<void> => {
+    setBusy(true)
+    try {
+      const res = await fetch('/mnemos/api/cleanup?days=90')
+      const data = (await res.json()) as { count: number; ids: string[] }
+      if (data.count === 0) {
+        setNotice({ kind: 'ok', text: '没有可清理的失效记忆' })
+      } else if (window.confirm(`发现 ${data.count} 条长期未使用且未更新的记忆，将从列表清理（git 历史可恢复）。确认？`)) {
+        const result = (await postJson('/mnemos/api/cleanup', { ids: data.ids })) as { removed: number }
+        setNotice({ kind: 'ok', text: `已清理 ${result.removed} 条失效记忆` })
+      }
+    } catch (err) {
+      setNotice({ kind: 'err', text: err instanceof Error ? err.message : String(err) })
+    }
+    setBusy(false)
+    refreshAll()
+  }
+
+  const exportAll = async (): Promise<void> => {
+    try {
+      const res = await fetch('/mnemos/api/export')
+      const data = await res.json()
+      const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' })
+      const url = URL.createObjectURL(blob)
+      const a = document.createElement('a')
+      a.href = url
+      a.download = `mnemos-export-${new Date().toISOString().slice(0, 10)}.json`
+      a.click()
+      URL.revokeObjectURL(url)
+      setNotice({ kind: 'ok', text: '已导出 JSON' })
+    } catch (err) {
+      setNotice({ kind: 'err', text: err instanceof Error ? err.message : String(err) })
+    }
+  }
+
+  const batchApprove = async (): Promise<void> => {
+    if (!window.confirm('批量批准所有低风险记忆候选（工作区项目事实、高置信度）？')) return
+    const result = (await postJson('/mnemos/api/approve/batch')) as { approved: number; skipped: number }
+    setNotice({ kind: 'ok', text: `已批准 ${result.approved} 条，跳过 ${result.skipped} 条` })
+    refreshAll()
+  }
+
+  const showGitHistory = async (id: string): Promise<void> => {
+    try {
+      const res = await fetch(`/mnemos/api/git/history?id=${encodeURIComponent(id)}`)
+      const data = (await res.json()) as { history: GitCommit[] }
+      setGitView({ id, history: data.history })
+      setGitContent(null)
+    } catch (err) {
+      setNotice({ kind: 'err', text: err instanceof Error ? err.message : String(err) })
+    }
+  }
+
+  const showGitContent = async (id: string, sha: string): Promise<void> => {
+    try {
+      const res = await fetch(`/mnemos/api/git/show?id=${encodeURIComponent(id)}&sha=${encodeURIComponent(sha)}`)
+      const data = (await res.json()) as { content: string | null }
+      setGitContent({ sha, content: data.content ?? '(该版本没有此记忆)' })
+    } catch (err) {
+      setNotice({ kind: 'err', text: err instanceof Error ? err.message : String(err) })
+    }
+  }
+
+  const rollbackTo = (id: string, sha: string): void => {
+    if (!window.confirm(`回滚该记忆到 ${sha.slice(0, 8)}？当前内容会被覆盖（git 仍保留可回溯）。`)) return
+    void act('/mnemos/api/git/rollback', { id, sha }, '已回滚').then(() => setGitView(null))
+  }
+
   const usageByMemory = new Map((usage.data?.perMemory ?? []).map((u) => [u.memoryId, u]))
 
   const visible = (memories.data?.memories ?? [])
@@ -204,6 +295,12 @@ export function MnemosTab(): ReactNode {
         <button className="mnemos-button" style={{ marginRight: 6 }} disabled={busy} onClick={() => { void distill() }}>
           现在提炼
         </button>
+        <button className="mnemos-button" style={{ marginRight: 6 }} disabled={busy} onClick={() => { void cleanupStale() }}>
+          清理失效
+        </button>
+        <button className="mnemos-button" style={{ marginRight: 6 }} disabled={busy} onClick={() => { void exportAll() }}>
+          导出
+        </button>
         <button className="mnemos-button" disabled={busy} onClick={refreshAll}>
           刷新
         </button>
@@ -215,16 +312,53 @@ export function MnemosTab(): ReactNode {
           <div key={p.id} style={{ marginTop: 8 }}>
             <div className="mnemos-intro" style={{ margin: 0 }}>
               [{p.kind}] {p.payload?.topic ?? p.id} — {p.payload?.summary ?? ''}（by {p.proposedBy}）
+              {p.kind === 'memory' && p.payload?.scope ? ` · ${p.payload.scope}/${p.payload.type}` : ''}
             </div>
-            <button className="mnemos-button" style={{ marginRight: 6, marginTop: 6 }} disabled={busy} onClick={() => void act('/mnemos/api/approve', { approvalId: p.id, decision: 'approve' }, '已批准')}>
-              批准
-            </button>
-            <button className="mnemos-button" style={{ marginTop: 6 }} disabled={busy} onClick={() => void act('/mnemos/api/approve', { approvalId: p.id, decision: 'reject' }, '已拒绝')}>
-              拒绝
-            </button>
+            {editingApproval === p.id ? (
+              <>
+                <input
+                  className="mnemos-input"
+                  style={{ marginTop: 6 }}
+                  value={approvalDraft}
+                  onChange={(e) => setApprovalDraft(e.target.value)}
+                  placeholder="修改摘要后批准"
+                />
+                <button
+                  className="mnemos-button"
+                  style={{ marginRight: 6, marginTop: 6 }}
+                  disabled={busy || approvalDraft.trim().length === 0}
+                  onClick={() => void act('/mnemos/api/approve', { approvalId: p.id, decision: 'approve', edited: { summary: approvalDraft.trim() } }, '已编辑并批准').then(() => setEditingApproval(null))}
+                >
+                  保存并批准
+                </button>
+                <button className="mnemos-button" style={{ marginTop: 6 }} onClick={() => setEditingApproval(null)}>
+                  取消
+                </button>
+              </>
+            ) : null}
+            <div style={{ marginTop: 6 }}>
+              <button className="mnemos-button" style={{ marginRight: 6 }} disabled={busy} onClick={() => void act('/mnemos/api/approve', { approvalId: p.id, decision: 'approve' }, '已批准')}>
+                批准
+              </button>
+              <button className="mnemos-button" style={{ marginRight: 6 }} disabled={busy} onClick={() => void act('/mnemos/api/approve', { approvalId: p.id, decision: 'reject' }, '已拒绝')}>
+                拒绝
+              </button>
+              <button
+                className="mnemos-button"
+                disabled={busy || p.kind !== 'memory'}
+                onClick={() => { setEditingApproval(p.id); setApprovalDraft(p.payload?.summary ?? '') }}
+              >
+                编辑后批准
+              </button>
+            </div>
           </div>
         ))}
         {pending.data && pending.data.pending.length === 0 ? <div className="mnemos-intro" style={{ margin: 0 }}>无待审批项</div> : null}
+        {pending.data && pending.data.pending.length > 0 ? (
+          <button className="mnemos-button" style={{ marginTop: 8 }} disabled={busy} onClick={() => { void batchApprove() }}>
+            批量批准低风险
+          </button>
+        ) : null}
         {pending.error ? <div className="mnemos-error">{pending.error}</div> : null}
       </div>
 
@@ -244,13 +378,19 @@ export function MnemosTab(): ReactNode {
 
       <div className="mnemos-section" style={{ padding: 0 }}>
         <div className="mnemos-heading" style={{ fontSize: 13 }}>记忆</div>
-        <input
-          className="mnemos-input"
-          style={{ marginTop: 6 }}
-          placeholder="搜索记忆…"
-          value={search}
-          onChange={(e) => setSearch(e.target.value)}
-        />
+        <div style={{ display: 'flex', gap: 6, marginTop: 6, flexWrap: 'wrap' }}>
+          <input
+            className="mnemos-input"
+            style={{ flex: 1, minWidth: 140 }}
+            placeholder="搜索记忆…"
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+          />
+          <select className="mnemos-input" style={{ flex: '0 0 120px' }} value={typeFilter} onChange={(e) => setTypeFilter(e.target.value)}>
+            <option value="">全部类型</option>
+            {MEMORY_TYPES.map((t) => <option key={t} value={t}>{t}</option>)}
+          </select>
+        </div>
         {visible.length === 0 && (memories.data?.memories.length ?? 0) === 0 ? (
           <div className="mnemos-intro" style={{ margin: '8px 0 0' }}>
             还没有记忆。让模型在会话里记录项目事实（例如"用 pnpm 安装依赖"），或在设置页导入历史会话。
@@ -282,22 +422,84 @@ export function MnemosTab(): ReactNode {
                   {m.topic} — {m.summary}（{usageByMemory.get(m.id)?.hits ?? m.crossSessionHits} 命中
                   {usageByMemory.get(m.id)?.sessions ? ` · ${usageByMemory.get(m.id)!.sessions} 会话` : ''}）
                 </div>
-                <button className="mnemos-button" style={{ marginRight: 6, marginTop: 6 }} disabled={busy} onClick={() => startEdit(m)}>
-                  编辑
-                </button>
-                <button
-                  className="mnemos-button"
-                  style={{ marginTop: 6 }}
-                  disabled={busy}
-                  onClick={() => { if (window.confirm(`删除记忆「${m.topic}」？可从 git 历史恢复。`)) void act('/mnemos/api/memory/delete', { id: m.id }, '已删除') }}
-                >
-                  删除
-                </button>
+                <div style={{ marginTop: 6 }}>
+                  <button className="mnemos-button" style={{ marginRight: 6 }} disabled={busy} onClick={() => startEdit(m)}>
+                    编辑
+                  </button>
+                  <button
+                    className="mnemos-button"
+                    style={{ marginRight: 6 }}
+                    disabled={busy}
+                    onClick={() => { void showGitHistory(m.id) }}
+                  >
+                    版本历史
+                  </button>
+                  <button
+                    className="mnemos-button"
+                    disabled={busy}
+                    onClick={() => { if (window.confirm(`删除记忆「${m.topic}」？可从"已删除"区恢复。`)) void act('/mnemos/api/memory/delete', { id: m.id }, '已删除') }}
+                  >
+                    删除
+                  </button>
+                </div>
               </>
             )}
+            {gitView !== null && gitView.id === m.id ? (
+              <div style={{ marginTop: 6, borderLeft: '2px solid var(--dsw-alias-color-border, #ddd)', paddingLeft: 8 }}>
+                {gitView.history.length === 0 ? <div className="mnemos-intro" style={{ margin: 0 }}>暂无历史提交</div> : null}
+                {gitView.history.map((c) => (
+                  <div key={c.sha} style={{ margin: '4px 0' }}>
+                    <span style={{ opacity: 0.7 }}>{c.sha.slice(0, 8)} {c.message}</span>
+                    <button className="mnemos-button" style={{ marginLeft: 6 }} disabled={busy} onClick={() => { void showGitContent(m.id, c.sha) }}>查看</button>
+                    <button className="mnemos-button" style={{ marginLeft: 6 }} disabled={busy} onClick={() => rollbackTo(m.id, c.sha)}>回滚</button>
+                  </div>
+                ))}
+                {gitContent !== null ? (
+                  <pre style={{ whiteSpace: 'pre-wrap', fontSize: 12, margin: '6px 0 0', opacity: 0.8 }}>{gitContent.content}</pre>
+                ) : null}
+                <button className="mnemos-button" style={{ marginTop: 4 }} onClick={() => setGitView(null)}>收起</button>
+              </div>
+            ) : null}
           </div>
         ))}
         {memories.error ? <div className="mnemos-error">{memories.error}</div> : null}
+      </div>
+
+      <div className="mnemos-section" style={{ padding: 0 }}>
+        <div className="mnemos-heading" style={{ fontSize: 13 }}>已删除（可从 git 恢复）</div>
+        {(deleted.data?.memories ?? []).map((m) => (
+          <div key={m.id} style={{ marginTop: 6 }}>
+            <span className="mnemos-intro" style={{ margin: 0 }}>{m.topic} — {m.summary}</span>
+            <button className="mnemos-button" style={{ marginLeft: 6 }} disabled={busy} onClick={() => void act('/mnemos/api/git/restore', { id: m.id }, '已恢复').then(refreshAll)}>
+              恢复
+            </button>
+          </div>
+        ))}
+        {deleted.data && deleted.data.memories.length === 0 ? <div className="mnemos-intro" style={{ margin: 0 }}>无已删除记忆</div> : null}
+        {deleted.error ? <div className="mnemos-error">{deleted.error}</div> : null}
+      </div>
+
+      <div className="mnemos-section" style={{ padding: 0 }}>
+        <div className="mnemos-heading" style={{ fontSize: 13 }}>被拒历史</div>
+        <div style={{ display: 'flex', gap: 6, marginTop: 6, flexWrap: 'wrap' }}>
+          <input
+            className="mnemos-input"
+            style={{ flex: 1, minWidth: 140 }}
+            placeholder="按来源（proposedBy）过滤…"
+            value={historySource}
+            onChange={(e) => setHistorySource(e.target.value)}
+          />
+        </div>
+        {(history.data?.items ?? [])
+          .filter((r) => historySource.length === 0 || r.proposedBy.includes(historySource))
+          .slice(0, 20)
+          .map((r) => (
+            <div key={r.id} className="mnemos-intro" style={{ margin: '6px 0 0' }}>
+              [{r.kind}] {r.payload?.topic ?? r.id} — {r.payload?.summary ?? ''}（by {r.proposedBy}）
+            </div>
+          ))}
+        {history.data && history.data.items.length === 0 ? <div className="mnemos-intro" style={{ margin: 0 }}>无被拒记录</div> : null}
+        {history.error ? <div className="mnemos-error">{history.error}</div> : null}
       </div>
 
       <div className="mnemos-section" style={{ padding: 0 }}>

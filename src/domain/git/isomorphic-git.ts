@@ -26,9 +26,26 @@ const http: HttpClient = {
   },
 };
 
-export function createIsomorphicGitBackend(): GitBackend {
-  const opts = { fs, http } as const;
+const opts = { fs, http } as const;
 
+function toCommitInfo(c: Awaited<ReturnType<typeof git.log>>[number]): CommitInfo {
+  return {
+    sha: c.oid,
+    message: c.commit.message,
+    date: new Date(c.commit.committer.timestamp * 1000).toISOString(),
+  };
+}
+
+async function blobAt(dir: string, oid: string, file: string): Promise<string | undefined> {
+  try {
+    const { blob } = await git.readBlob({ ...opts, dir, oid, filepath: file });
+    return Buffer.from(blob).toString('utf8');
+  } catch {
+    return undefined;
+  }
+}
+
+export function createIsomorphicGitBackend(): GitBackend {
   return {
     async hasRepo(dir) {
       return existsSync(join(dir, '.git'));
@@ -85,15 +102,24 @@ export function createIsomorphicGitBackend(): GitBackend {
     },
 
     async log(dir, file) {
-      const commits = await git.log({ ...opts, dir, depth: 100, filepath: file });
-      return commits.map(
-        (c) =>
-          ({
-            sha: c.oid,
-            message: c.commit.message,
-            date: new Date(c.commit.committer.timestamp * 1000).toISOString(),
-          }) satisfies CommitInfo,
-      );
+      const commits = await git.log({ ...opts, dir, depth: 100 });
+      if (!file) {
+        return commits.map(toCommitInfo);
+      }
+      // Replicate `git log -- <file>` (commits where the file changed): compare
+      // the file's blob in each commit against its parent. isomorphic-git's own
+      // filepath filter throws when the file is absent from HEAD (e.g. a
+      // deleted memory), so this walk keeps deleted-memory history too.
+      const changed = new Set<string>();
+      for (const c of commits) {
+        const mine = await blobAt(dir, c.oid, file);
+        const parent = c.commit.parent[0];
+        const theirs = parent !== undefined ? await blobAt(dir, parent, file) : undefined;
+        if (mine !== theirs) {
+          changed.add(c.oid);
+        }
+      }
+      return commits.filter((c) => changed.has(c.oid)).map(toCommitInfo);
     },
 
     async show(dir, sha, file) {

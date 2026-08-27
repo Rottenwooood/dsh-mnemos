@@ -16,7 +16,7 @@ import { join } from 'node:path';
 import { GitBackend, CommitInfo } from './git/backend.js';
 import { MemoryStore } from './store.js';
 import { MemoryService } from './service.js';
-import { syncMirror, applyMirrorToStore, mirrorFileFor, parseMemoryFile } from './mirror.js';
+import { syncMirror, applyMirrorToStore, mirrorFileFor, memoryFileName, parseMemoryFile } from './mirror.js';
 
 export interface GitStoreOptions {
   backend: GitBackend;
@@ -46,7 +46,15 @@ export function createGitStore(opts: GitStoreOptions): GitStore {
   const remote = opts.remote ?? 'origin';
 
   async function fileFor(memoryId: string): Promise<string | undefined> {
-    return mirrorFileFor(repoDir, memoryId);
+    const found = mirrorFileFor(repoDir, memoryId);
+    if (found) {
+      return found;
+    }
+    // Deleted memories no longer have a mirror file on disk, but their history
+    // stays in git. The mirror file name is deterministic from id+topic, so
+    // derive it from the store row to keep log/show/rollback working.
+    const memory = store.getMemory(memoryId);
+    return memory ? memoryFileName(memory) : undefined;
   }
 
   return {

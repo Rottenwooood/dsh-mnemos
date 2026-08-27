@@ -94,8 +94,10 @@ export interface MemoryService {
   setRuleState(id: string, state: RuleState): RuleStateResult;
   recordHit(id: string, sessionId?: string): void;
   usageStats(days?: number): ReturnType<MemoryStore['usageStats']>;
+  listDeleted(): ReturnType<MemoryStore['listDeleted']>;
+  listStale(days: number): string[];
   search(query: string, limit?: number): ReturnType<MemoryStore['searchMemories']>;
-  listActive(scope?: 'global' | 'workspace', workspace?: string): ReturnType<MemoryStore['listSummaries']>;
+  listActive(scope?: 'global' | 'workspace', workspace?: string, type?: string): ReturnType<MemoryStore['listSummaries']>;
 }
 
 export function createMemoryService(
@@ -387,12 +389,20 @@ export function createMemoryService(
       return store.usageStats(days);
     },
 
+    listDeleted() {
+      return store.listDeleted();
+    },
+
+    listStale(days) {
+      return store.listStale(days);
+    },
+
     search(query, limit = 10) {
       return store.searchMemories(query, limit);
     },
 
-    listActive(scope, workspace) {
-      return store.listSummaries(scope, workspace, 'active');
+    listActive(scope, workspace, type) {
+      return store.listSummaries(scope, workspace, 'active', type);
     },
   };
 }

@@ -135,7 +135,9 @@ export interface MemoryStore {
   close(): void;
   addMemory(m: Memory): void;
   getMemory(id: string): Memory | undefined;
-  listSummaries(scope?: MemoryScope, workspace?: string, status?: MemoryStatus): SummaryRow[];
+  listSummaries(scope?: MemoryScope, workspace?: string, status?: MemoryStatus, type?: string): SummaryRow[];
+  listDeleted(): SummaryRow[];
+  listStale(days: number): string[];
   searchMemories(query: string, limit: number): SummaryRow[];
   updateMemory(id: string, patch: Partial<MemoryInput>): void;
   setMemoryStatus(id: string, status: MemoryStatus): void;
@@ -223,8 +225,18 @@ export function openMemoryStore(path: string): MemoryStore {
   const listStmt = db.prepare(
     `SELECT id, summary, type, scope, workspace, topic, updated_at, cross_session_hits, status
        FROM memories
-      WHERE (? IS NULL OR status IS ?) AND (? IS NULL OR scope IS ?) AND (? IS NULL OR workspace IS ?)
+      WHERE (? IS NULL OR status IS ?) AND (? IS NULL OR scope IS ?) AND (? IS NULL OR workspace IS ?) AND (? IS NULL OR type IS ?)
       ORDER BY updated_at DESC`,
+  );
+  const listDeletedStmt = db.prepare(
+    `SELECT id, summary, type, scope, workspace, topic, updated_at, cross_session_hits, status
+       FROM memories WHERE status='deleted'
+      ORDER BY updated_at DESC`,
+  );
+  const listStaleStmt = db.prepare(
+    `SELECT m.id FROM memories m
+      WHERE m.status='active' AND m.updated_at < ?
+        AND NOT EXISTS (SELECT 1 FROM usage_ledger u WHERE u.memory_id = m.id AND u.ts >= ?)`,
   );
   const searchFtsStmt = db.prepare(
     `SELECT m.id, m.summary, m.type, m.scope, m.workspace, m.topic, m.updated_at, m.cross_session_hits, m.status
@@ -320,7 +332,7 @@ export function openMemoryStore(path: string): MemoryStore {
       const row = getMemoryStmt.get(id) as Record<string, unknown> | undefined;
       return row ? toMemory(row) : undefined;
     },
-    listSummaries(scope, workspace, status) {
+    listSummaries(scope, workspace, status, type) {
       const s = status ?? 'active';
       const rows = listStmt.all(
         s,
@@ -329,8 +341,19 @@ export function openMemoryStore(path: string): MemoryStore {
         scope ?? null,
         workspace ?? null,
         workspace ?? null,
+        type ?? null,
+        type ?? null,
       ) as Record<string, unknown>[];
       return rows.map(toSummary);
+    },
+    listDeleted() {
+      const rows = listDeletedStmt.all() as Record<string, unknown>[];
+      return rows.map(toSummary);
+    },
+    listStale(days) {
+      const cutoff = new Date(Date.now() - days * 86_400_000).toISOString();
+      const rows = listStaleStmt.all(cutoff, cutoff) as Array<{ id: unknown }>;
+      return rows.map((r) => String(r.id));
     },
     searchMemories(query, limit) {
       const fq = ftsQuery(query);

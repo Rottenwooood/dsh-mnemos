@@ -15,6 +15,7 @@ import { join } from 'node:path';
 import { zstdDecompressSync } from 'node:zlib';
 import type { MemoryStore } from '../domain/store.js';
 import type { MemoryService } from '../domain/service.js';
+import type { MemoryInput } from '../domain/types.js';
 import type { GitStore } from '../domain/gitstore.js';
 import type { Config } from '../config.js';
 import type { LlmRuntimeLike, LlmTarget } from './llm-adapter.js';
@@ -138,7 +139,23 @@ export function createMnemosRouteHandler(deps: MnemosRouteDeps): (req: Req, res:
       if (method === 'GET' && route === '/memories') {
         const scope = url.searchParams.get('scope') ?? undefined;
         const workspace = url.searchParams.get('workspace') ?? undefined;
-        const rows = deps.service.listActive(scope === 'global' ? 'global' : 'workspace', workspace ?? undefined);
+        const type = url.searchParams.get('type') ?? undefined;
+        const status = url.searchParams.get('status') ?? 'active';
+        if (status === 'deleted') {
+          const rows = deps.service.listDeleted();
+          json(res, 200, { count: rows.length, memories: rows });
+          return;
+        }
+        if (status === 'all') {
+          const rows = deps.store.listSummaries(scope === 'global' ? 'global' : 'workspace', workspace ?? undefined, undefined, type ?? undefined);
+          json(res, 200, { count: rows.length, memories: rows });
+          return;
+        }
+        const rows = deps.service.listActive(
+          scope === 'global' ? 'global' : 'workspace',
+          workspace ?? undefined,
+          type ?? undefined,
+        );
         json(res, 200, { count: rows.length, memories: rows });
         return;
       }
@@ -310,7 +327,68 @@ export function createMnemosRouteHandler(deps: MnemosRouteDeps): (req: Req, res:
           return;
         }
         const decision = body.decision === 'reject' ? 'reject' : 'approve';
-        json(res, 200, deps.service.approve(id, decision));
+        const candidate = deps.store.getApproval(id);
+        const edited =
+          decision === 'approve' && body.edited && typeof body.edited === 'object' && candidate
+            ? { ...(candidate.payload as Record<string, unknown>), ...(body.edited as Record<string, unknown>) }
+            : undefined;
+        json(res, 200, deps.service.approve(id, decision, edited as MemoryInput | undefined));
+        return;
+      }
+      if (method === 'POST' && route === '/approve/batch') {
+        const candidates = deps.store.listApprovals('proposed');
+        const lowRisk = candidates.filter((c) => {
+          if (c.kind !== 'memory') return false;
+          const p = c.payload as { scope?: string; type?: string; confidence?: number };
+          return p.scope === 'workspace' && p.type === 'project_fact' && (p.confidence ?? 0) >= 0.8;
+        });
+        let approved = 0;
+        let failed = 0;
+        for (const c of lowRisk) {
+          const r = deps.service.approve(c.id, 'approve');
+          if (r.ok) approved += 1;
+          else failed += 1;
+        }
+        json(res, 200, { approved, skipped: candidates.length - lowRisk.length, failed });
+        return;
+      }
+      if (method === 'GET' && route === '/history') {
+        const state = url.searchParams.get('state') ?? 'rejected';
+        const source = url.searchParams.get('source') ?? undefined;
+        const rows = deps.store.listApprovals(state as never).filter(
+          (r) => source === undefined || r.proposedBy === source,
+        );
+        json(res, 200, { state, count: rows.length, items: rows.map(approvalView) });
+        return;
+      }
+      if (method === 'GET' && route === '/export') {
+        const id = url.searchParams.get('id') ?? undefined;
+        const ids = id ? [id] : deps.store.listSummaries(undefined, undefined, undefined, undefined).map((m) => m.id);
+        const memories = ids
+          .map((m) => deps.store.getMemory(m))
+          .filter((m): m is NonNullable<typeof m> => m !== undefined);
+        json(res, 200, {
+          exportedAt: new Date().toISOString(),
+          memories,
+          rules: deps.store.listRules('approved'),
+        });
+        return;
+      }
+      if (method === 'GET' && route === '/cleanup') {
+        const days = Number(url.searchParams.get('days') ?? 90);
+        const ids = deps.service.listStale(Number.isFinite(days) && days > 0 ? days : 90);
+        json(res, 200, { days: Number.isFinite(days) && days > 0 ? days : 90, count: ids.length, ids });
+        return;
+      }
+      if (method === 'POST' && route === '/cleanup') {
+        const body = await readJson(req);
+        const ids = Array.isArray(body.ids) ? (body.ids as unknown[]).filter((v): v is string => typeof v === 'string') : [];
+        let removed = 0;
+        for (const id of ids) {
+          const r = deps.service.removeMemory(id);
+          if (r.ok) removed += 1;
+        }
+        json(res, 200, { removed, requested: ids.length });
         return;
       }
       if (method === 'POST' && route === '/distill') {
@@ -330,6 +408,37 @@ export function createMnemosRouteHandler(deps: MnemosRouteDeps): (req: Req, res:
         if (method === 'GET' && route === '/git/history') {
           const id = url.searchParams.get('id') ?? undefined;
           json(res, 200, { history: await deps.gitStore.history(id) });
+          return;
+        }
+        if (method === 'GET' && route === '/git/show') {
+          const id = url.searchParams.get('id') ?? '';
+          const sha = url.searchParams.get('sha') ?? '';
+          if (!id || !sha) {
+            json(res, 400, { error: 'id and sha are required' });
+            return;
+          }
+          json(res, 200, { id, sha, content: (await deps.gitStore.showAt(sha, id)) ?? null });
+          return;
+        }
+        if (method === 'POST' && route === '/git/rollback') {
+          const body = await readJson(req);
+          const id = typeof body.id === 'string' ? body.id : '';
+          const sha = typeof body.sha === 'string' ? body.sha : '';
+          if (!id || !sha) {
+            json(res, 400, { ok: false, reason: 'id and sha are required' });
+            return;
+          }
+          json(res, 200, await deps.gitStore.rollback(id, sha));
+          return;
+        }
+        if (method === 'POST' && route === '/git/restore') {
+          const body = await readJson(req);
+          const id = typeof body.id === 'string' ? body.id : '';
+          if (!id) {
+            json(res, 400, { ok: false, reason: 'id is required' });
+            return;
+          }
+          json(res, 200, await deps.gitStore.restoreDeleted(id));
           return;
         }
         if (method === 'POST' && route === '/git/push') {

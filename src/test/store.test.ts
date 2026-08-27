@@ -89,6 +89,21 @@ describe('memory store', () => {
     store.close();
   });
 
+  it('filters by type and lists stale/deleted memories', () => {
+    const store = openMemoryStore(':memory:');
+    const old = mem({ id: 'old1', type: 'project_fact', updatedAt: '2024-01-01T00:00:00.000Z' } as Partial<MemoryInput> & { id: string; updatedAt: string });
+    store.addMemory(old);
+    store.addMemory(mem({ id: 'pref1', type: 'preference', updatedAt: new Date().toISOString() } as Partial<MemoryInput> & { id: string; updatedAt: string }));
+    expect(store.listSummaries('workspace', 'my-ws', 'active', 'preference')).toHaveLength(1);
+    expect(store.listSummaries('workspace', 'my-ws', 'active', 'project_fact')).toHaveLength(1);
+    expect(store.listStale(30)).toEqual(['old1']);
+    store.setMemoryStatus('pref1', 'deleted');
+    const deletedIds = store.listDeleted().map((r) => r.id);
+    expect(deletedIds).toContain('pref1');
+    expect(deletedIds).not.toContain('old1');
+    store.close();
+  });
+
   it('round-trips rules and approvals', () => {
     const store = openMemoryStore(':memory:');
     const rule: Rule = {
