@@ -246,7 +246,7 @@ describe('pre-step injection', () => {
     expect(texts.join('\n')).toContain('Use pnpm');
   });
 
-  it('injects only once per turn (later steps do not repeat the projection)', async () => {
+  it('injects once per session, frozen until the store changes', async () => {
     const { ctx, listeners } = fakeContext();
     const { service } = makeService();
     service.add(
@@ -263,11 +263,12 @@ describe('pre-step injection', () => {
       },
       'human',
     );
+    let revision = 0;
     registerInjection(ctx, service, () => ({
       ...defaultConfig(),
       injectMaxBytes: 4096,
       injectMinHits: 0,
-    }));
+    }), () => revision);
     const hook = listeners.find((l) => l.name === 'agent/pre-step')!;
     const listener = hook.listener as (
       payload: unknown,
@@ -277,12 +278,19 @@ describe('pre-step injection', () => {
     const first = await listener(payload, async () => ({ kind: 'enter', messages: [] }));
     const injected = first.messages.length;
     expect(injected).toBeGreaterThan(0);
-    // Same turn, later step: no further injection.
+    // Later step in the same session: frozen, no re-injection.
     const second = await listener({ ...payload, step: 2 }, async () => ({ kind: 'enter', messages: [] }));
     expect(second.messages.length).toBe(0);
-    // New turn: injects again.
+    // Later turn in the same session: still frozen.
     const third = await listener({ ...payload, turn: 8, step: 0 }, async () => ({ kind: 'enter', messages: [] }));
-    expect(third.messages.length).toBe(injected);
+    expect(third.messages.length).toBe(0);
+    // A new session injects again.
+    const fourth = await listener({ ...payload, agent: { id: 'a1', session: { id: 's2' } }, turn: 1, step: 0 }, async () => ({ kind: 'enter', messages: [] }));
+    expect(fourth.messages.length).toBe(injected);
+    // A store write bumps the revision: the frozen session re-injects.
+    revision += 1;
+    const fifth = await listener({ ...payload, turn: 9, step: 0 }, async () => ({ kind: 'enter', messages: [] }));
+    expect(fifth.messages.length).toBe(injected);
   });
 
   it('skips injection when the injection master switch or plugin master switch is off', async () => {

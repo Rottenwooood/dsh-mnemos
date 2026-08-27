@@ -177,6 +177,10 @@ export function apply(ctx: Context, raw: Partial<Config> = {}): void {
 
   let gitStore: GitStore | undefined;
   let gitCommitTimer: ReturnType<typeof setTimeout> | undefined;
+  // Bumped on every write through the service; the frozen per-session injection
+  // re-injects on the next step when this changes (a newly written or approved
+  // memory shows up mid-session instead of waiting for the next session).
+  let storeRevision = 0;
   const scheduleGitCommit = (): void => {
     if (gitStore === undefined) return;
     if (gitCommitTimer !== undefined) clearTimeout(gitCommitTimer);
@@ -190,7 +194,11 @@ export function apply(ctx: Context, raw: Partial<Config> = {}): void {
 
   mkdirSync(dirname(config.dbPath), { recursive: true });
   const store = openMemoryStore(config.dbPath);
-  const service = createMemoryService(store, createSensitiveDetector(), gateFrom(config), scheduleGitCommit);
+  const onStoreWrite = (): void => {
+    storeRevision += 1;
+    scheduleGitCommit();
+  };
+  const service = createMemoryService(store, createSensitiveDetector(), gateFrom(config), onStoreWrite);
 
   ctx.effect(() => () => {
     store.close();
@@ -301,8 +309,8 @@ export function apply(ctx: Context, raw: Partial<Config> = {}): void {
   registerTools(ctx, service);
   registerCommand(ctx, commandDeps);
   registerHooks(ctx, collector);
-  registerInjection(ctx, service, getConfig);
-  registerRuleInjection(ctx, service, getConfig);
+  registerInjection(ctx, service, getConfig, () => storeRevision);
+  registerRuleInjection(ctx, service, getConfig, () => storeRevision);
   registerBackfillJob(ctx, service, getConfig);
   registerMnemosRoutes(ctx, {
     store,

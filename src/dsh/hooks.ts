@@ -93,21 +93,32 @@ export function registerHooks(ctx: Context, collector: SignalCollector): void {
 }
 
 /**
- * Cold/hot layered injection (M1): on each agent step, build the hot-layer
- * projection under the hard byte budget and append it as one injected
- * UserMessage, returning `{ kind: 'enter', messages: [...] }` per the real
- * `agent/pre-step` contract (payload + next waterfall).
+ * Cold/hot layered injection (M1): build the hot-layer projection under the
+ * hard byte budget and append it as one injected UserMessage, returning
+ * `{ kind: 'enter', messages: [...] }` per the real `agent/pre-step` contract
+ * (payload + next waterfall).
+ *
+ * The projection is frozen per session: it is injected once at the first
+ * pre-step of a session and not repeated on later turns or tool-loop steps
+ * (memory-standard: a session sees one snapshot; writes land next session).
+ * `getRevision()` bumps when the store changes, so a freshly written or
+ * approved memory re-injects on the next step instead of waiting for the next
+ * session.
  */
-export function registerInjection(ctx: Context, service: MemoryService, getConfig: () => Config): void {
-  // Inject once per (session, turn): a turn's later steps (tool loops) would
-  // otherwise repeat the same projection on every model request, wasting tokens.
-  const lastTurnBySession = new Map<string, number>();
+export function registerInjection(
+  ctx: Context,
+  service: MemoryService,
+  getConfig: () => Config,
+  getRevision: () => number = () => 0,
+): void {
+  const injectedRevision = new Map<string, number>();
   ctx.on('agent/pre-step', async (payload: PreStepPayload, next) => {
     const decision = (await next()) as PreStepDecision;
     if (decision.kind === 'reject') return decision;
     payload.signal.throwIfAborted();
     const sessionId = (payload.agent as { session?: { id?: string } })?.session?.id;
-    if (sessionId !== undefined && lastTurnBySession.get(sessionId) === payload.turn) {
+    const revision = getRevision();
+    if (sessionId !== undefined && injectedRevision.get(sessionId) === revision) {
       return decision;
     }
     try {
@@ -121,8 +132,10 @@ export function registerInjection(ctx: Context, service: MemoryService, getConfi
         scope: 'workspace',
         minHits: config.injectMinHits,
       });
+      // Mark the session as served at this revision even when nothing was
+      // injectable, so an empty store does not re-scan on every step.
+      if (sessionId !== undefined) injectedRevision.set(sessionId, revision);
       if (injection.injectedCount > 0) {
-        if (sessionId !== undefined) lastTurnBySession.set(sessionId, payload.turn);
         // A memory that actually reached a request counts as used: record the
         // hit so cross-session frequency is real (and satisfies injectMinHits
         // on later sessions) instead of staying 0 forever.
@@ -143,20 +156,26 @@ export function registerInjection(ctx: Context, service: MemoryService, getConfi
 }
 
 /**
- * Rule effect (M2): append approved rules as one injected UserMessage on the
- * step, so the model sees the standing preferences the user approved. The
- * real `agent/request` waterfall only configures the model call (no
- * system/messages), so rules inject here, beside the memory projection.
+ * Rule effect (M2): append approved rules as one injected UserMessage, so the
+ * model sees the standing preferences the user approved. The real
+ * `agent/request` waterfall only configures the model call (no
+ * system/messages), so rules inject here, beside the memory projection. Rules
+ * are frozen per session like the memory projection.
  */
-export function registerRuleInjection(ctx: Context, service: MemoryService, getConfig: () => Config): void {
-  // Same turn-level dedup as memory injection: rules are static per turn.
-  const lastTurnBySession = new Map<string, number>();
+export function registerRuleInjection(
+  ctx: Context,
+  service: MemoryService,
+  getConfig: () => Config,
+  getRevision: () => number = () => 0,
+): void {
+  const injectedRevision = new Map<string, number>();
   ctx.on('agent/pre-step', async (payload: PreStepPayload, next) => {
     const decision = (await next()) as PreStepDecision;
     if (decision.kind === 'reject') return decision;
     payload.signal.throwIfAborted();
     const sessionId = (payload.agent as { session?: { id?: string } })?.session?.id;
-    if (sessionId !== undefined && lastTurnBySession.get(sessionId) === payload.turn) {
+    const revision = getRevision();
+    if (sessionId !== undefined && injectedRevision.get(sessionId) === revision) {
       return decision;
     }
     try {
@@ -164,8 +183,8 @@ export function registerRuleInjection(ctx: Context, service: MemoryService, getC
         return decision;
       }
       const rules = service.listRules('approved');
+      if (sessionId !== undefined) injectedRevision.set(sessionId, revision);
       if (rules.length > 0) {
-        if (sessionId !== undefined) lastTurnBySession.set(sessionId, payload.turn);
         const text = `# dsh-mnemos 生效规则\n${rules.map((r) => `- [${r.kind}] ${r.text}`).join('\n')}`;
         return { kind: 'enter', messages: [...decision.messages, makeUserMessage(text)] };
       }
