@@ -199,40 +199,39 @@ function userTextOf(messages: unknown[]): string {
 }
 
 /**
- * Rule effect (M2): append approved rules as one injected UserMessage, so the
- * model sees the standing preferences the user approved. The real
- * `agent/request` waterfall only configures the model call (no
- * system/messages), so rules inject here, beside the memory projection. Rules
- * are frozen per session like the memory projection.
+ * Protocol effect: inject active `protocol` memories (environment / tool-
+ * calling conventions, e.g. sandbox rules, background-job usage) once per
+ * session at the first pre-step. Protocol memories are real memories — visible
+ * in the console, counted in stats — and this channel makes them always present
+ * before the agent acts. Rules are NOT injected; they are the skill-promotion
+ * pipeline only.
  */
-export function registerRuleInjection(
+export function registerProtocolInjection(
   ctx: Context,
   service: MemoryService,
   getConfig: () => Config,
-  getRevision: () => number = () => 0,
 ): void {
-  const injectedRevision = new Map<string, number>();
+  const injectedSessions = new Set<string>();
   ctx.on('agent/pre-step', async (payload: PreStepPayload, next) => {
     const decision = (await next()) as PreStepDecision;
     if (decision.kind === 'reject') return decision;
     payload.signal.throwIfAborted();
     const sessionId = (payload.agent as { session?: { id?: string } })?.session?.id;
-    const revision = getRevision();
-    if (sessionId !== undefined && injectedRevision.get(sessionId) === revision) {
+    if (sessionId !== undefined && injectedSessions.has(sessionId)) {
       return decision;
     }
     try {
-      if (!getConfig().enabled || !getConfig().rulesInjectEnabled) {
+      if (!getConfig().enabled || !getConfig().protocolInjectEnabled) {
         return decision;
       }
-      const rules = service.listRules('approved');
-      if (sessionId !== undefined) injectedRevision.set(sessionId, revision);
-      if (rules.length > 0) {
-        const text = `# dsh-mnemos 生效规则\n${rules.map((r) => `- [${r.kind}] ${r.text}`).join('\n')}`;
+      const protos = service.listActive().filter((m) => m.type === 'protocol').slice(0, 8);
+      if (sessionId !== undefined) injectedSessions.add(sessionId);
+      if (protos.length > 0) {
+        const text = `# dsh-mnemos 环境约定\n${protos.map((p) => `- ${p.summary}`).join('\n')}`;
         return { kind: 'enter', messages: [...decision.messages, makeUserMessage(text)] };
       }
     } catch {
-      // rule injection is best-effort; never fail a request
+      // protocol injection is best-effort; never fail a request
     }
     return decision;
   });

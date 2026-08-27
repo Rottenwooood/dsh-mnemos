@@ -55,7 +55,7 @@ export const MNEMOS_SETTINGS_FIELDS: MnemosSettingsField[] = [
   { key: 'backfillEnabled', kind: 'boolean', label: '启动时回填历史会话日志' },
   { key: 'importCaller', kind: 'string', label: '导入写入方（human=直接提交，model=进审批）' },
   { key: 'skillsDir', kind: 'string', label: '规则提升为技能文件的目录' },
-  { key: 'rulesInjectEnabled', kind: 'boolean', label: '向模型注入已批准规则' },
+  { key: 'protocolInjectEnabled', kind: 'boolean', label: '每会话注入环境/工具约定（protocol 记忆）' },
   { key: 'distillAuto', kind: 'boolean', label: '自动提炼（关=纯手动；开=每 N 次用户输入自动提炼）' },
   { key: 'distillEveryNTurns', kind: 'number', label: '自动提炼间隔（次用户输入）' },
   { key: 'distillWindow', kind: 'number', label: '单次提炼缓冲消息数' },

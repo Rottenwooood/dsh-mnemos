@@ -24,7 +24,7 @@ import { createSystemGitBackend } from './domain/git/system-git.js';
 import { createIsomorphicGitBackend } from './domain/git/isomorphic-git.js';
 import { registerTools } from './dsh/tools.js';
 import { registerCommand, CommandDeps } from './dsh/command.js';
-import { registerHooks, registerInjection, registerRuleInjection, SignalCollector } from './dsh/hooks.js';
+import { registerHooks, registerInjection, registerProtocolInjection, SignalCollector } from './dsh/hooks.js';
 import { createLlmFromContext } from './dsh/llm-adapter.js';
 import { installMnemosSettings } from './dsh/settings.js';
 import { registerMnemosRoutes } from './dsh/routes.js';
@@ -290,7 +290,7 @@ export function apply(ctx: Context, raw: Partial<Config> = {}): void {
   registerCommand(ctx, commandDeps);
   registerHooks(ctx, collector);
   registerInjection(ctx, service, getConfig);
-  registerRuleInjection(ctx, service, getConfig, () => 0);
+  registerProtocolInjection(ctx, service, getConfig);
   registerBackfillJob(ctx, collector, getConfig);
   registerMnemosRoutes(ctx, {
     store,
