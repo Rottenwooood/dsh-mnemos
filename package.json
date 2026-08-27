@@ -8,10 +8,14 @@
     "node": ">=22.19.0"
   },
   "dsh": {
-    "bundle": "./cordis.patch.yml"
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    }
   },
   "exports": {
-    ".": "./src/index.ts"
+    ".": "./src/index.ts",
+    "./cordis.patch.yml": "./cordis.patch.yml",
+    "./package.json": "./package.json"
   },
   "scripts": {
     "typecheck": "tsc --noEmit",
@@ -19,7 +23,9 @@
     "build": "tsc -p tsconfig.build.json"
   },
   "peerDependencies": {
-    "@deepseek-ai/cordis": "^4.0.1"
+    "@deepseek-ai/cordis": "^4.0.1",
+    "@deepseek-ai/dsh-settings": ">=0.1.0-rc.8 <0.2.0",
+    "@deepseek-ai/schemastery": ">=3.0.0"
   },
   "devDependencies": {
     "@deepseek-ai/cordis": "^4.0.1",

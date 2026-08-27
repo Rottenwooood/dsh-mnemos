@@ -67,9 +67,10 @@ export function registerHooks(ctx: Context, collector: SignalCollector): void {
  * `agent.inject()` — no second API call. The waterfall always delegates with
  * next().
  */
-export function registerInjection(ctx: Context, service: MemoryService, config: Config): void {
+export function registerInjection(ctx: Context, service: MemoryService, getConfig: () => Config): void {
   ctx.on('agent/pre-step', async (agent, _input, next) => {
     try {
+      const config = getConfig();
       const injection = recallHot(service, {
         maxBytes: config.injectMaxBytes,
         limit: config.injectLimit,
@@ -91,12 +92,12 @@ export function registerInjection(ctx: Context, service: MemoryService, config: 
  * the model sees the standing preferences/instructions the user approved. The
  * waterfall always delegates with next().
  */
-export function registerRuleInjection(ctx: Context, service: MemoryService, config: Config): void {
-  if (!config.rulesInjectEnabled) {
-    return;
-  }
+export function registerRuleInjection(ctx: Context, service: MemoryService, getConfig: () => Config): void {
   ctx.on('agent/request', async (agent, _request, next) => {
     try {
+      if (!getConfig().rulesInjectEnabled) {
+        return next();
+      }
       const rules = service.listRules('approved');
       if (rules.length > 0) {
         agent.inject(

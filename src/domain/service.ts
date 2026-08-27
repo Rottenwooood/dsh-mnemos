@@ -79,6 +79,8 @@ export interface RuleStateResult {
 
 export interface MemoryService {
   readonly config: GateConfig;
+  /** Replace the gate in place (live settings re-apply). */
+  updateGate(next: GateConfig): void;
   add(input: MemoryInput, caller: Caller, forcePropose?: boolean): WriteResult;
   approve(id: number, decision: 'approve' | 'reject', edited?: MemoryInput): ApproveResult;
   proposeRule(rule: Rule, caller: Caller): RuleWriteResult;
@@ -96,6 +98,7 @@ export function createMemoryService(
   detector: SensitiveDetector,
   config: GateConfig = DEFAULT_GATE,
 ): MemoryService {
+  let current = config;
   const now = () => new Date().toISOString();
 
   function audit(
@@ -136,20 +139,20 @@ export function createMemoryService(
     opts: { skipDedup?: boolean } = {},
   ): { ok: true } | { ok: false; reason: string; reasons?: string[] } {
     const bytes = Buffer.byteLength(`${input.topic}\n${input.summary}\n${input.detail ?? ''}`, 'utf8');
-    if (bytes > config.maxBytesPerEntry) {
+    if (bytes > current.maxBytesPerEntry) {
       return { ok: false, reason: 'budget' };
     }
-    if (store.countActive() >= config.maxEntries) {
+    if (store.countActive() >= current.maxEntries) {
       return { ok: false, reason: 'budget-full' };
     }
     const reasons = detector.detect(`${input.topic} ${input.summary} ${input.detail ?? ''}`);
     if (reasons.length > 0) {
       return { ok: false, reason: 'sensitive', reasons };
     }
-    if (config.blacklist.includes(input.writer)) {
+    if (current.blacklist.includes(input.writer)) {
       return { ok: false, reason: 'blacklisted' };
     }
-    if (caller === 'model' && input.scope === 'global' && !config.allowModelGlobalWrite) {
+    if (caller === 'model' && input.scope === 'global' && !current.allowModelGlobalWrite) {
       return { ok: false, reason: 'scope' };
     }
     if (!opts.skipDedup && store.exactTopicExists(input)) {
@@ -163,10 +166,10 @@ export function createMemoryService(
       return true;
     }
     return (
-      config.autoApprove &&
+      current.autoApprove &&
       input.type === 'project_fact' &&
       input.scope === 'workspace' &&
-      input.confidence >= config.autoApproveConfidence
+      input.confidence >= current.autoApproveConfidence
     );
   }
 
@@ -185,7 +188,7 @@ export function createMemoryService(
     if (reasons.length > 0) {
       return { ok: false, reason: 'sensitive' };
     }
-    if (config.blacklist.includes(rule.proposedBy)) {
+    if (current.blacklist.includes(rule.proposedBy)) {
       return { ok: false, reason: 'blacklisted' };
     }
     const dup = store.listRules('proposed').find((r) => r.kind === rule.kind && r.text === rule.text);
@@ -196,7 +199,13 @@ export function createMemoryService(
   }
 
   return {
-    config,
+    get config() {
+      return current;
+    },
+
+    updateGate(next) {
+      current = next;
+    },
 
     add(input, caller, forcePropose = false) {
       const check = programChecks(input, caller);

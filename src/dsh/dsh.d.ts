@@ -19,6 +19,7 @@ import type {
 import type { MemoryService } from '../domain/service.js';
 import type { MemoryBus, BusEvent } from '../domain/bus.js';
 import type { GitStore } from '../domain/gitstore.js';
+import type { SettingsServiceFace } from './settings.js';
 
 declare module '@deepseek-ai/cordis' {
   interface Context {
@@ -35,6 +36,8 @@ declare module '@deepseek-ai/cordis' {
     mnemosGit?: GitStore;
     /** The harness LLM seam, when an adapter is mounted. */
     llm?: DshLlm;
+    /** The harness user-settings seam, when dsh-settings is mounted. */
+    settings?: SettingsServiceFace;
     /** Present only when the optional dsh-better-sidebar plugin is mounted. */
     betterSidebar?: unknown;
   }

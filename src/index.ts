@@ -26,6 +26,7 @@ import { registerTools } from './dsh/tools.js';
 import { registerCommand, CommandDeps } from './dsh/command.js';
 import { registerHooks, registerInjection, registerRuleInjection, SignalCollector } from './dsh/hooks.js';
 import { createLlmFromContext } from './dsh/llm-adapter.js';
+import { installMnemosSettings } from './dsh/settings.js';
 import { Llm } from './domain/llm.js';
 
 export const name = 'dsh-mnemos';
@@ -52,15 +53,16 @@ function listJsonlFiles(dir: string): string[] {
   return out;
 }
 
-export function registerBackfillJob(ctx: Context, service: MemoryService, config: Config): void {
-  if (!config.backfillEnabled || config.sessionLogDirs.length === 0) {
-    return;
-  }
-  const checkpointPath = join(dirname(config.dbPath), 'backfill-checkpoint.json');
+export function registerBackfillJob(ctx: Context, service: MemoryService, getConfig: () => Config): void {
   ctx.effect(() =>
     ctx.jobs.register({
       name: 'mnemos-backfill',
       run: async () => {
+        const config = getConfig();
+        if (!config.backfillEnabled || config.sessionLogDirs.length === 0) {
+          return { scannedFiles: 0, candidates: 0, committed: 0, proposed: 0, denied: 0 };
+        }
+        const checkpointPath = join(dirname(config.dbPath), 'backfill-checkpoint.json');
         const backfill = createBackfillService(service, {
           checkpoint: createFileCheckpoint(checkpointPath),
           caller: config.importCaller,
@@ -92,13 +94,14 @@ export function registerBackfillJob(ctx: Context, service: MemoryService, config
 
 export function registerScheduledDistill(
   ctx: Context,
-  deps: { llm: Llm; service: MemoryService; config: Config; collector: SignalCollector },
+  deps: { llm: Llm; service: MemoryService; getConfig: () => Config; collector: SignalCollector },
 ): void {
-  const { llm, service, config, collector } = deps;
+  const { llm, service, getConfig, collector } = deps;
   const logger = ctx.logger('mnemos');
-  const cursorStore = createJsonFileStore<DistillCursor>(join(dirname(config.dbPath), 'distill-cursor.json'));
+  const cursorStore = createJsonFileStore<DistillCursor>(join(dirname(getConfig().dbPath), 'distill-cursor.json'));
   let cursor = cursorStore.read();
   const run = async (): Promise<void> => {
+    const config = getConfig();
     const messages = collector.drain();
     if (messages.length === 0) {
       return;
@@ -113,7 +116,7 @@ export function registerScheduledDistill(
     );
   };
   ctx.effect(() => {
-    const id = setInterval(run, config.distillIntervalMinutes * 60_000);
+    const id = setInterval(run, getConfig().distillIntervalMinutes * 60_000);
     return () => clearInterval(id);
   });
 }
@@ -121,7 +124,7 @@ export function registerScheduledDistill(
 export function registerGitJobs(
   ctx: Context,
   gitStore: GitStore,
-  config: Config,
+  getConfig: () => Config,
   logger: ReturnType<Context['logger']>,
 ): void {
   ctx.effect(() => {
@@ -131,10 +134,10 @@ export function registerGitJobs(
       } catch (err) {
         logger.warn(`git snapshot failed: ${err instanceof Error ? err.message : String(err)}`);
       }
-    }, Math.max(config.syncIntervalMinutes, 5) * 60_000);
+    }, Math.max(getConfig().syncIntervalMinutes, 5) * 60_000);
     return () => clearInterval(id);
   });
-  if (config.syncEnabled) {
+  if (getConfig().syncEnabled) {
     ctx.effect(() => {
       const id = setInterval(async () => {
         try {
@@ -150,14 +153,15 @@ export function registerGitJobs(
         } catch (err) {
           logger.warn(`sync failed: ${err instanceof Error ? err.message : String(err)}`);
         }
-      }, config.syncIntervalMinutes * 60_000);
+      }, getConfig().syncIntervalMinutes * 60_000);
       return () => clearInterval(id);
     });
   }
 }
 
 export function apply(ctx: Context, raw: Partial<Config> = {}): void {
-  const config: Config = { ...defaultConfig(), ...raw };
+  let config: Config = { ...defaultConfig(), ...raw };
+  const getConfig = () => config;
   const logger = ctx.logger('mnemos');
 
   mkdirSync(dirname(config.dbPath), { recursive: true });
@@ -171,6 +175,15 @@ export function apply(ctx: Context, raw: Partial<Config> = {}): void {
 
   const bus = createMemoryBus(service, store, (event) => ctx.emit('mnemos/memory', event));
   ctx.effect(() => ctx.provide('mnemosBus', bus));
+
+  // The real DSH settings page: register the `mnemos` namespace and re-apply
+  // the gate live on every resolved change. Structural paths (dbPath, git
+  // repo) still need a restart, which the form labels state.
+  installMnemosSettings(ctx, config, (next) => {
+    config = next;
+    service.updateGate(gateFrom(next));
+    logger.info(`mnemos settings updated (gate re-applied, dbPath=${next.dbPath})`);
+  });
 
   let gitStore: GitStore | undefined;
   if (config.gitVersioning) {
@@ -186,7 +199,7 @@ export function apply(ctx: Context, raw: Partial<Config> = {}): void {
     });
     void gitStore.ensure().catch((err) => logger.warn(`git init failed: ${String(err)}`));
     ctx.effect(() => ctx.provide('mnemosGit', gitStore));
-    registerGitJobs(ctx, gitStore, config, logger);
+    registerGitJobs(ctx, gitStore, getConfig, logger);
   }
 
   const llm = createLlmFromContext(ctx);
@@ -206,11 +219,11 @@ export function apply(ctx: Context, raw: Partial<Config> = {}): void {
   registerTools(ctx, service);
   registerCommand(ctx, commandDeps);
   registerHooks(ctx, collector);
-  registerInjection(ctx, service, config);
-  registerRuleInjection(ctx, service, config);
-  registerBackfillJob(ctx, service, config);
+  registerInjection(ctx, service, getConfig);
+  registerRuleInjection(ctx, service, getConfig);
+  registerBackfillJob(ctx, service, getConfig);
   if (config.distillAuto && llm) {
-    registerScheduledDistill(ctx, { llm, service, config, collector });
+    registerScheduledDistill(ctx, { llm, service, getConfig, collector });
   }
 
   logger.info(`dsh-mnemos ready at ${config.dbPath}`);

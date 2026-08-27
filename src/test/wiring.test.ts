@@ -40,6 +40,11 @@ function fakeContext() {
         return () => true;
       },
     },
+    jobs: {
+      register() {
+        return () => true;
+      },
+    },
     effect(fn: () => unknown) {
       effects.push(fn);
       const disposer = fn();
@@ -222,11 +227,11 @@ describe('pre-step injection', () => {
     if (added.memory) {
       service.recordHit(added.memory.id, 'other-session');
     }
-    registerInjection(ctx, service, {
+    registerInjection(ctx, service, () => ({
       ...defaultConfig(),
       injectMaxBytes: 4096,
       injectMinHits: 0,
-    });
+    }));
     const hook = listeners.find((l) => l.name === 'agent/pre-step')!;
     const inject = vi.fn();
     const delegated = await hook.listener({ inject } as never, {}, async () => 'delegated');
@@ -252,7 +257,7 @@ describe('rule injection (agent/request)', () => {
       'model',
     );
     service.approve(proposed.approvalId!, 'approve');
-    registerRuleInjection(ctx, service, defaultConfig());
+    registerRuleInjection(ctx, service, () => defaultConfig());
     const hook = listeners.find((l) => l.name === 'agent/request')!;
     const inject = vi.fn();
     const delegated = await hook.listener({ inject } as never, {}, async () => 'delegated');
