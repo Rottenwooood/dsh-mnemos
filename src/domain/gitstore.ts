@@ -123,6 +123,7 @@ export function createGitStore(opts: GitStoreOptions): GitStore {
         topic: parsed.topic ?? existing.topic,
         summary: parsed.summary || existing.summary,
         detail: parsed.detail ?? existing.detail,
+        keywords: parsed.keywords,
         confidence: parsed.confidence ?? existing.confidence,
       });
       store.insertAudit({

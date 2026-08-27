@@ -37,6 +37,7 @@ export function renderMemoryFile(memory: Memory): string {
     `topic: ${memory.topic}`,
     `status: ${memory.status}`,
     `confidence: ${memory.confidence}`,
+    `keywords: ${(memory.keywords ?? []).join(', ')}`,
     `source: ${memory.source}`,
     `writer: ${memory.writer}`,
     `created_at: ${memory.createdAt}`,
@@ -103,6 +104,10 @@ export function parseMemoryFile(text: string): Partial<Memory> | undefined {
     topic: meta.topic ?? '',
     summary,
     detail: detail || undefined,
+    keywords: (meta.keywords ?? '')
+      .split(',')
+      .map((k) => k.trim())
+      .filter(Boolean),
     confidence: Number(meta.confidence ?? 1),
     source: (meta.source ?? 'manual') as Memory['source'],
     writer: meta.writer ?? 'unknown',
@@ -210,6 +215,7 @@ export function applyMirrorToStore(store: MemoryStore, mirrorDir: string): { app
         topic: parsed.topic ?? existing.topic,
         summary: parsed.summary || existing.summary,
         detail: parsed.detail ?? existing.detail,
+        keywords: parsed.keywords,
         confidence: parsed.confidence ?? existing.confidence,
       });
     } else {

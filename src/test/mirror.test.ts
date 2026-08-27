@@ -37,13 +37,16 @@ function make() {
 
 describe('markdown mirror', () => {
   it('round-trips render -> parse', () => {
-    const m = mem();
-    const parsed = parseMemoryFile(renderMemoryFile(m))!;
+    const m = mem({ keywords: ['pnpm', 'install', '部署到 us-east-1'] });
+    const text = renderMemoryFile(m);
+    expect(text).toContain('keywords: pnpm, install, 部署到 us-east-1');
+    const parsed = parseMemoryFile(text)!;
     expect(parsed.id).toBe(m.id);
     expect(parsed.topic).toBe('build tool');
     expect(parsed.summary).toContain('pnpm');
     expect(parsed.detail).toContain('vitest');
     expect(parsed.scope).toBe('workspace');
+    expect(parsed.keywords).toEqual(['pnpm', 'install', '部署到 us-east-1']);
   });
 
   it('derives a deterministic unique file name per memory', () => {
