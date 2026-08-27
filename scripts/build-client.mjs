@@ -37,7 +37,7 @@ await build({
   platform: 'browser',
   target: 'es2020',
   jsx: 'automatic',
-  loader: { '.tsx': 'tsx', '.ts': 'ts', '.js': 'js' },
+  loader: { '.tsx': 'tsx', '.ts': 'ts', '.js': 'js', '.css': 'text' },
   external: ['react', 'react/jsx-runtime', 'react-dom', 'react-dom/client'],
   outfile: OUT,
   write: true,

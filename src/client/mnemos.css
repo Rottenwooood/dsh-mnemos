@@ -1,0 +1,185 @@
+/* dsh-mnemos settings page — styled with the harness design tokens
+ * (--dsw-alias-*) so it matches the built-in Models / Plugins / General
+ * pages. Plain classes (not CSS modules): the client bundle injects this
+ * text into a <style> element at apply time. */
+
+.mnemos-section {
+  padding: 20px 24px;
+}
+
+.mnemos-heading {
+  font-size: 16px;
+  font-weight: 600;
+  line-height: 1.5;
+  margin: 0;
+  color: var(--dsw-alias-label-primary);
+}
+
+.mnemos-intro {
+  font-size: 13px;
+  line-height: 1.6;
+  margin: 4px 0 16px;
+  color: var(--dsw-alias-label-secondary);
+}
+
+.mnemos-stat {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  border-radius: 999px;
+  padding: 3px 10px;
+  font-size: 12px;
+  line-height: 18px;
+  background: var(--dsw-alias-bg-module-platform);
+  color: var(--dsw-alias-label-secondary);
+}
+
+.mnemos-fields {
+  margin-top: 8px;
+}
+
+.mnemos-field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 12px 0;
+}
+
+.mnemos-field + .mnemos-field {
+  border-top: 1px solid var(--dsw-alias-border-l2);
+}
+
+.mnemos-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.mnemos-label {
+  flex: 1;
+  min-width: 0;
+  font-size: 13px;
+  font-weight: 500;
+  line-height: 1.5;
+  color: var(--dsw-alias-label-primary);
+}
+
+.mnemos-badges {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.mnemos-badge {
+  border-radius: 999px;
+  padding: 1px 8px;
+  font-size: 11px;
+  line-height: 17px;
+  white-space: nowrap;
+  font-weight: 500;
+  background: var(--dsw-alias-bg-module-platform);
+  color: var(--dsw-alias-label-secondary);
+}
+
+.mnemos-reset {
+  border: none;
+  background: none;
+  padding: 0;
+  font: inherit;
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--dsw-alias-label-secondary);
+  cursor: pointer;
+}
+
+.mnemos-reset:hover:not(:disabled) {
+  color: var(--dsw-alias-label-primary);
+}
+
+.mnemos-reset:disabled {
+  cursor: default;
+}
+
+.mnemos-input {
+  height: 32px;
+  padding: 0 12px;
+  border: 1px solid var(--dsw-alias-border-l2);
+  border-radius: 8px;
+  background: var(--dsw-alias-bg-layer-3);
+  font: inherit;
+  font-size: 13px;
+  line-height: 1.5;
+  color: var(--dsw-alias-label-primary);
+  box-sizing: border-box;
+  width: 100%;
+}
+
+.mnemos-input:focus {
+  outline: none;
+  border-color: var(--dsw-alias-brand-primary);
+}
+
+.mnemos-input:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.mnemos-check {
+  width: 16px;
+  height: 16px;
+  accent-color: var(--dsw-alias-brand-primary);
+  cursor: pointer;
+}
+
+.mnemos-hint {
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--dsw-alias-label-tertiary);
+}
+
+.mnemos-note {
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--dsw-alias-label-secondary);
+  margin-top: 8px;
+}
+
+.mnemos-button {
+  display: inline-flex;
+  align-items: center;
+  height: 32px;
+  padding: 0 14px;
+  border: 1px solid var(--dsw-alias-border-l2);
+  border-radius: 8px;
+  background: var(--dsw-alias-bg-layer-3);
+  font: inherit;
+  font-size: 13px;
+  line-height: 1.5;
+  color: var(--dsw-alias-label-primary);
+  cursor: pointer;
+}
+
+.mnemos-button:hover:not(:disabled) {
+  color: var(--dsw-alias-brand-primary);
+  border-color: var(--dsw-alias-border-l2);
+}
+
+.mnemos-button:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.mnemos-footer {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  border-top: 1px solid var(--dsw-alias-border-l2);
+  margin-top: 8px;
+  padding-top: 14px;
+}
+
+.mnemos-error {
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--dsw-alias-label-error);
+}
