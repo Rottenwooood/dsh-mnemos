@@ -38,7 +38,7 @@ await build({
   target: 'es2020',
   jsx: 'automatic',
   loader: { '.tsx': 'tsx', '.ts': 'ts', '.js': 'js', '.css': 'text' },
-  external: ['react', 'react/jsx-runtime', 'react-dom', 'react-dom/client'],
+  external: ['react', 'react/jsx-runtime', 'react-dom', 'react-dom/client', '@deepseek-ai/dsh-client-ui-primitives'],
   outfile: OUT,
   write: true,
 })

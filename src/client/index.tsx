@@ -18,6 +18,7 @@
  */
 
 import { useState, useEffect, useCallback, useSyncExternalStore, Component, type ReactNode } from 'react'
+import { IconDataOutline16 } from '@deepseek-ai/dsh-client-ui-primitives'
 import css from './mnemos.css'
 
 /** JSON result of one /mnemos/api call. */
@@ -959,6 +960,7 @@ export function apply(ctx: unknown): void {
     id: 'mnemos:memory',
     title: '记忆',
     single: true,
+    icon: (size: number) => <IconDataOutline16 size={size} />,
     component: MnemosTab,
   })
   c.slots.inject('settings.section', () => {
