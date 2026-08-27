@@ -27,6 +27,8 @@ export interface Injection {
   text: string;
   injectedCount: number;
   droppedCount: number;
+  /** Ids of the memories that made it into the projection (for hit tracking). */
+  injectedIds: string[];
 }
 
 function toRanked(row: SummaryRow, score: number): RankedMemory {
@@ -60,6 +62,7 @@ export function buildInjection(ranked: RankedMemory[], maxBytes: number): Inject
   const header = '# dsh-mnemos\n';
   let text = header;
   let injected = 0;
+  const injectedIds: string[] = [];
   for (const m of ranked) {
     const line = `${projection(m)}\n`;
     if (Buffer.byteLength(text + line, 'utf8') > maxBytes) {
@@ -67,8 +70,9 @@ export function buildInjection(ranked: RankedMemory[], maxBytes: number): Inject
     }
     text += line;
     injected++;
+    injectedIds.push(m.id);
   }
-  return { text, injectedCount: injected, droppedCount: ranked.length - injected };
+  return { text, injectedCount: injected, droppedCount: ranked.length - injected, injectedIds };
 }
 
 function rowScore(row: SummaryRow, query: string): number {

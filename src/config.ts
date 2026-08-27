@@ -75,7 +75,7 @@ export function defaultConfig(): Config {
     allowModelGlobalWrite: false,
     blacklist: [],
     injectLimit: 8,
-    injectMinHits: 1,
+    injectMinHits: 0,
     injectMaxBytes: 2048,
     sessionLogDirs: [],
     backfillEnabled: true,

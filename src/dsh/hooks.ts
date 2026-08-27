@@ -112,6 +112,17 @@ export function registerInjection(ctx: Context, service: MemoryService, getConfi
         minHits: config.injectMinHits,
       });
       if (injection.injectedCount > 0) {
+        // A memory that actually reached a request counts as used: record the
+        // hit so cross-session frequency is real (and satisfies injectMinHits
+        // on later sessions) instead of staying 0 forever.
+        const sessionId = (payload.agent as { session?: { id?: string } })?.session?.id;
+        for (const id of injection.injectedIds) {
+          try {
+            service.recordHit(id, sessionId);
+          } catch {
+            // hit tracking is best-effort
+          }
+        }
         return { kind: 'enter', messages: [...decision.messages, makeUserMessage(injection.text)] };
       }
     } catch {
