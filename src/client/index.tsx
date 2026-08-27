@@ -79,11 +79,45 @@ interface MemoryRow {
   updatedAt: string
 }
 
+/** `/mnemos/api/usage` answer: ledger-derived cross-session stats. */
+interface UsageStats {
+  totalHits: number
+  distinctSessions: number
+  perMemory: Array<{ memoryId: string; hits: number; sessions: number; lastUsed: string | null }>
+  daily: Array<{ day: string; count: number }>
+}
+
+/** Last-30-days hit heatmap: one cell per day, intensity = hits/max. */
+function Heatmap({ daily }: { daily: Array<{ day: string; count: number }> }): ReactNode {
+  const max = Math.max(1, ...daily.map((d) => d.count))
+  return (
+    <div style={{ display: 'flex', gap: 2, margin: '6px 0', overflowX: 'auto' }}>
+      {daily.map((d) => {
+        const intensity = d.count === 0 ? 0 : 0.15 + 0.85 * (d.count / max)
+        return (
+          <div
+            key={d.day}
+            title={`${d.day}：${d.count} 次命中`}
+            style={{
+              width: 9,
+              height: 18,
+              borderRadius: 2,
+              flex: '0 0 auto',
+              background: d.count === 0 ? 'var(--dsw-alias-color-bg-secondary, #eee)' : `rgba(64, 158, 255, ${intensity})`,
+            }}
+          />
+        )
+      })}
+    </div>
+  )
+}
+
 /** The memory-console tab body (better-sidebar). */
 export function MnemosTab(): ReactNode {
   const stats = useJson<{ totalActive: number; pending: number; gate: { maxEntries: number } }>('/mnemos/api/stats')
   const pending = useJson<{ pending: PendingRow[] }>('/mnemos/api/pending')
   const memories = useJson<{ memories: MemoryRow[] }>('/mnemos/api/memories?scope=workspace')
+  const usage = useJson<UsageStats>('/mnemos/api/usage')
   const git = useJson<{ changed: string[] }>('/mnemos/api/git/status')
   const [search, setSearch] = useState('')
   const [notice, setNotice] = useState<{ kind: 'ok' | 'err'; text: string } | null>(null)
@@ -95,8 +129,9 @@ export function MnemosTab(): ReactNode {
     stats.reload()
     pending.reload()
     memories.reload()
+    usage.reload()
     git.reload()
-  }, [stats, pending, memories, git])
+  }, [stats, pending, memories, usage, git])
 
   // Keep the console current while the panel is open.
   useEffect(() => {
@@ -142,6 +177,8 @@ export function MnemosTab(): ReactNode {
     setEditingId(memory.id)
     setDraft(memory.summary)
   }
+
+  const usageByMemory = new Map((usage.data?.perMemory ?? []).map((u) => [u.memoryId, u]))
 
   const visible = (memories.data?.memories ?? [])
     .filter((m) => search.length === 0 || `${m.topic} ${m.summary}`.toLowerCase().includes(search.toLowerCase()))
@@ -192,6 +229,20 @@ export function MnemosTab(): ReactNode {
       </div>
 
       <div className="mnemos-section" style={{ padding: 0 }}>
+        <div className="mnemos-heading" style={{ fontSize: 13 }}>命中热力图</div>
+        {usage.data ? (
+          <>
+            <div className="mnemos-intro" style={{ margin: '4px 0 0' }}>
+              累计 {usage.data.totalHits} 次命中 · {usage.data.distinctSessions} 个会话
+            </div>
+            <Heatmap daily={usage.data.daily} />
+          </>
+        ) : (
+          <div className="mnemos-intro" style={{ margin: '4px 0 0' }}>{usage.error ?? '加载中…'}</div>
+        )}
+      </div>
+
+      <div className="mnemos-section" style={{ padding: 0 }}>
         <div className="mnemos-heading" style={{ fontSize: 13 }}>记忆</div>
         <input
           className="mnemos-input"
@@ -228,7 +279,8 @@ export function MnemosTab(): ReactNode {
             ) : (
               <>
                 <div className="mnemos-intro" style={{ margin: 0 }}>
-                  {m.topic} — {m.summary}（命中 {m.crossSessionHits}）
+                  {m.topic} — {m.summary}（{usageByMemory.get(m.id)?.hits ?? m.crossSessionHits} 命中
+                  {usageByMemory.get(m.id)?.sessions ? ` · ${usageByMemory.get(m.id)!.sessions} 会话` : ''}）
                 </div>
                 <button className="mnemos-button" style={{ marginRight: 6, marginTop: 6 }} disabled={busy} onClick={() => startEdit(m)}>
                   编辑

@@ -102,6 +102,23 @@ CREATE TABLE IF NOT EXISTS bus_blacklist (
 CREATE INDEX IF NOT EXISTS idx_mem_writer ON memories(writer, status);
 `;
 
+/** One memory's aggregated cross-session usage, derived from usage_ledger. */
+export interface UsageStat {
+  memoryId: string;
+  hits: number;
+  sessions: number;
+  lastUsed: string | null;
+}
+
+/** Ledger-derived usage summary: the single source for cross-session stats and the heatmap. */
+export interface UsageStats {
+  totalHits: number;
+  distinctSessions: number;
+  perMemory: UsageStat[];
+  /** per-calendar-day hit counts for the last `days` days (zero-filled). */
+  daily: Array<{ day: string; count: number }>;
+}
+
 export interface SummaryRow {
   id: string;
   summary: string;
@@ -123,6 +140,7 @@ export interface MemoryStore {
   updateMemory(id: string, patch: Partial<MemoryInput>): void;
   setMemoryStatus(id: string, status: MemoryStatus): void;
   recordHit(id: string, sessionId?: string): void;
+  usageStats(days?: number): UsageStats;
   exactTopicExists(m: MemoryInput): boolean;
   countActive(): number;
   insertRule(r: Rule): void;
@@ -228,7 +246,16 @@ export function openMemoryStore(path: string): MemoryStore {
     'UPDATE memories SET cross_session_hits = cross_session_hits + 1, updated_at=? WHERE id=?',
   );
   const ledgerStmt = db.prepare(
-    'INSERT INTO usage_ledger (ts, memory_id, session_id, injected, used, task_ok) VALUES (?, ?, ?, 0, 0, NULL)',
+    'INSERT INTO usage_ledger (ts, memory_id, session_id, injected, used, task_ok) VALUES (?, ?, ?, 1, 0, NULL)',
+  );
+  const usageTotalStmt = db.prepare('SELECT COUNT(*) AS c FROM usage_ledger');
+  const usageSessionsStmt = db.prepare('SELECT COUNT(DISTINCT session_id) AS c FROM usage_ledger WHERE session_id IS NOT NULL');
+  const usagePerMemoryStmt = db.prepare(
+    `SELECT memory_id, COUNT(*) AS hits, COUNT(DISTINCT session_id) AS sessions, MAX(ts) AS last_used
+       FROM usage_ledger GROUP BY memory_id ORDER BY hits DESC`,
+  );
+  const usageDailyStmt = db.prepare(
+    `SELECT substr(ts, 1, 10) AS day, COUNT(*) AS c FROM usage_ledger WHERE ts >= ? GROUP BY day ORDER BY day`,
   );
   const listTopicsStmt = db.prepare(
     `SELECT topic FROM memories WHERE status='active' AND scope=? AND workspace=? AND type=?`,
@@ -345,6 +372,27 @@ export function openMemoryStore(path: string): MemoryStore {
     recordHit(id, sessionId) {
       hitStmt.run(now(), id);
       ledgerStmt.run(now(), id, sessionId ?? null);
+    },
+    usageStats(days = 30) {
+      const totalHits = Number(usageTotalStmt.get()?.c ?? 0);
+      const distinctSessions = Number(usageSessionsStmt.get()?.c ?? 0);
+      const perMemory = (usagePerMemoryStmt.all() as Array<Record<string, unknown>>).map((row) => ({
+        memoryId: String(row.memory_id),
+        hits: Number(row.hits),
+        sessions: Number(row.sessions),
+        lastUsed: (row.last_used as string | null) ?? null,
+      }));
+      const since = new Date(Date.now() - days * 86_400_000).toISOString();
+      const counted = new Map<string, number>();
+      for (const row of usageDailyStmt.all(since) as Array<{ day: string; c: number }>) {
+        counted.set(String(row.day), Number(row.c));
+      }
+      const daily: Array<{ day: string; count: number }> = [];
+      for (let i = days - 1; i >= 0; i--) {
+        const day = new Date(Date.now() - i * 86_400_000).toISOString().slice(0, 10);
+        daily.push({ day, count: counted.get(day) ?? 0 });
+      }
+      return { totalHits, distinctSessions, perMemory, daily };
     },
     exactTopicExists(m) {
       const rows = listTopicsStmt.all(m.scope, m.workspace ?? null, m.type) as Array<{

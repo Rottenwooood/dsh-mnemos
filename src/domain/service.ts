@@ -93,6 +93,7 @@ export interface MemoryService {
   getRule(id: string): Rule | undefined;
   setRuleState(id: string, state: RuleState): RuleStateResult;
   recordHit(id: string, sessionId?: string): void;
+  usageStats(days?: number): ReturnType<MemoryStore['usageStats']>;
   search(query: string, limit?: number): ReturnType<MemoryStore['searchMemories']>;
   listActive(scope?: 'global' | 'workspace', workspace?: string): ReturnType<MemoryStore['listSummaries']>;
 }
@@ -380,6 +381,10 @@ export function createMemoryService(
 
     recordHit(id, sessionId) {
       store.recordHit(id, sessionId);
+    },
+
+    usageStats(days) {
+      return store.usageStats(days);
     },
 
     search(query, limit = 10) {

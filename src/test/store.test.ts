@@ -67,6 +67,28 @@ describe('memory store', () => {
     store.close();
   });
 
+  it('derives usage stats from the ledger (single source for heatmap)', () => {
+    const store = openMemoryStore(':memory:');
+    store.addMemory(mem({ id: 'a1' }));
+    store.addMemory(mem({ id: 'a2' }));
+    store.recordHit('a1', 'sess-1');
+    store.recordHit('a1', 'sess-2');
+    store.recordHit('a2', 'sess-2');
+    const stats = store.usageStats(7);
+    expect(stats.totalHits).toBe(3);
+    expect(stats.distinctSessions).toBe(2);
+    const a1 = stats.perMemory.find((u) => u.memoryId === 'a1');
+    const a2 = stats.perMemory.find((u) => u.memoryId === 'a2');
+    expect(a1?.hits).toBe(2);
+    expect(a1?.sessions).toBe(2);
+    expect(a2?.hits).toBe(1);
+    expect(a2?.sessions).toBe(1);
+    expect(a1?.lastUsed).toBeTruthy();
+    expect(stats.daily).toHaveLength(7);
+    expect(stats.daily.at(-1)?.count).toBe(3);
+    store.close();
+  });
+
   it('round-trips rules and approvals', () => {
     const store = openMemoryStore(':memory:');
     const rule: Rule = {
