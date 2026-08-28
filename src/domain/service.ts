@@ -73,6 +73,37 @@ export function isReplacementPayload(v: unknown): v is ReplacementPayload {
 }
 
 /**
+ * In-place model update of an existing memory. topic/type/scope are immutable
+ * (they drive the git mirror filename; changing them would fragment per-entry
+ * version history and break rollback). The old value stays recoverable in git.
+ */
+export interface MemoryUpdatePatch {
+  summary?: string;
+  detail?: string;
+  keywords?: string[];
+  confidence?: number;
+}
+
+export interface UpdateWriteResult {
+  outcome: 'committed' | 'proposed' | 'denied' | 'not-found';
+  reason?: string;
+  approvalId?: number;
+  memory?: Memory;
+  auditId?: number;
+}
+
+/** Approval payload for an in-place update: `__update` + the id + the patch. */
+export interface UpdatePayload {
+  __update: true;
+  updateMemoryId: string;
+  patch: MemoryUpdatePatch;
+}
+
+export function isUpdatePayload(v: unknown): v is UpdatePayload {
+  return !!v && typeof v === 'object' && (v as { __update?: unknown }).__update === true;
+}
+
+/**
  * Reciprocal Rank Fusion (dsh-evolve's zero-token hybrid): combine independent
  * ranked lists by summing 1/(k + rank) per item (standard k=60).
  */
@@ -124,6 +155,15 @@ export interface MemoryService {
   /** Replace the gate in place (live settings re-apply). */
   updateGate(next: GateConfig): void;
   add(input: MemoryInput, caller: Caller, forcePropose?: boolean): WriteResult;
+  /**
+   * In-place update of one memory (model-initiated, e.g. stale config that
+   * changed). Topic/type/scope are immutable so the git mirror filename stays
+   * stable and per-entry version history + rollback keep working. Goes through
+   * the same gate: low-risk (workspace + high confidence) applies immediately,
+   * everything else lands in the approval queue, where approval applies it
+   * in-place (old value stays recoverable in git).
+   */
+  proposeUpdate(id: string, patch: MemoryUpdatePatch, caller: Caller): UpdateWriteResult;
   /** Soft-delete one memory (human action); fires onWrite for the git snapshot. */
   removeMemory(id: string): { ok: boolean; reason?: string };
   /** Edit one memory's summary/detail (human action); fires onWrite. */
@@ -194,7 +234,7 @@ export function createMemoryService(
   function programChecks(
     input: MemoryInput,
     caller: Caller,
-    opts: { skipDedup?: boolean } = {},
+    opts: { skipDedup?: boolean; skipGlobalRestriction?: boolean } = {},
   ): { ok: true } | { ok: false; reason: string; reasons?: string[] } {
     const bytes = Buffer.byteLength(`${input.topic}\n${input.summary}\n${input.detail ?? ''}`, 'utf8');
     if (bytes > current.maxBytesPerEntry) {
@@ -215,8 +255,11 @@ export function createMemoryService(
     // Preferences are user-level by design and default to global scope (both
     // the distill path and memory_record agree), so the model may write global
     // preferences even when allowModelGlobalWrite is off. Other global types
-    // (facts/protocols) still need that flag.
+    // (facts/protocols) still need that flag. Updates to an EXISTING memory are
+    // exempt: the memory already exists and the change goes to the approval
+    // queue (or applies for low-risk workspace), so there is nothing to fabricate.
     if (
+      !opts.skipGlobalRestriction &&
       caller === 'model' &&
       input.scope === 'global' &&
       input.type !== 'preference' &&
@@ -304,6 +347,62 @@ export function createMemoryService(
       return { ok: true };
     },
 
+    proposeUpdate(id, patch, caller) {
+      const existing = store.getMemory(id);
+      if (!existing) {
+        return { outcome: 'not-found' };
+      }
+      if (existing.status !== 'active') {
+        return { outcome: 'denied', reason: 'not-active' };
+      }
+      // topic/type/scope are immutable so the git mirror filename stays stable.
+      const merged: MemoryInput = {
+        type: existing.type,
+        scope: existing.scope,
+        workspace: existing.workspace,
+        topic: existing.topic,
+        summary: patch.summary ?? existing.summary,
+        detail: patch.detail ?? existing.detail,
+        keywords: patch.keywords ?? existing.keywords,
+        evidence: existing.evidence,
+        confidence: patch.confidence ?? existing.confidence,
+        source: existing.source,
+        writer: caller,
+      };
+      const check = programChecks(merged, caller, { skipDedup: true, skipGlobalRestriction: caller === 'model' });
+      if (!check.ok) {
+        const auditId = audit('denied', 'memory', id, { __update: true, id, patch }, true, caller === 'model', check.reason);
+        return { outcome: 'denied', reason: check.reason, auditId };
+      }
+      const byAgent = caller === 'model';
+      // Low-risk model updates (workspace-scoped, high confidence) apply in
+      // place — reversible via git rollback. Global memories always queue.
+      const autoApply =
+        caller === 'human' ||
+        (caller === 'model' &&
+          existing.scope === 'workspace' &&
+          (patch.confidence ?? existing.confidence) >= current.autoApproveConfidence);
+      if (autoApply) {
+        store.updateMemory(id, patch);
+        onWrite?.();
+        const auditId = audit('update', 'memory', id, { id, patch }, false, byAgent);
+        return { outcome: 'committed', memory: store.getMemory(id), auditId };
+      }
+      const payload: UpdatePayload = { __update: true, updateMemoryId: id, patch };
+      store.insertApproval({
+        id: 0,
+        kind: 'memory',
+        payload,
+        state: 'proposed',
+        proposedBy: 'model',
+        evidence: existing.evidence,
+        createdAt: now(),
+      });
+      const approvalId = store.listApprovals('proposed').at(-1)?.id ?? 0;
+      const auditId = audit('propose', 'approval', String(approvalId), payload, false, byAgent);
+      return { outcome: 'proposed', approvalId, auditId };
+    },
+
     add(input, caller, forcePropose = false) {
       const check = programChecks(input, caller);
       if (!check.ok) {
@@ -351,6 +450,18 @@ export function createMemoryService(
       }
       if (candidate.kind === 'memory') {
         const raw = (edited ?? candidate.payload) as unknown;
+        if (isUpdatePayload(raw)) {
+          const existing = store.getMemory(raw.updateMemoryId);
+          if (!existing) {
+            return { ok: false, reason: 'target-not-found' };
+          }
+          const patch = (edited as MemoryUpdatePatch | undefined) ?? raw.patch;
+          store.updateMemory(raw.updateMemoryId, patch);
+          store.updateApprovalState(id, 'approved');
+          audit('update', 'memory', raw.updateMemoryId, { approvalId: id, from: existing.summary, patch }, false, false);
+          onWrite?.();
+          return { ok: true, memory: store.getMemory(raw.updateMemoryId) };
+        }
         if (isReplacementPayload(raw)) {
           const existing = store.getMemory(raw.replaceMemoryId);
           if (!existing) {

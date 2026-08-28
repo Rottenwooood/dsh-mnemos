@@ -204,6 +204,19 @@ async function main(): Promise<void> {
   const trustSearch = await run('/memory search trust-check')
   results.push(`trust: search marks untrusted=${trustSearch.includes('未验证来源')}`)
 
+  // In-place model update through the real service: a low-risk workspace memory
+  // is updated with the SAME id (no supersession), git snapshot follows.
+  const updateTarget = service.add(
+    { type: 'project_fact', scope: 'workspace', workspace: '/ws', topic: 'ysyx config', summary: 'v1 value', evidence: [{ sessionId: 's1', eventRange: [0, 0], quote: 'ysyx' }], confidence: 1, source: 'manual', writer: 'human' },
+    'human',
+  ).memory!
+  const updated = service.proposeUpdate(updateTarget.id, { summary: 'v2 value (config changed over time)' }, 'model')
+  const sameId = updated.outcome === 'committed' && updated.memory?.id === updateTarget.id
+  const updatedRow = service.getMemory(updateTarget.id)
+  results.push(`in-place update: same id committed=${sameId}`)
+  results.push(`in-place update: new value=${updatedRow?.summary.includes('v2 value')}`)
+  results.push(`in-place update: no superseded row=${service.listActive('workspace', '/ws').filter((m) => m.topic === 'ysyx config').length === 1}`)
+
   console.log(results.join('\n'))
 
   const ok =
@@ -229,7 +242,9 @@ async function main(): Promise<void> {
     replaceSearch.includes('已被新值取代') &&
     modelUntrusted &&
     humanTrusted &&
-    trustSearch.includes('未验证来源')
+    trustSearch.includes('未验证来源') &&
+    sameId &&
+    updatedRow?.summary.includes('v2 value')
   console.log(`RESULT: ${ok ? 'PASS' : 'FAIL'}`)
   process.exit(ok ? 0 : 1)
 }

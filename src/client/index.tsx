@@ -69,7 +69,17 @@ interface PendingRow {
   kind: string
   proposedBy: string
   createdAt: string
-  payload?: { topic?: string; summary?: string; text?: string; scope?: string; type?: string; confidence?: number }
+  payload?: {
+    topic?: string
+    summary?: string
+    text?: string
+    scope?: string
+    type?: string
+    confidence?: number
+    __update?: boolean
+    updateMemoryId?: string
+    patch?: { summary?: string; detail?: string; keywords?: string[]; confidence?: number }
+  }
 }
 
 interface MemoryRow {
@@ -342,7 +352,11 @@ export function MnemosTab(): ReactNode {
         {(pending.data?.pending ?? []).map((p) => (
           <div key={p.id} style={{ marginTop: 8 }}>
             <div className="mnemos-intro" style={{ margin: 0 }}>
-              [{p.kind}] {p.payload?.topic ?? p.id} — {p.payload?.summary ?? p.payload?.text ?? ''}（by {p.proposedBy}）
+              {p.payload?.__update ? (
+                <>更新记忆 {p.payload.updateMemoryId?.slice(-12)} — {p.payload.patch?.summary ?? ''}</>
+              ) : (
+                <>[{p.kind}] {p.payload?.topic ?? p.id} — {p.payload?.summary ?? p.payload?.text ?? ''}（by {p.proposedBy}）</>
+              )}
               {p.kind === 'memory' && p.payload?.scope ? ` · ${p.payload.scope}/${p.payload.type}` : ''}
             </div>
             {editingApproval === p.id ? (

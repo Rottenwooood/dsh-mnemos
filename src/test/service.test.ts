@@ -195,4 +195,40 @@ describe('memory service write path', () => {
     expect(index.text).toContain(memoryShortId(newRow.id));
     expect(index.text).not.toContain(memoryShortId(old.id));
   });
+
+  it('proposeUpdate applies a low-risk workspace update in place (same id, git-versioned)', () => {
+    const { service, store } = makeService();
+    const m = service.add({ ...input(), topic: 'ysyx config', summary: 'ysyx 2026 q1' }, 'human').memory!;
+    const r = service.proposeUpdate(m.id, { summary: 'ysyx 2026 q2', confidence: 0.95 }, 'model');
+    expect(r.outcome).toBe('committed');
+    const row = store.getMemory(m.id)!;
+    expect(row.id).toBe(m.id); // same id, no supersession
+    expect(row.summary).toContain('q2');
+    expect(row.status).toBe('active');
+    expect(store.countActive()).toBe(1); // no duplicate, no superseded row
+  });
+
+  it('proposeUpdate queues global-memory updates for approval, then applies in place', () => {
+    const { service, store } = makeService();
+    const m = service.add({ ...input(), scope: 'global', type: 'protocol', topic: 'sandbox', summary: 'old sandbox rule' }, 'human').memory!;
+    const r = service.proposeUpdate(m.id, { summary: 'new sandbox rule' }, 'model');
+    expect(r.outcome).toBe('proposed');
+    expect(store.getMemory(m.id)!.summary).toContain('old'); // not applied yet
+    const pending = store.listApprovals('proposed');
+    expect(pending.length).toBe(1);
+    const approved = service.approve(pending[0]!.id, 'approve');
+    expect(approved.ok).toBe(true);
+    const row = store.getMemory(m.id)!;
+    expect(row.id).toBe(m.id);
+    expect(row.summary).toContain('new');
+    // topic/type/scope are immutable -> git filename stays stable.
+    expect(row.topic).toBe('sandbox');
+    expect(row.type).toBe('protocol');
+    expect(row.scope).toBe('global');
+  });
+
+  it('proposeUpdate refuses to touch a missing or non-active memory', () => {
+    const { service } = makeService();
+    expect(service.proposeUpdate('mm://mnemos/nope', { summary: 'x' }, 'model').outcome).toBe('not-found');
+  });
 });

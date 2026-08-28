@@ -178,7 +178,7 @@ export function registerTools(ctx: Context, deps: ToolDeps): void {
   const record: MnemosTool = {
     name: 'memory_record',
     description:
-      'Propose a memory entry. Include "keywords": 2-5 short discriminative terms or phrases the user would type verbatim later (e.g. "pnpm", "deploy to us-east-1") — they drive automatic keyword-triggered injection. The write goes through an approval gate: sensitive content, duplicates, budget and scope policy are checked, low-risk project facts may auto-approve, everything else is queued for the user to approve.',
+      'Propose a memory entry. Include "keywords": 2-5 short discriminative terms or phrases the user would type verbatim later (e.g. "pnpm", "deploy to us-east-1") — they drive automatic keyword-triggered injection. The write goes through an approval gate: sensitive content, duplicates, budget and scope policy are checked, low-risk project facts may auto-approve, everything else is queued for the user to approve. When an existing memory is now outdated (e.g. a config value changed over time), pass "replaceMemoryId" (the id returned by memory_search/memory_get) with the new summary — the memory is updated IN PLACE (same id, git-versioned, old value recoverable), never duplicated.',
     parameters: {
       type: 'object',
       properties: {
@@ -189,6 +189,7 @@ export function registerTools(ctx: Context, deps: ToolDeps): void {
         type: { type: 'string', enum: [...TYPES], description: 'Default project_fact.' },
         scope: { type: 'string', enum: [...SCOPES], description: 'Default workspace.' },
         confidence: { type: 'number', description: '0..1, default 0.9.' },
+        replaceMemoryId: { type: 'string', description: 'Optional: id of an existing memory this new value supersedes — updates it in place instead of adding.' },
       },
       required: ['topic', 'summary'],
     },
@@ -221,6 +222,7 @@ export function registerTools(ctx: Context, deps: ToolDeps): void {
         type?: unknown;
         scope?: unknown;
         confidence?: unknown;
+        replaceMemoryId?: unknown;
       };
       const topic = asString(a.topic);
       const summary = asString(a.summary);
@@ -237,6 +239,26 @@ export function registerTools(ctx: Context, deps: ToolDeps): void {
         .map((k) => k.trim())
         .filter(Boolean)
         .slice(0, 8);
+      const confidence = asNumber(a.confidence, 0.9);
+      const replaceMemoryId = asString(a.replaceMemoryId);
+      if (replaceMemoryId) {
+        // In-place update of an existing, now-outdated memory. topic/type/scope
+        // are immutable (git mirror filename stability); only content fields
+        // change. Routes through the same gate; low-risk workspace updates
+        // apply immediately, the rest queue for approval.
+        const resolved = resolveByIdOrTopic(service, replaceMemoryId);
+        if (!resolved) {
+          return Promise.resolve({ outcome: 'denied', reason: 'replaceMemoryId not found', memoryId: null, approvalId: null, auditId: 0 });
+        }
+        const result = service.proposeUpdate(resolved.id, { summary, detail: asString(a.detail), keywords, confidence }, caller);
+        return Promise.resolve({
+          outcome: result.outcome,
+          reason: result.reason ?? null,
+          memoryId: result.outcome === 'committed' ? resolved.id : null,
+          approvalId: result.approvalId ?? null,
+          auditId: result.auditId ?? 0,
+        });
+      }
       const result = service.add(
         {
           type,
