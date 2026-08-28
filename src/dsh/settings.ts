@@ -68,8 +68,6 @@ export const MNEMOS_SETTINGS_FIELDS: MnemosSettingsField[] = [
   { key: 'gitBackend', kind: 'string', label: 'git 后端（isomorphic=纯 JS / system=系统 git）' },
   { key: 'negativeMemoryEnabled', kind: 'boolean', label: '负面记忆（失败命令自动拦截）' },
   { key: 'negativeMemoryTtlMs', kind: 'number', label: '负面记忆失效时长（毫秒）' },
-  { key: 'consolidationEnabled', kind: 'boolean', label: '定期整合（场景+人格候选）' },
-  { key: 'consolidationIntervalHours', kind: 'number', label: '整合周期（小时）' },
   { key: 'protocolRefreshTurns', kind: 'number', label: 'protocol 刷新间隔（轮次，压缩防御）' },
   { key: 'llmProvider', kind: 'string', label: '提炼用 LLM provider（留空用 DSH 默认）' },
   { key: 'llmModel', kind: 'string', label: '提炼用 LLM 模型（留空用 DSH 默认）' },

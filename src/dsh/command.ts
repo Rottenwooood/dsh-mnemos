@@ -18,7 +18,6 @@ import { ImportSource } from '../domain/imports/types.js';
 import { Llm } from '../domain/llm.js';
 import { runDistillIncremental, DistillCursor } from '../domain/distill.js';
 import { promoteRuleToSkill, listSkillFiles } from '../domain/skill.js';
-import type { ConsolidationResult } from '../domain/consolidation.js';
 import { MemoryBus } from '../domain/bus.js';
 import { GitStore } from '../domain/gitstore.js';
 import type { SignalCollector } from './hooks.js';
@@ -42,8 +41,6 @@ export interface CommandDeps {
   collector?: SignalCollector;
   bus?: MemoryBus;
   gitStore?: GitStore;
-  /** Run a consolidation round (scenes + persona proposals). */
-  consolidate: () => ConsolidationResult;
   /** Mutable distill cursor shared with the tool/auto/manual paths. */
   distillCursor: { current: DistillCursor };
   persistCursor: (cursor: DistillCursor) => void;
@@ -272,44 +269,6 @@ export function registerCommand(ctx: Context, deps: CommandDeps): void {
           }
           return ok('usage: /memory skill <list|promote <ruleId>>');
         }
-        case 'scenes': {
-          const sub = rest[0];
-          if (sub === 'approve' || sub === 'reject') {
-            const id = rest[1];
-            if (!id) {
-              return ok(`usage: /memory scenes ${sub} <sceneId>`);
-            }
-            const r = service.setSceneState(id, sub === 'approve' ? 'approved' : 'rejected');
-            return ok(r.ok ? `Scene ${id} → ${sub === 'approve' ? 'approved' : 'rejected'}.` : `Cannot update: ${r.reason}.`);
-          }
-          const rows = service.listScenes();
-          if (rows.length === 0) {
-            return ok('No scenes. Run /memory consolidate to propose scene groupings.');
-          }
-          return ok(rows.map((s) => `- [${s.state}] ${s.id}: ${s.title} (${s.memoryIds.length} memories)${s.workspace ? ` @ ${s.workspace}` : ''}`).join('\n'));
-        }
-        case 'persona': {
-          const sub = rest[0];
-          if (sub === 'approve' || sub === 'reject') {
-            const id = rest[1];
-            if (!id) {
-              return ok(`usage: /memory persona ${sub} <claimId>`);
-            }
-            const r = service.setPersonaState(id, sub === 'approve' ? 'approved' : 'rejected');
-            return ok(r.ok ? `Persona claim ${id} → ${sub === 'approve' ? 'approved' : 'rejected'}.` : `Cannot update: ${r.reason}.`);
-          }
-          const rows = service.listPersona();
-          if (rows.length === 0) {
-            return ok('No persona claims. Run /memory consolidate to propose persona profiles.');
-          }
-          return ok(rows.map((p) => `- [${p.state}] w${p.weight} ${p.id}: ${p.claim}`).join('\n'));
-        }
-        case 'consolidate': {
-          const result = deps.consolidate();
-          return ok(
-            `Consolidation: +${result.scenesProposed} scenes, +${result.personaProposed} persona claims (skipped ${result.scenesSkipped}/${result.personaSkipped}).`,
-          );
-        }
         case 'bus': {
           const bus = deps.bus;
           if (!bus) {
@@ -418,7 +377,7 @@ export function registerCommand(ctx: Context, deps: CommandDeps): void {
         }
         default:
           return ok(
-            'commands: search <query> | list | stats | archive <id> | restore <id> | pin <id> | unpin <id> | approve <id> | reject <id> | import <src> <path> | backfill <dir> | distill [path] | consolidate | scenes [approve|reject <id>] | persona [approve|reject <id>] | rules <...> | skill <...> | bus <...> | git <...>',
+            'commands: search <query> | list | stats | archive <id> | restore <id> | pin <id> | unpin <id> | approve <id> | reject <id> | import <src> <path> | backfill <dir> | distill [path] | rules <...> | skill <...> | bus <...> | git <...>',
           );
       }
     },

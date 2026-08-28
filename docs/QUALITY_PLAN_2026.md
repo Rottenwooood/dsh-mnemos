@@ -407,21 +407,21 @@
 
 ## 第 4 部分 · 当前 dsh-mnemos 逐机制对照（现状 vs 前沿，逐条诚实）
 
-| 维度 | 当前 mnemos | 前沿做法（具体来源） | 差距 |
-|---|---|---|---|
-| 注入形态 | 关键词触发（用户消息命中即注入）+ protocol 每会话常驻；无冻结快照、无索引+下钻 | 冻结快照保 KV（meow/engram/memento/memory-standard）；索引+下钻渐进披露（engram/meow/memsearch/memory-manager） | 大：注入无索引层，全文直接进，KV 无法稳定，token 贵 |
-| 召回 | 稀疏 RRF（FTS5 BM25 + bigram-Jaccard），无稠密、无时间排序、无衰减、无查询扩展 | 稠密+稀疏 RRF（self-improved/memsearch/ReMe）；时间感知查询扩展（LongMemEval）；经验复用排序（EARM 2608.22767）；证据效用/激活成本（GraphMemix） | 大：单稀疏、静态、无经验复用 |
-| 写入 | 服务层门禁 + 审批 + 审计 + 用户锚定证据 + 脱敏（敏感检测） | 门禁用不可自夸属性（evolve/memento）；验证信号持久化（MemGuard 2608.21867）；写路由判断写不写/新还是更新（2608.22215）；证据逐字（evolve-modes） | 中：有门禁，但无写路由、无验证信号持久化 |
-| 冲突/更新 | 语义冲突→替换提案（人工裁决） | 概率+时间衰减裁决（PolyMemDB）；矛盾不静默丢弃（MELD）；**状态追踪/接替信号**（StateMemBench 2608.19652、2608.25553） | 中：二选一替换，无"接替/新鲜度"语义 |
-| 遗忘 | 只有 usage_ledger 命中热力图 + 清理失效（按未用未更新），排序不参与召回 | 幂律冷度用 accessedAt（evolve）；事件+选择衰减（WMT 2608.20631）；学会遗忘（2603.07670） | 大：衰减没进召回排序 |
-| 记忆结构 | 扁平：memories/rules/audit/approval/usage_ledger | 层级（L0-L3 金字塔 self-improved）；类型化边/图（graph-memory/mneme/HERO）；动态互链（A-MEM 2025）；双粒实例+规则（DG-Mem） | 大：无场景/人格、无关系 |
-| 负面记忆 | 无 | 证据绑定自失效负面记忆 + 工具执行拦截（dsh-negative-ledger） | 缺整块 |
-| 巩固/做梦 | 提炼=手动 + 每 N 轮；无离线整合 | meow/mneme/sgme/self-improved 做梦/睡眠/夜间；Dual-Layer 写回（2608.22215）；ForeDreamer 双代理 | 缺整块 |
-| 安全 | 敏感内容检测（正则+熵）、门禁、审计 | 记忆投毒有界占用约束（2608.21230）；注入攻击锚+命令（InjecMEM）；外部内容水印+边界防御（IBIA）；信息流控制（2606.26627） | 大：无投毒对抗、无注入攻击防御、无来源占用约束 |
-| 遥测/效果 | usage_ledger 只有裸命中次数 + 热力图 | 效果账本：注入命中率/token/任务成功（ledger 扩展 + memlab 思路）；MemGuard 验证元数据 | 大：无"注入有没有用/省多少 token" |
-| 评测 | 有 e2e + real-composition，无效果 benchmark | LongMemEval 五能力 + StateMemBench 状态追踪 + A/B+CI（Aegis）+ 双时间跨度（Veracium）+ 阶段定位（D2ACCI）+ 诚实负结果（DreamBench-SWE、Fragility 2608.18066） | 缺整块（全类别死穴） |
-| 开放协议 | ctx.mnemosBus（recall/record/subscribe + 身份 + 黑名单）+ git 同步 | memento conformance + mm:// + MELD 合并协议（2608.16357）；memlab 测量契约 | 中：有总线，无 conformance、无测量契约、无合并仲裁 |
-| 压缩 | 无（依赖 DSH 压缩；protocol/规则会被同速率吃掉） | 压缩悬崖 + 按类型分流（2608.22752）；溯源指针替代摘要（engram） | 缺整块 |
+| 维度    | 当前 mnemos                                                 | 前沿做法（具体来源）                                                                                                                      | 差距                              |
+| ----- | --------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------- | ------------------------------- |
+| 注入形态  | 关键词触发（用户消息命中即注入）+ protocol 每会话常驻；无冻结快照、无索引+下钻             | 冻结快照保 KV（meow/engram/memento/memory-standard）；索引+下钻渐进披露（engram/meow/memsearch/memory-manager）                                   | 大：注入无索引层，全文直接进，KV 无法稳定，token 贵  |
+| 召回    | 稀疏 RRF（FTS5 BM25 + bigram-Jaccard），无稠密、无时间排序、无衰减、无查询扩展    | 稠密+稀疏 RRF（self-improved/memsearch/ReMe）；时间感知查询扩展（LongMemEval）；经验复用排序（EARM 2608.22767）；证据效用/激活成本（GraphMemix）                     | 大：单稀疏、静态、无经验复用                  |
+| 写入    | 服务层门禁 + 审批 + 审计 + 用户锚定证据 + 脱敏（敏感检测）                       | 门禁用不可自夸属性（evolve/memento）；验证信号持久化（MemGuard 2608.21867）；写路由判断写不写/新还是更新（2608.22215）；证据逐字（evolve-modes）                            | 中：有门禁，但无写路由、无验证信号持久化            |
+| 冲突/更新 | 语义冲突→替换提案（人工裁决）                                           | 概率+时间衰减裁决（PolyMemDB）；矛盾不静默丢弃（MELD）；**状态追踪/接替信号**（StateMemBench 2608.19652、2608.25553）                                           | 中：二选一替换，无"接替/新鲜度"语义             |
+| 遗忘    | 只有 usage_ledger 命中热力图 + 清理失效（按未用未更新），排序不参与召回              | 幂律冷度用 accessedAt（evolve）；事件+选择衰减（WMT 2608.20631）；学会遗忘（2603.07670）                                                               | 大：衰减没进召回排序                      |
+| 记忆结构  | 扁平：memories/rules/audit/approval/usage_ledger             | 层级（L0-L3 金字塔 self-improved）；类型化边/图（graph-memory/mneme/HERO）；动态互链（A-MEM 2025）；双粒实例+规则（DG-Mem）                                    | 大：无场景/人格、无关系                    |
+| 负面记忆  | 无                                                         | 证据绑定自失效负面记忆 + 工具执行拦截（dsh-negative-ledger）                                                                                       | 缺整块                             |
+| 巩固/做梦 | 提炼=手动 + 每 N 轮；无离线整合                                       | meow/mneme/sgme/self-improved 做梦/睡眠/夜间；Dual-Layer 写回（2608.22215）；ForeDreamer 双代理                                                | 缺整块                             |
+| 安全    | 敏感内容检测（正则+熵）、门禁、审计                                        | 记忆投毒有界占用约束（2608.21230）；注入攻击锚+命令（InjecMEM）；外部内容水印+边界防御（IBIA）；信息流控制（2606.26627）                                                   | 大：无投毒对抗、无注入攻击防御、无来源占用约束         |
+| 遥测/效果 | usage_ledger 只有裸命中次数 + 热力图                                | 效果账本：注入命中率/token/任务成功（ledger 扩展 + memlab 思路）；MemGuard 验证元数据                                                                     | 大：无"注入有没有用/省多少 token"           |
+| 评测    | 有 e2e + real-composition，无效果 benchmark                    | LongMemEval 五能力 + StateMemBench 状态追踪 + A/B+CI（Aegis）+ 双时间跨度（Veracium）+ 阶段定位（D2ACCI）+ 诚实负结果（DreamBench-SWE、Fragility 2608.18066） | 缺整块（全类别死穴）                      |
+| 开放协议  | ctx.mnemosBus（recall/record/subscribe + 身份 + 黑名单）+ git 同步 | memento conformance + mm:// + MELD 合并协议（2608.16357）；memlab 测量契约                                                                 | 中：有总线，无 conformance、无测量契约、无合并仲裁 |
+| 压缩    | 无（依赖 DSH 压缩；protocol/规则会被同速率吃掉）                           | 压缩悬崖 + 按类型分流（2608.22752）；溯源指针替代摘要（engram）                                                                                       | 缺整块                             |
 
 ---
 
@@ -489,7 +489,8 @@
 - 依据：dsh-evolve（active→stale→archived + pinned 三层 + 绝不硬删）；WMT 的动态保留分（2608.20631）；SSGM 的巩固前治理（2603.11768）。
 - 怎么做：`memories` 加 `pinned`；状态机 active/archived/deleted；`listStale` 改按 heat 排序。
 
-**P2.3 巩固/做梦 + 场景 + 人格（金字塔 L2/L3）**
+**P2.3 巩固/做梦 + 场景 + 人格（金字塔 L2/L3）** — ⚠ 已实现后移除：评审决定"人格与源记忆同源重复注入=纯冗余、场景无运行时作用且都不可编辑"，`scenes`/`persona` 表与全部入口已删除。教训：抽象层必须有"批准即取代源记忆"的接替语义和编辑能力，否则不如不做。
+- 原始方案（2026-08 曾落地后删除）：
 - 做什么：后台整合任务（空闲或夜间、用独立提炼模型）把零散记忆做三件事：(1) **场景分组**：把同话题/同任务期间的记忆归组，生成场景摘要；(2) **项目摘要**：把某工作区的反复模式抽成高层概括；(3) **人格画像**：从用户偏好/决策/纠正里归纳"这个用户长期稳定的偏好、身份、工作要求"的证据加权画像，注入时按任务相关性投影。整合只产生"候选"，进审批队列（沿用现有 propose-only）。
 - 依据：self-improved（L0-L3 金字塔 + 版本化人格）；meow（做梦 3 轮整合：原子→话题→项目）；mneme（autoDream + 睡眠）；sgme（分层蒸馏 + 人格=证据加权倾向）；2605.06716（Experience 阶段：跨轨迹抽象）。
 - 怎么做：新增 `scenes`、`persona` 表；`registerScheduledDistill` 改为空闲/夜间触发的整合任务；整合输出复用审批队列。

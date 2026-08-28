@@ -13,9 +13,6 @@ import {
   RuleState,
   AuditEntry,
   ApprovalCandidate,
-  ProposalState,
-  Scene,
-  PersonaClaim,
 } from './types.js';
 
 export const SCHEMA_VERSION = 1;
@@ -111,28 +108,6 @@ CREATE TABLE IF NOT EXISTS bus_blacklist (
   reason TEXT,
   blocked_at TEXT NOT NULL
 );
-CREATE TABLE IF NOT EXISTS scenes (
-  id TEXT PRIMARY KEY,
-  workspace TEXT,
-  title TEXT NOT NULL,
-  summary TEXT NOT NULL,
-  memory_ids TEXT NOT NULL,
-  state TEXT NOT NULL DEFAULT 'proposed',
-  proposed_by TEXT NOT NULL,
-  created_at TEXT NOT NULL,
-  updated_at TEXT NOT NULL
-);
-CREATE TABLE IF NOT EXISTS persona (
-  id TEXT PRIMARY KEY,
-  workspace TEXT,
-  claim TEXT NOT NULL,
-  memory_ids TEXT NOT NULL,
-  weight REAL NOT NULL DEFAULT 1,
-  state TEXT NOT NULL DEFAULT 'proposed',
-  proposed_by TEXT NOT NULL,
-  created_at TEXT NOT NULL,
-  updated_at TEXT NOT NULL
-);
 CREATE INDEX IF NOT EXISTS idx_mem_writer ON memories(writer, status);
 `;
 
@@ -205,12 +180,6 @@ export interface MemoryStore {
   insertRule(r: Rule): void;
   listRules(state?: RuleState): Rule[];
   updateRuleState(id: string, state: RuleState, patch?: Partial<Rule>): void;
-  addScene(s: Scene): void;
-  listScenes(state?: ProposalState): Scene[];
-  setSceneState(id: string, state: ProposalState): void;
-  addPersona(p: PersonaClaim): void;
-  listPersona(state?: ProposalState): PersonaClaim[];
-  setPersonaState(id: string, state: ProposalState): void;
   insertApproval(c: ApprovalCandidate): void;
   listApprovals(state?: ApprovalCandidate['state']): ApprovalCandidate[];
   getApproval(id: number): ApprovalCandidate | undefined;
@@ -420,16 +389,6 @@ export function openMemoryStore(path: string): MemoryStore {
   );
   const countActiveStmt = db.prepare(`SELECT COUNT(*) AS c FROM memories WHERE status='active'`);
 
-  const listScenesStmt = db.prepare('SELECT * FROM scenes WHERE state = COALESCE(?, state) ORDER BY created_at');
-  const insScene = db.prepare(
-    `INSERT INTO scenes (id, workspace, title, summary, memory_ids, state, proposed_by, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-  );
-  const setSceneStateStmt = db.prepare('UPDATE scenes SET state=?, updated_at=? WHERE id=?');
-  const listPersonaStmt = db.prepare('SELECT * FROM persona WHERE state = COALESCE(?, state) ORDER BY weight DESC, created_at');
-  const insPersona = db.prepare(
-    `INSERT INTO persona (id, workspace, claim, memory_ids, weight, state, proposed_by, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-  );
-  const setPersonaStateStmt = db.prepare('UPDATE persona SET state=?, updated_at=? WHERE id=?');
 
   const insRule = db.prepare(
     `INSERT INTO rules (id, kind, text, evidence, state, proposed_by, approved_by, approved_at, version, blacklist_reason)
@@ -679,46 +638,6 @@ export function openMemoryStore(path: string): MemoryStore {
     },
     updateRuleState(id, state, patch) {
       updRule.run(state, patch?.approvedBy ?? null, patch?.approvedAt ?? null, id);
-    },
-    addScene(s) {
-      insScene.run(s.id, s.workspace ?? null, s.title, s.summary, JSON.stringify(s.memoryIds), s.state, s.proposedBy, s.createdAt, s.updatedAt);
-    },
-    listScenes(state) {
-      const rows = listScenesStmt.all(state ?? null) as Record<string, unknown>[];
-      return rows.map((row) => ({
-        id: String(row.id),
-        workspace: (row.workspace as string | null) ?? null,
-        title: String(row.title),
-        summary: String(row.summary),
-        memoryIds: JSON.parse(String(row.memory_ids)),
-        state: row.state as ProposalState,
-        proposedBy: String(row.proposed_by),
-        createdAt: String(row.created_at),
-        updatedAt: String(row.updated_at),
-      }));
-    },
-    setSceneState(id, state) {
-      setSceneStateStmt.run(state, now(), id);
-    },
-    addPersona(p) {
-      insPersona.run(p.id, p.workspace ?? null, p.claim, JSON.stringify(p.memoryIds), p.weight, p.state, p.proposedBy, p.createdAt, p.updatedAt);
-    },
-    listPersona(state) {
-      const rows = listPersonaStmt.all(state ?? null) as Record<string, unknown>[];
-      return rows.map((row) => ({
-        id: String(row.id),
-        workspace: (row.workspace as string | null) ?? null,
-        claim: String(row.claim),
-        memoryIds: JSON.parse(String(row.memory_ids)),
-        weight: Number(row.weight),
-        state: row.state as ProposalState,
-        proposedBy: String(row.proposed_by),
-        createdAt: String(row.created_at),
-        updatedAt: String(row.updated_at),
-      }));
-    },
-    setPersonaState(id, state) {
-      setPersonaStateStmt.run(state, now(), id);
     },
     insertApproval(c) {
       insApproval.run(c.kind, JSON.stringify(c.payload), c.proposedBy, JSON.stringify(c.evidence), c.createdAt);

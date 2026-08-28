@@ -12,7 +12,7 @@
  */
 import { randomUUID } from 'node:crypto';
 import { MemoryStore, SummaryRow } from './store.js';
-import { Memory, MemoryInput, Caller, Rule, RuleState, ProposalState, Scene, PersonaClaim } from './types.js';
+import { Memory, MemoryInput, Caller, Rule, RuleState } from './types.js';
 import { SensitiveDetector } from './sensitive.js';
 import { exactDedupKey, similarity } from './dedup.js';
 
@@ -147,10 +147,6 @@ export interface MemoryService {
   listStale(days: number): string[];
   search(query: string, limit?: number): ReturnType<MemoryStore['searchMemories']>;
   listActive(scope?: 'global' | 'workspace', workspace?: string, type?: string): ReturnType<MemoryStore['listSummaries']>;
-  listScenes(state?: ProposalState): Scene[];
-  setSceneState(id: string, state: ProposalState): { ok: boolean; reason?: string };
-  listPersona(state?: ProposalState): PersonaClaim[];
-  setPersonaState(id: string, state: ProposalState): { ok: boolean; reason?: string };
 }
 
 export function createMemoryService(
@@ -536,31 +532,6 @@ export function createMemoryService(
 
     listActive(scope, workspace, type) {
       return store.listSummaries(scope, workspace, 'active', type);
-    },
-
-    listScenes(state) {
-      return store.listScenes(state);
-    },
-    setSceneState(id, state) {
-      const existing = store.listScenes().find((s) => s.id === id);
-      if (!existing) {
-        return { ok: false, reason: 'not-found' };
-      }
-      store.setSceneState(id, state);
-      audit('scene', 'memory', id, { id, state }, false, false);
-      return { ok: true };
-    },
-    listPersona(state) {
-      return store.listPersona(state);
-    },
-    setPersonaState(id, state) {
-      const existing = store.listPersona().find((p) => p.id === id);
-      if (!existing) {
-        return { ok: false, reason: 'not-found' };
-      }
-      store.setPersonaState(id, state);
-      audit('persona', 'memory', id, { id, state }, false, false);
-      return { ok: true };
     },
   };
 }

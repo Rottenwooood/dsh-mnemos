@@ -101,13 +101,15 @@
 
 ### 2026 计划落地（docs/QUALITY_PLAN_2026.md）
 
-P0 效果账本/评测/仪表、P1 冻结索引+memory_get 下钻+幂律热度、P2 负面记忆/遗忘归档/pinned/场景+人格整合/知识接替链、P3 防投毒（有界占用+trust）/开放测量 ABI+conformance/压缩防御（protocol 刷新轮次）全部落地。验证入口：
+P0 效果账本/评测/仪表、P1 冻结索引+memory_get 下钻+幂律热度、P2 负面记忆/遗忘归档/pinned/知识接替链、P3 防投毒（有界占用+trust）/开放测量 ABI+conformance/压缩防御（protocol 刷新轮次）全部落地。验证入口：
 
 - 一键：`scripts/run-verify.sh`（typecheck+单测 → 评测 → conformance → 真实组合）
 - 真实组合（harness 目录）：`node --import tsx/esm /home/c6h4o2/dsh-mnemos/scripts/verify-real-composition.mts`
 - conformance（harness 目录）：`node --import tsx/esm /home/c6h4o2/dsh-mnemos/scripts/conformance.mts`
 
-新表：`negative_memory`（失败拦截）、`scenes`/`persona`（整合候选，propose-only）、`memories.trust/pinned/supersedes_id/superseded_by_id`、`memories` 增 `observation_count/accessed_at`（幂律热度输入）。开放 ABI 为 `ctx.mnemosAbi`（`recall/get/state/probe`），bus 对齐到 `recall/get/state`。
+新表：`negative_memory`（失败拦截）、`memories.trust/pinned/supersedes_id/superseded_by_id`、`memories` 增 `observation_count/accessed_at`（幂律热度输入）。开放 ABI 为 `ctx.mnemosAbi`（`recall/get/state/probe`），bus 对齐到 `recall/get/state`。
+
+> 注：P2.3"场景+人格整合"曾实现后**移除**（评审结论：人格与源记忆同源信息重复注入、纯冗余；场景无运行时作用且都不可编辑）。`scenes`/`persona` 表、`consolidation` 相关命令/路由/设置/客户端区块已全部删除。
 
 ---
 
@@ -270,7 +272,7 @@ P0 效果账本/评测/仪表、P1 冻结索引+memory_get 下钻+幂律热度�
 ### B. 实现新颖性（含论文/高星仓库思想）
 
 1. **记忆衰减与强化**（轻量，收益高）：把现有 `usage_ledger` 时间戳换成**热力学冷度** `H = 1/(1+λ·Δt)^α`，时间基准用 `accessedAt||createdAt` 而非 `updatedAt`（dsh-evolve v0.4.2）；配合**观察计数强化**（重复观测 → 计数+1、importance 提升、保留更佳表述，不盲目覆盖）。吸收 Ebbinghaus 遗忘曲线。→ 清理失效/热排序立即升级。
-2. **层次化记忆（L0→L3 金字塔）**：补齐 TencentDB Agent Memory 的 L2 场景分组与 L3 人格画像（现在只有捕获/抽取）。人格画像可用 `/memory list` 之类的 profile 自动生长，注入时按"与当前任务相关性"而非固定快照。
+2. **层次化记忆（L0→L3 金字塔）**：曾实现 L2 场景分组 + L3 人格画像（TencentDB Agent Memory 思想），后**移除**——人格与源偏好记忆同源信息重复注入（纯冗余），场景无运行时作用且均不可编辑。结论：抽象层除非"批准即取代源记忆"且可编辑，否则不如不做。
 3. **MemGPT 式记忆分页/虚拟上下文**：记忆不一次全注入，而是像 OS 页换入换出——主记忆驻留、档案/工作记忆按需换入，冷数据 paged 到"磁盘"（SQLite 已天然冷存储）。参考 Letta（原 MemGPT，高星）的核心论文 "MemGPT: Towards LLMs as Operating Systems"。
 4. **检索升级**：
    - 稀疏侧：给 FTS5 上 `sqlite-vec`（或 ollama 本地嵌入）做**稠密检索**，与现有稀疏 RRF 再做一层混合；参考 "ColBERT 后期交互"、"Hybrid search"（BM25 + dense）工程实践。

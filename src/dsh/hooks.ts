@@ -211,7 +211,6 @@ export function registerInjection(
         maxBytes: config.injectMaxBytes,
         limit: config.injectLimit,
         workspace: cwd,
-        personaText: userTextOf(payload.messages ?? []),
       });
       if (sessionId !== undefined) injectedSessions.add(sessionId);
       if (index.injectedCount > 0) {
@@ -234,29 +233,6 @@ export function registerInjection(
     }
     return decision;
   });
-}
-
-/** Concatenate the text of all user messages carried by a pre-step payload. */
-function userTextOf(messages: unknown[]): string {
-  let out = '';
-  for (const message of messages) {
-    const msg = message as { role?: string; content?: unknown[] | string };
-    if (msg.role !== 'user') {
-      continue;
-    }
-    const content = msg.content;
-    if (typeof content === 'string') {
-      out += ` ${content}`;
-    } else if (Array.isArray(content)) {
-      for (const block of content) {
-        const b = block as { type?: string; text?: unknown };
-        if (b && typeof b === 'object' && b.type === 'text' && typeof b.text === 'string') {
-          out += ` ${b.text}`;
-        }
-      }
-    }
-  }
-  return out.trim();
 }
 
 /**

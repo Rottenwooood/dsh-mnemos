@@ -43,8 +43,6 @@ export interface MnemosAbi {
     pending: number;
     untrusted: number;
     verified: number;
-    scenes: number;
-    personaApproved: number;
     injections: number;
     used: number;
     usedRate: number;
@@ -103,8 +101,6 @@ export function createMnemosAbi(
         pending,
         untrusted,
         verified: telemetry.verifiedMemories,
-        scenes: store.listScenes().length,
-        personaApproved: store.listPersona('approved').length,
         injections: telemetry.injections,
         used: telemetry.used,
         usedRate: telemetry.usedRate,

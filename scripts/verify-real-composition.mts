@@ -171,18 +171,6 @@ async function main(): Promise<void> {
   results.push(`/memory pin -> ${pinned}`)
   results.push(`pinned marked=${afterPin.includes('pinned')}`)
 
-  // Consolidation through the real registry: propose scenes+persona, approve
-  // the persona claim, and confirm it projects into the frozen index.
-  const consolidateRun = await run('/memory consolidate')
-  results.push(`/memory consolidate -> ${consolidateRun}`)
-  const scenesList = await run('/memory scenes')
-  results.push(`/memory scenes -> ${scenesList}`)
-  const personaList = await run('/memory persona')
-  results.push(`/memory persona -> ${personaList}`)
-  const personaId = personaList.match(/- \S+ \S+ (\S+): /)?.[1] ?? ''
-  const personaApprove = personaId ? await run(`/memory persona approve ${personaId}`) : ''
-  results.push(`/memory persona approve -> ${personaApprove}`)
-
   // Supersession through the real registry: propose a replacement of seed-1,
   // approve it, confirm the old value is demoted+annotated and the new is active.
   const replaceProposal = service.proposeReplacement(
@@ -235,9 +223,6 @@ async function main(): Promise<void> {
     (gitStatus.includes('Uncommitted') || gitStatus.includes('clean')) &&
     !afterArchive.includes('real-composition') &&
     afterPin.includes('pinned') &&
-    consolidateRun.includes('Consolidation:') &&
-    personaList.includes('proposed') &&
-    personaApprove.includes('approved') &&
     replaceApprove.includes('Approved memory') &&
     superseded &&
     replaceSearch.includes('rev 2') &&

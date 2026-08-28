@@ -85,18 +85,6 @@ interface MemoryRow {
   pinned: boolean
 }
 
-/** One scene or persona proposal from /mnemos/api/scenes|persona. */
-interface ProposalRow {
-  id: string
-  title?: string
-  claim?: string
-  summary?: string
-  weight?: number
-  memoryIds: string[]
-  state: string
-  workspace: string | null
-}
-
 /** One git commit from /mnemos/api/git/history. */
 interface GitCommit {
   sha: string
@@ -172,8 +160,6 @@ export function MnemosTab(): ReactNode {
   const [statusFilter, setStatusFilter] = useState('active')
   const memories = useJson<{ memories: MemoryRow[] }>(`/mnemos/api/memories?scope=all&type=${encodeURIComponent(typeFilter)}&status=${statusFilter}`)
   const deleted = useJson<{ memories: MemoryRow[] }>('/mnemos/api/memories?status=deleted')
-  const scenes = useJson<{ scenes: ProposalRow[] }>('/mnemos/api/scenes')
-  const persona = useJson<{ claims: ProposalRow[] }>('/mnemos/api/persona')
   const usage = useJson<UsageStats>('/mnemos/api/usage')
   const git = useJson<{ changed: string[] }>('/mnemos/api/git/status')
   const [search, setSearch] = useState('')
@@ -192,11 +178,9 @@ export function MnemosTab(): ReactNode {
     pending.reload()
     memories.reload()
     deleted.reload()
-    scenes.reload()
-    persona.reload()
     usage.reload()
     git.reload()
-  }, [stats, telemetry, pending, memories, deleted, scenes, persona, usage, git])
+  }, [stats, telemetry, pending, memories, deleted, usage, git])
 
   // Keep the console current while the panel is open.
   useEffect(() => {
@@ -342,24 +326,6 @@ export function MnemosTab(): ReactNode {
         <button className="mnemos-button" style={{ marginRight: 6 }} disabled={busy} onClick={() => { void distill() }}>
           现在提炼
         </button>
-        <button
-          className="mnemos-button"
-          style={{ marginRight: 6 }}
-          disabled={busy}
-          onClick={async () => {
-            setBusy(true)
-            try {
-              const r = (await postJson('/mnemos/api/consolidate')) as { scenesProposed: number; personaProposed: number; scenesSkipped: number; personaSkipped: number }
-              setNotice({ kind: 'ok', text: `整合：+${r.scenesProposed} 场景，+${r.personaProposed} 人格条款（跳过 ${r.scenesSkipped}/${r.personaSkipped}）` })
-              scenes.reload()
-              persona.reload()
-            } finally {
-              setBusy(false)
-            }
-          }}
-        >
-          整合（做梦）
-        </button>
         <button className="mnemos-button" style={{ marginRight: 6 }} disabled={busy} onClick={() => { void cleanupStale() }}>
           清理失效
         </button>
@@ -439,52 +405,6 @@ export function MnemosTab(): ReactNode {
         ) : (
           <div className="mnemos-intro" style={{ margin: '4px 0 0' }}>{usage.error ?? '加载中…'}</div>
         )}
-      </div>
-
-      <div className="mnemos-section" style={{ padding: 0 }}>
-        <div className="mnemos-heading" style={{ fontSize: 13 }}> <Icon path={ICON_PENDING} />场景（整合候选）</div>
-        {(scenes.data?.scenes ?? []).map((s) => (
-          <div key={s.id} style={{ marginTop: 6 }}>
-            <div className="mnemos-intro" style={{ margin: 0 }}>
-              <span className="mnemos-badge">{s.state}</span> {s.title}（{s.memoryIds.length} 条记忆{s.workspace ? ` · ${s.workspace}` : ''}）
-            </div>
-            {s.state === 'proposed' ? (
-              <div style={{ marginTop: 4 }}>
-                <button className="mnemos-button" style={{ marginRight: 6 }} disabled={busy} onClick={() => void act('/mnemos/api/scenes/state', { id: s.id, state: 'approved' }, '场景已批准')}>
-                  批准
-                </button>
-                <button className="mnemos-button" disabled={busy} onClick={() => void act('/mnemos/api/scenes/state', { id: s.id, state: 'rejected' }, '场景已拒绝')}>
-                  拒绝
-                </button>
-              </div>
-            ) : null}
-          </div>
-        ))}
-        {scenes.data && scenes.data.scenes.length === 0 ? <div className="mnemos-intro" style={{ margin: 0 }}>暂无场景候选。点"整合（做梦）"从同任务记忆生成。</div> : null}
-        {scenes.error ? <div className="mnemos-error">{scenes.error}</div> : null}
-      </div>
-
-      <div className="mnemos-section" style={{ padding: 0 }}>
-        <div className="mnemos-heading" style={{ fontSize: 13 }}> <Icon path={ICON_MEMORY} />人格（证据加权画像，批准后按任务投影注入）</div>
-        {(persona.data?.claims ?? []).map((p) => (
-          <div key={p.id} style={{ marginTop: 6 }}>
-            <div className="mnemos-intro" style={{ margin: 0 }}>
-              <span className="mnemos-badge">{p.state}</span> w{p.weight ?? 0} {p.claim}
-            </div>
-            {p.state === 'proposed' ? (
-              <div style={{ marginTop: 4 }}>
-                <button className="mnemos-button" style={{ marginRight: 6 }} disabled={busy} onClick={() => void act('/mnemos/api/persona/state', { id: p.id, state: 'approved' }, '人格条款已批准')}>
-                  批准
-                </button>
-                <button className="mnemos-button" disabled={busy} onClick={() => void act('/mnemos/api/persona/state', { id: p.id, state: 'rejected' }, '人格条款已拒绝')}>
-                  拒绝
-                </button>
-              </div>
-            ) : null}
-          </div>
-        ))}
-        {persona.data && persona.data.claims.length === 0 ? <div className="mnemos-intro" style={{ margin: 0 }}>暂无画像候选。点"整合（做梦）"从偏好/决策中归纳。</div> : null}
-        {persona.error ? <div className="mnemos-error">{persona.error}</div> : null}
       </div>
 
       <div className="mnemos-section" style={{ padding: 0 }}>
@@ -702,8 +622,6 @@ const FIELDS: MnemosField[] = [
   { key: 'gitBackend', kind: 'string', label: 'git 后端', hint: 'isomorphic / system', group: 'git' },
   { key: 'negativeMemoryEnabled', kind: 'boolean', label: '负面记忆', hint: '失败命令记录并自动拦截重复尝试', group: 'git' },
   { key: 'negativeMemoryTtlMs', kind: 'number', label: '负面记忆失效时长（毫秒）', group: 'git' },
-  { key: 'consolidationEnabled', kind: 'boolean', label: '定期整合', hint: '场景+人格候选（propose-only）', group: 'git' },
-  { key: 'consolidationIntervalHours', kind: 'number', label: '整合周期（小时）', group: 'git' },
   { key: 'protocolRefreshTurns', kind: 'number', label: 'protocol 刷新间隔（轮次）', hint: '压缩防御：常驻指令定期重新注入', group: 'git' },
   { key: 'gitRemoteName', kind: 'string', label: 'git 远程名', group: 'git' },
   { key: 'gitRemoteUrl', kind: 'string', label: 'git 远程 URL', hint: '保存后即重定向 origin', group: 'git' },

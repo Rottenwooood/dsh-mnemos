@@ -27,7 +27,6 @@ import { registerCommand, CommandDeps } from './dsh/command.js';
 import { registerHooks, registerInjection, registerProtocolInjection, SignalCollector, UsageTracker } from './dsh/hooks.js';
 import { openNegativeMemoryStore } from './domain/negative.js';
 import { registerNegativeMemory } from './dsh/negative-hooks.js';
-import { runConsolidation } from './domain/consolidation.js';
 import { createMnemosAbi } from './dsh/adapter.js';
 import { createLlmFromContext } from './dsh/llm-adapter.js';
 import { installMnemosSettings } from './dsh/settings.js';
@@ -286,7 +285,6 @@ export function apply(ctx: Context, raw: Partial<Config> = {}): void {
     collector,
     bus,
     gitStore,
-    consolidate: () => runConsolidation(store),
     distillCursor,
     persistCursor: (c) => {
       distillCursor.current = c;
@@ -302,23 +300,6 @@ export function apply(ctx: Context, raw: Partial<Config> = {}): void {
   registerProtocolInjection(ctx, service, getConfig);
   const negativeStore = openNegativeMemoryStore(config.dbPath);
   registerNegativeMemory(ctx, { store: negativeStore, getConfig });
-  // Periodic consolidation: proposes scenes + persona claims (never auto-promotes).
-  ctx.effect(() => {
-    const id = setInterval(async () => {
-      try {
-        if (!getConfig().enabled || !getConfig().consolidationEnabled) return;
-        const result = runConsolidation(store);
-        if (result.scenesProposed + result.personaProposed > 0) {
-          logger.info(
-            `consolidation proposed ${result.scenesProposed} scenes, ${result.personaProposed} persona claims (skipped ${result.scenesSkipped}/${result.personaSkipped})`,
-          );
-        }
-      } catch (err) {
-        logger.warn(`consolidation failed: ${err instanceof Error ? err.message : String(err)}`);
-      }
-    }, Math.max(1, getConfig().consolidationIntervalHours) * 3_600_000);
-    return () => clearInterval(id);
-  });
   ctx.effect(() => () => {
     negativeStore.close();
   });
@@ -329,7 +310,6 @@ export function apply(ctx: Context, raw: Partial<Config> = {}): void {
     gitStore,
     collector,
     runDistillNow,
-    runConsolidation: () => runConsolidation(store),
     getConfig,
     llm: (ctx as unknown as { get(name: string): unknown }).get('llm') as import('./dsh/llm-adapter.js').LlmRuntimeLike | undefined,
     resolveModel: resolveLlmTarget,
