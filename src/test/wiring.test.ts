@@ -283,16 +283,31 @@ describe('pre-step injection', () => {
     expect(texts.join('\n')).toContain('记忆索引');
   });
 
-  it('injects the index once per session, not per step or per user message', async () => {
+  it('injects the frozen index once, then only keyword+interval partial refreshes', async () => {
     const { ctx, listeners } = fakeContext();
     const { service } = makeService();
     service.add(memoryWithKeywords(['pnpm']), 'human');
-    registerInjection(ctx, service, () => ({ ...defaultConfig(), injectMaxBytes: 4096 }), new UsageTracker());
+    // Interval set so high that the second call within the same instant is gated.
+    registerInjection(ctx, service, () => ({ ...defaultConfig(), injectMaxBytes: 4096, injectRefreshIntervalMinutes: 60 }), new UsageTracker());
     const first = await listen(listeners, [userMsg('install with pnpm')]);
     expect(first.length).toBe(1);
-    // Later steps / turns in the same session: frozen, no re-injection.
+    expect(first[0]!.content[0]!.text).toContain('记忆索引'); // full frozen index
+    // Same session, within the interval: no re-injection.
     const second = await listen(listeners, [userMsg('still pnpm')]);
     expect(second.length).toBe(0);
+  });
+
+  it('re-injects a partial index when the interval elapsed and a keyword hits', async () => {
+    const { ctx, listeners } = fakeContext();
+    const { service } = makeService();
+    service.add(memoryWithKeywords(['pnpm']), 'human');
+    registerInjection(ctx, service, () => ({ ...defaultConfig(), injectMaxBytes: 4096, injectRefreshIntervalMinutes: 0 }), new UsageTracker());
+    const first = await listen(listeners, [userMsg('install with pnpm')]);
+    expect(first[0]!.content[0]!.text).toContain('记忆索引');
+    // Keyword + interval elapsed -> partial refresh (related-memories index).
+    const partial = await listen(listeners, [userMsg('still pnpm')]);
+    expect(partial.length).toBe(1);
+    expect(partial[0]!.content[0]!.text).toContain('相关记忆');
   });
 
   it('skips injection when the injection master switch is off', async () => {

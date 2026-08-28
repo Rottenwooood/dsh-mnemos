@@ -19,6 +19,8 @@ export interface RankedMemory {
   workspace: string | null;
   crossSessionHits: number;
   updatedAt: string;
+  keywords: string[];
+  trust: 'trusted' | 'untrusted';
   score: number;
 }
 
@@ -40,17 +42,34 @@ function toRanked(row: SummaryRow, score: number): RankedMemory {
     workspace: row.workspace,
     crossSessionHits: row.crossSessionHits,
     updatedAt: row.updatedAt,
+    keywords: row.keywords,
+    trust: row.trust,
     score,
   };
 }
 
 /**
- * Compact one-line projection per memory, e.g.
- * `- [preference] use pnpm: The project builds with pnpm.`
+ * Compact one-line INDEX entry, shared by the full frozen index and the
+ * keyword-triggered partial refresh. `- [type/scope(trust)] shortid topic（keywords）`.
+ * project_fact rows carry their update time so a stale fact (e.g. a config that
+ * drifts) is visibly dated; the model drills down with memory_get for details.
  */
-function projection(m: RankedMemory): string {
-  const scopeTag = m.scope === 'global' ? 'global' : 'ws';
-  return `- [${m.type}/${scopeTag}] ${m.topic}: ${m.summary}`;
+function indexLine(m: RankedMemory, updatedAt = m.updatedAt): string {
+  const tag = m.scope === 'global' ? 'g' : 'w';
+  const src = m.trust === 'untrusted' ? '/未验证' : '';
+  const kws = m.keywords.length > 0 ? `（${m.keywords.slice(0, 4).join(' ')}）` : '';
+  const updated = m.type === 'project_fact' ? `（更新 ${stamp(updatedAt)}）` : '';
+  return `- [${m.type}/${tag}${src}] ${memoryShortId(m.id)} ${m.topic}${kws}${updated}`;
+}
+
+/** `MM-DD HH:MM` from an ISO timestamp, for the update marker. */
+function stamp(iso: string): string {
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) {
+    return '';
+  }
+  const p = (n: number): string => String(n).padStart(2, '0');
+  return `${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`;
 }
 
 /**
@@ -63,7 +82,7 @@ export function buildInjection(ranked: RankedMemory[], maxBytes: number): Inject
   let injected = 0;
   const injectedIds: string[] = [];
   for (const m of ranked) {
-    const line = `${projection(m)}\n`;
+    const line = `${indexLine(m)}\n`;
     if (Buffer.byteLength(text + line, 'utf8') > maxBytes) {
       break;
     }
@@ -99,13 +118,8 @@ export function recallIndex(
   const trusted = rows.filter((r) => r.trust !== 'untrusted').slice(0, limit);
   const untrusted = rows.filter((r) => r.trust === 'untrusted').slice(0, untrustedMax);
   const ranked = [...trusted, ...untrusted];
-  const lines = ranked.map((r) => {
-    const kws = r.keywords.length > 0 ? `（${r.keywords.slice(0, 4).join(' ')}）` : '';
-    const tag = r.scope === 'global' ? 'g' : 'w';
-    const src = r.trust === 'untrusted' ? '/未验证' : '';
-    return `- [${r.type}/${tag}${src}] ${memoryShortId(r.id)} ${r.topic}${kws}`;
-  });
-  let text = '# dsh-mnemos 记忆索引\n（来源标记：/未验证 = 模型/导入内容，非人工确认；要细节用 memory_get <短id>）\n';
+  const lines = ranked.map((r) => indexLine(toRanked(r, 0)));
+  let text = '# dsh-mnemos 记忆索引\n（来源标记：/未验证 = 模型/导入内容，非人工确认；项目事实带更新时间；要细节用 memory_get <短id>）\n';
   const injectedIds: string[] = [];
   for (let i = 0; i < lines.length; i++) {
     const line = `${lines[i]}\n`;
@@ -137,16 +151,20 @@ export function heatOf(row: { accessedAt: string; updatedAt: string }, now = Dat
 }
 
 /**
- * Keyword-scored recall (kept for search/drill-down paths): rank the memories
- * applicable to a session by whether the given text hits their keywords.
+ * Keyword-triggered PARTIAL index (session refresh): when the current user
+ * message hits a memory's keywords, re-inject just those entries as index lines
+ * (same format as the frozen index, bounded by budget and untrusted occupancy),
+ * so the model sees what is relevant now and drills down via memory_get. This
+ * is the "interval + keyword" partial injection — still index, never full text.
  */
 export function recallByKeywords(
   service: MemoryService,
   text: string,
-  opts: { maxBytes?: number; limit?: number; workspace?: string } = {},
+  opts: { maxBytes?: number; limit?: number; workspace?: string; untrustedMax?: number } = {},
 ): Injection {
   const maxBytes = opts.maxBytes ?? 2048;
   const limit = opts.limit ?? 8;
+  const untrustedMax = opts.untrustedMax ?? 3;
   const candidates = [
     ...service.listActive('global'),
     ...service.listActive('workspace', opts.workspace),
@@ -160,8 +178,20 @@ export function recallByKeywords(
       matched.push(toRanked(row, matched.length));
     }
   }
-  matched.sort((a, b) => b.crossSessionHits - a.crossSessionHits);
-  return buildInjection(matched.slice(0, limit), maxBytes);
+  const trusted = matched.filter((m) => m.trust !== 'untrusted').slice(0, limit);
+  const untrusted = matched.filter((m) => m.trust === 'untrusted').slice(0, untrustedMax);
+  const ranked = [...trusted, ...untrusted];
+  let out = '# dsh-mnemos 相关记忆\n（要细节用 memory_get <短id>）\n';
+  const injectedIds: string[] = [];
+  for (const m of ranked) {
+    const line = `${indexLine(m)}\n`;
+    if (Buffer.byteLength(out + line, 'utf8') > maxBytes) {
+      break;
+    }
+    out += line;
+    injectedIds.push(m.id);
+  }
+  return { text: out, injectedCount: injectedIds.length, droppedCount: ranked.length - injectedIds.length, injectedIds };
 }
 
 /**

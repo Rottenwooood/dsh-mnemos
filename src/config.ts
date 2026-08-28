@@ -74,6 +74,10 @@ export interface Config {
   negativeMemoryTtlMs: number;
   /** Re-inject the protocol standing-instruction block every N turns (compaction defense). */
   protocolRefreshTurns: number;
+  /** Mid-session partial index refresh: min minutes between keyword-triggered re-injections. */
+  injectRefreshIntervalMinutes: number;
+  /** Max lines in a keyword-triggered partial index injection. */
+  injectPartialLimit: number;
   /** LLM provider for distillation; empty falls back to DSH's agent-default-model. */
   llmProvider: string;
   /** LLM model id for distillation; empty falls back to DSH's agent-default-model. */
@@ -115,6 +119,8 @@ export function defaultConfig(): Config {
     negativeMemoryEnabled: true,
     negativeMemoryTtlMs: 300_000,
     protocolRefreshTurns: 3,
+    injectRefreshIntervalMinutes: 10,
+    injectPartialLimit: 5,
     llmProvider: '',
     llmModel: '',
   };

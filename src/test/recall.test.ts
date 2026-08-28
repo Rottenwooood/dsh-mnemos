@@ -14,6 +14,8 @@ function ranked(partial: Partial<RankedMemory> = {}): RankedMemory {
     workspace: 'ws',
     crossSessionHits: 0,
     updatedAt: '2026-01-01T00:00:00.000Z',
+    keywords: ['pnpm'],
+    trust: 'trusted',
     score: 1,
     ...partial,
   };
@@ -74,7 +76,10 @@ describe('layered recall', () => {
       summaries: ['The project builds with pnpm and vitest.'],
     });
     const inj = recallQuery(service, 'pnpm', { maxBytes: 4096 });
-    expect(inj.text).toContain('pnpm');
+    // Index line carries the topic (and the project_fact update marker); the
+    // summary is fetched on demand via memory_get.
+    expect(inj.text).toContain('fact 0');
+    expect(inj.text).toContain('更新');
     expect(inj.injectedCount).toBe(1);
   });
 
@@ -108,12 +113,12 @@ describe('layered recall', () => {
 
     // Global memory injects regardless of workspace.
     expect(recallByKeywords(service, 'using uv', { workspace: '/projA' }).text).toContain('uv');
-    // Project A memory injects in project A.
-    expect(recallByKeywords(service, 'install with pnpm', { workspace: '/projA' }).text).toContain('projA uses pnpm');
+    // Project A memory injects in project A (index line: topic + keywords).
+    expect(recallByKeywords(service, 'install with pnpm', { workspace: '/projA' }).text).toContain('pnpm（pnpm）');
     // Project B memory does NOT inject in project A.
     expect(recallByKeywords(service, 'install with yarn', { workspace: '/projA' }).text).not.toContain('yarn');
     // Project B memory injects in project B.
-    expect(recallByKeywords(service, 'install with yarn', { workspace: '/projB' }).text).toContain('projB uses yarn');
+    expect(recallByKeywords(service, 'install with yarn', { workspace: '/projB' }).text).toContain('yarn（yarn）');
   });
 
   it('the frozen index ranks recently-accessed memories above stale ones (power-law heat)', () => {

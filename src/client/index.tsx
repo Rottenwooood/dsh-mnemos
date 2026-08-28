@@ -637,6 +637,8 @@ const FIELDS: MnemosField[] = [
   { key: 'negativeMemoryEnabled', kind: 'boolean', label: '负面记忆', hint: '失败命令记录并自动拦截重复尝试', group: 'git' },
   { key: 'negativeMemoryTtlMs', kind: 'number', label: '负面记忆失效时长（毫秒）', group: 'git' },
   { key: 'protocolRefreshTurns', kind: 'number', label: 'protocol 刷新间隔（轮次）', hint: '压缩防御：常驻指令定期重新注入', group: 'git' },
+  { key: 'injectRefreshIntervalMinutes', kind: 'number', label: '关键词部分注入间隔（分钟）', hint: '会话中命中关键词且到间隔时，重注入相关记忆索引', group: 'git' },
+  { key: 'injectPartialLimit', kind: 'number', label: '关键词部分注入条数上限', group: 'git' },
   { key: 'gitRemoteName', kind: 'string', label: 'git 远程名', group: 'git' },
   { key: 'gitRemoteUrl', kind: 'string', label: 'git 远程 URL', hint: '保存后即重定向 origin', group: 'git' },
   { key: 'memoryRepoDir', kind: 'string', label: 'git 记忆仓库目录', hint: '需重启生效', group: 'git' },

@@ -9,7 +9,7 @@
 import type { Context } from '@deepseek-ai/cordis';
 import { randomUUID } from 'node:crypto';
 import type { MemoryService } from '../domain/service.js';
-import { recallIndex } from '../domain/recall.js';
+import { recallIndex, recallByKeywords } from '../domain/recall.js';
 import type { Config } from '../config.js';
 import type { ImportedMessage } from '../domain/imports/types.js';
 
@@ -193,46 +193,110 @@ export function registerInjection(
   usage: UsageTracker,
 ): void {
   const injectedSessions = new Set<string>();
+  const lastPartial = new Map<string, number>();
   ctx.on('agent/pre-step', async (payload: PreStepPayload, next) => {
     const decision = (await next()) as PreStepDecision;
     if (decision.kind === 'reject') return decision;
     payload.signal.throwIfAborted();
     const sessionId = (payload.agent as { session?: { id?: string } })?.session?.id;
     const cwd = (payload.agent as { session?: { header?: { cwd?: string } } })?.session?.header?.cwd;
-    if (sessionId !== undefined && injectedSessions.has(sessionId)) {
+    const text = userTextOf(payload.messages ?? []);
+    const config = getConfig();
+    if (!config.enabled || !config.injectionEnabled) {
       return decision;
     }
     try {
-      const config = getConfig();
-      if (!config.enabled || !config.injectionEnabled) {
+      if (!injectedSessions.has(sessionId ?? '')) {
+        // Session start: inject the FULL frozen index once (byte-stable).
+        const index = recallIndex(service, {
+          maxBytes: config.injectMaxBytes,
+          limit: config.injectLimit,
+          workspace: cwd,
+        });
+        if (sessionId !== undefined) {
+          injectedSessions.add(sessionId);
+          // interval is measured from the last injection (full or partial).
+          lastPartial.set(sessionId, Date.now());
+        }
+        if (index.injectedCount > 0) {
+          const tokens = estimateTokens(index.text);
+          const tracked: Array<{ memoryId: string; terms: string[]; ledgerId: number }> = [];
+          for (const id of index.injectedIds) {
+            try {
+              const ledgerId = service.recordHit(id, sessionId, tokens);
+              const mem = service.getMemory(id);
+              tracked.push({ memoryId: id, terms: (mem?.keywords?.length ? mem.keywords : mem ? [mem.topic] : []), ledgerId });
+            } catch {
+              // hit tracking is best-effort
+            }
+          }
+          usage.record(sessionId ?? '', tracked);
+          return { kind: 'enter', messages: [...decision.messages, makeUserMessage(index.text)] };
+        }
         return decision;
       }
-      const index = recallIndex(service, {
-        maxBytes: config.injectMaxBytes,
-        limit: config.injectLimit,
-        workspace: cwd,
-      });
-      if (sessionId !== undefined) injectedSessions.add(sessionId);
-      if (index.injectedCount > 0) {
-        const tokens = estimateTokens(index.text);
-        const tracked: Array<{ memoryId: string; terms: string[]; ledgerId: number }> = [];
-        for (const id of index.injectedIds) {
-          try {
-            const ledgerId = service.recordHit(id, sessionId, tokens);
-            const mem = service.getMemory(id);
-            tracked.push({ memoryId: id, terms: (mem?.keywords?.length ? mem.keywords : mem ? [mem.topic] : []), ledgerId });
-          } catch {
-            // hit tracking is best-effort
-          }
-        }
-        usage.record(sessionId ?? '', tracked);
-        return { kind: 'enter', messages: [...decision.messages, makeUserMessage(index.text)] };
+      // Mid-session PARTIAL refresh: only when both the interval has elapsed
+      // AND the current message hits a memory's keywords. Still an index (short
+      // ids), never full text — the model drills down with memory_get.
+      const last = lastPartial.get(sessionId ?? '') ?? 0;
+      const minutes = config.injectRefreshIntervalMinutes;
+      const interval = minutes > 0 ? minutes * 60_000 : 0; // 0 = no interval gate
+      if (interval > 0 && Date.now() - last < interval) {
+        return decision;
       }
+      if (text.length === 0) {
+        return decision;
+      }
+      const partial = recallByKeywords(service, text, {
+        workspace: cwd,
+        maxBytes: config.injectMaxBytes,
+        limit: config.injectPartialLimit,
+      });
+      if (partial.injectedCount === 0) {
+        return decision;
+      }
+      if (sessionId !== undefined) lastPartial.set(sessionId, Date.now());
+      const tokens = estimateTokens(partial.text);
+      const tracked: Array<{ memoryId: string; terms: string[]; ledgerId: number }> = [];
+      for (const id of partial.injectedIds) {
+        try {
+          const ledgerId = service.recordHit(id, sessionId, tokens);
+          const mem = service.getMemory(id);
+          tracked.push({ memoryId: id, terms: (mem?.keywords?.length ? mem.keywords : mem ? [mem.topic] : []), ledgerId });
+        } catch {
+          // best-effort
+        }
+      }
+      usage.record(sessionId ?? '', tracked);
+      return { kind: 'enter', messages: [...decision.messages, makeUserMessage(partial.text)] };
     } catch {
       // injection is best-effort; never fail a step because of memory recall
     }
     return decision;
   });
+}
+
+/** Concatenate the text of all user messages carried by a pre-step payload. */
+function userTextOf(messages: unknown[]): string {
+  let out = '';
+  for (const message of messages) {
+    const msg = message as { role?: string; content?: unknown[] | string };
+    if (msg.role !== 'user') {
+      continue;
+    }
+    const content = msg.content;
+    if (typeof content === 'string') {
+      out += ` ${content}`;
+    } else if (Array.isArray(content)) {
+      for (const block of content) {
+        const b = block as { type?: string; text?: unknown };
+        if (b && typeof b === 'object' && b.type === 'text' && typeof b.text === 'string') {
+          out += ` ${b.text}`;
+        }
+      }
+    }
+  }
+  return out.trim();
 }
 
 /**
