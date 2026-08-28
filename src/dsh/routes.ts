@@ -258,6 +258,10 @@ export function createMnemosRouteHandler(deps: MnemosRouteDeps): (req: Req, res:
         json(res, 200, deps.service.usageStats(Number.isFinite(days) && days > 0 ? Math.min(days, 365) : 30));
         return;
       }
+      if (method === 'GET' && route === '/telemetry') {
+        json(res, 200, deps.service.telemetry());
+        return;
+      }
       if (method === 'GET' && route === '/models') {
         const dflt = await deps.resolveModel().catch(() => undefined);
         const llm = deps.llm as (LlmRuntimeLike & {

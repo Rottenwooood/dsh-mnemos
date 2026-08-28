@@ -116,8 +116,68 @@ export class SignalCollector {
   }
 }
 
-export function registerHooks(ctx: Context, collector: SignalCollector): void {
-  ctx.on('session/event', (session, event) => collector.onEvent(session, event));
+/**
+ * Effect telemetry (P0): does an injected memory actually get used?
+ *
+ * After an injection we remember which memories were placed into the request
+ * for a session. When the model's next assistant message references one of
+ * those memories (its keywords / topic appear in the text), we mark the
+ * ledger row used=1 and the memory verified=1. The pending set is dropped at
+ * the next user message (a new turn), so we only credit usage in the turn
+ * right after the injection — a cheap proxy for "the model actually used it".
+ */
+export class UsageTracker {
+  private pending = new Map<string, Array<{ memoryId: string; terms: string[]; ledgerId: number }>>();
+
+  record(sessionId: string, items: Array<{ memoryId: string; terms: string[]; ledgerId: number }>): void {
+    if (!sessionId) return;
+    const existing = this.pending.get(sessionId) ?? [];
+    this.pending.set(sessionId, existing.concat(items).slice(-100));
+  }
+
+  /** New user message: the previous turn is over, drop its pending credits. */
+  onUserMessage(sessionId: string): void {
+    if (sessionId) this.pending.delete(sessionId);
+  }
+
+  /** Model text after an injection: credit any pending memory it references. */
+  onAssistantText(sessionId: string, text: string, service: MemoryService): void {
+    if (!sessionId) return;
+    const items = this.pending.get(sessionId);
+    if (!items || items.length === 0) return;
+    const lower = text.toLowerCase();
+    const still: Array<{ memoryId: string; terms: string[]; ledgerId: number }> = [];
+    for (const item of items) {
+      const hit = item.terms.some((t) => t.trim().length >= 2 && lower.includes(t.trim().toLowerCase()));
+      if (hit) {
+        service.markLedgerUsed(item.ledgerId);
+        service.markMemoryVerified(item.memoryId);
+      } else {
+        still.push(item);
+      }
+    }
+    this.pending.set(sessionId, still);
+  }
+}
+
+/** Rough UTF-8 token estimate for an injected block (CJK ≈ 1 token/char, latin ≈ 4 chars). */
+export function estimateTokens(text: string): number {
+  return Math.max(1, Math.ceil(Buffer.byteLength(text, 'utf8') / 3));
+}
+
+export function registerHooks(ctx: Context, collector: SignalCollector, usage: UsageTracker, service: MemoryService): void {
+  ctx.on('session/event', (session, event) => {
+    collector.onEvent(session, event);
+    const sessionId = (session as { id?: unknown })?.id;
+    if (typeof sessionId !== 'string') return;
+    const data = event.data as { role?: unknown; content?: unknown[]; text?: unknown } | undefined;
+    const text = blockText(data?.content ?? data?.text);
+    if (event.type === 'assistant/message' && text) {
+      usage.onAssistantText(sessionId, text, service);
+    } else if (event.type === 'user/message') {
+      usage.onUserMessage(sessionId);
+    }
+  });
 }
 
 /**
@@ -133,6 +193,7 @@ export function registerInjection(
   ctx: Context,
   service: MemoryService,
   getConfig: () => Config,
+  usage: UsageTracker,
 ): void {
   ctx.on('agent/pre-step', async (payload: PreStepPayload, next) => {
     const decision = (await next()) as PreStepDecision;
@@ -158,14 +219,18 @@ export function registerInjection(
         workspace: cwd,
       });
       if (injection.injectedCount > 0) {
-        // A memory that actually reached a request counts as used.
+        const tokens = estimateTokens(injection.text);
+        const tracked: Array<{ memoryId: string; terms: string[]; ledgerId: number }> = [];
         for (const id of injection.injectedIds) {
           try {
-            service.recordHit(id, sessionId);
+            const ledgerId = service.recordHit(id, sessionId, tokens);
+            const mem = service.getMemory(id);
+            tracked.push({ memoryId: id, terms: (mem?.keywords?.length ? mem.keywords : mem ? [mem.topic] : []), ledgerId });
           } catch {
             // hit tracking is best-effort
           }
         }
+        usage.record(sessionId ?? '', tracked);
         return { kind: 'enter', messages: [...decision.messages, makeUserMessage(injection.text)] };
       }
     } catch {

@@ -24,7 +24,7 @@ import { createSystemGitBackend } from './domain/git/system-git.js';
 import { createIsomorphicGitBackend } from './domain/git/isomorphic-git.js';
 import { registerTools } from './dsh/tools.js';
 import { registerCommand, CommandDeps } from './dsh/command.js';
-import { registerHooks, registerInjection, registerProtocolInjection, SignalCollector } from './dsh/hooks.js';
+import { registerHooks, registerInjection, registerProtocolInjection, SignalCollector, UsageTracker } from './dsh/hooks.js';
 import { createLlmFromContext } from './dsh/llm-adapter.js';
 import { installMnemosSettings } from './dsh/settings.js';
 import { registerMnemosRoutes } from './dsh/routes.js';
@@ -288,8 +288,9 @@ export function apply(ctx: Context, raw: Partial<Config> = {}): void {
 
   registerTools(ctx, { service, llm, collector, cursor: distillCursor, persistCursor: (c) => cursorStore.write(c) });
   registerCommand(ctx, commandDeps);
-  registerHooks(ctx, collector);
-  registerInjection(ctx, service, getConfig);
+  const usage = new UsageTracker();
+  registerHooks(ctx, collector, usage, service);
+  registerInjection(ctx, service, getConfig, usage);
   registerProtocolInjection(ctx, service, getConfig);
   registerBackfillJob(ctx, collector, getConfig);
   registerMnemosRoutes(ctx, {

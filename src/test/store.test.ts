@@ -89,6 +89,24 @@ describe('memory store', () => {
     store.close();
   });
 
+  it('telemetry aggregates injection/used/token stats and verified flags', () => {
+    const store = openMemoryStore(':memory:');
+    store.addMemory(mem({ id: 't1' }));
+    const l1 = store.recordHit('t1', 's1', 100);
+    store.recordHit('t1', 's2', 200);
+    store.markLedgerUsed(l1);
+    const t = store.telemetry();
+    expect(t.injections).toBe(2);
+    expect(t.used).toBe(1);
+    expect(t.usedRate).toBeCloseTo(0.5);
+    expect(t.avgInjectedTokens).toBe(150);
+    expect(t.verifiedMemories).toBe(0);
+    store.markMemoryVerified('t1');
+    expect(store.telemetry().verifiedMemories).toBe(1);
+    expect(store.telemetry().totalActive).toBe(1);
+    store.close();
+  });
+
   it('filters by type and lists stale/deleted memories', () => {
     const store = openMemoryStore(':memory:');
     const old = mem({ id: 'old1', type: 'project_fact', updatedAt: '2024-01-01T00:00:00.000Z' } as Partial<MemoryInput> & { id: string; updatedAt: string });

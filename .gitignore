@@ -6,3 +6,5 @@ dist/
 data/
 memory.db*
 *.log
+scripts/eval/scorecard.json
+scripts/eval/scorecard.md

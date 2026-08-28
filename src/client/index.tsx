@@ -153,6 +153,7 @@ const ICON_GIT = 'M6,2A2,2 0 0,1 8,4C8,4.88 7.39,5.61 6.56,5.88L7.42,9H15.5C16.3
 /** The memory-console tab body (better-sidebar). */
 export function MnemosTab(): ReactNode {
   const stats = useJson<{ totalActive: number; pending: number; gate: { maxEntries: number } }>('/mnemos/api/stats')
+  const telemetry = useJson<{ injections: number; used: number; usedRate: number; avgInjectedTokens: number; verifiedMemories: number; totalActive: number }>('/mnemos/api/telemetry')
   const pending = useJson<{ pending: PendingRow[] }>('/mnemos/api/pending')
   const [typeFilter, setTypeFilter] = useState('')
   const memories = useJson<{ memories: MemoryRow[] }>(`/mnemos/api/memories?scope=all&type=${encodeURIComponent(typeFilter)}`)
@@ -171,12 +172,13 @@ export function MnemosTab(): ReactNode {
 
   const refreshAll = useCallback(() => {
     stats.reload()
+    telemetry.reload()
     pending.reload()
     memories.reload()
     deleted.reload()
     usage.reload()
     git.reload()
-  }, [stats, pending, memories, deleted, usage, git])
+  }, [stats, telemetry, pending, memories, deleted, usage, git])
 
   // Keep the console current while the panel is open.
   useEffect(() => {
@@ -313,6 +315,11 @@ export function MnemosTab(): ReactNode {
         <div className="mnemos-heading" style={{ fontSize: 13 }}> <Icon path={ICON_OVERVIEW} />概览</div>
         <div className="mnemos-intro" style={{ margin: '4px 0 8px' }}>
           {stats.data ? `${stats.data.totalActive} 条记忆 · ${stats.data.pending} 待审批 · 上限 ${stats.data.gate.maxEntries}` : stats.error ?? '加载中…'}
+          {telemetry.data ? (
+            <div className="mnemos-intro" style={{ margin: '4px 0 8px' }}>
+              效果：注入 {telemetry.data.injections} 次 · 命中 {telemetry.data.used} 次（{Math.round(telemetry.data.usedRate * 100)}%）· 平均注入 {telemetry.data.avgInjectedTokens} token · 已验证记忆 {telemetry.data.verifiedMemories} 条
+            </div>
+          ) : null}
         </div>
         <button className="mnemos-button" style={{ marginRight: 6 }} disabled={busy} onClick={() => { void distill() }}>
           现在提炼

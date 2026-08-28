@@ -36,6 +36,7 @@ CREATE TABLE IF NOT EXISTS memories (
   updated_at TEXT NOT NULL,
   keywords TEXT,
   cross_session_hits INTEGER NOT NULL DEFAULT 0,
+  verified INTEGER NOT NULL DEFAULT 0,
   status TEXT NOT NULL DEFAULT 'active'
 );
 CREATE INDEX IF NOT EXISTS idx_mem_scope ON memories(scope, workspace);
@@ -89,6 +90,7 @@ CREATE TABLE IF NOT EXISTS usage_ledger (
   memory_id TEXT NOT NULL,
   session_id TEXT,
   injected INTEGER NOT NULL DEFAULT 0,
+  injected_tokens INTEGER NOT NULL DEFAULT 0,
   used INTEGER NOT NULL DEFAULT 0,
   task_ok INTEGER
 );
@@ -120,6 +122,17 @@ export interface UsageStats {
   daily: Array<{ day: string; count: number }>;
 }
 
+/** Effect telemetry: does injected memory actually get used, at what cost. */
+export interface TelemetryStats {
+  injections: number;
+  used: number;
+  usedRate: number;
+  avgInjectedTokens: number;
+  verifiedMemories: number;
+  totalActive: number;
+  daily: Array<{ day: string; injections: number; used: number }>;
+}
+
 export interface SummaryRow {
   id: string;
   summary: string;
@@ -143,7 +156,10 @@ export interface MemoryStore {
   searchMemories(query: string, limit: number): SummaryRow[];
   updateMemory(id: string, patch: Partial<MemoryInput>): void;
   setMemoryStatus(id: string, status: MemoryStatus): void;
-  recordHit(id: string, sessionId?: string): void;
+  recordHit(id: string, sessionId?: string, injectedTokens?: number): number;
+  markLedgerUsed(ledgerId: number): void;
+  markMemoryVerified(id: string): void;
+  telemetry(): TelemetryStats;
   usageStats(days?: number): UsageStats;
   exactTopicExists(m: MemoryInput): boolean;
   countActive(): number;
@@ -225,10 +241,17 @@ export function openMemoryStore(path: string): MemoryStore {
   const db = new DatabaseSync(path);
   db.exec('PRAGMA journal_mode = WAL;');
   db.exec(SCHEMA);
-  // Migration: older stores lack the keywords column; add it idempotently.
+  // Migration: older stores lack keywords/verified/ledger-token columns; add idempotently.
   const cols = db.prepare('PRAGMA table_info(memories)').all() as Array<{ name: string }>;
   if (!cols.some((c) => c.name === 'keywords')) {
     db.exec('ALTER TABLE memories ADD COLUMN keywords TEXT');
+  }
+  if (!cols.some((c) => c.name === 'verified')) {
+    db.exec('ALTER TABLE memories ADD COLUMN verified INTEGER NOT NULL DEFAULT 0');
+  }
+  const ledgerCols = db.prepare('PRAGMA table_info(usage_ledger)').all() as Array<{ name: string }>;
+  if (!ledgerCols.some((c) => c.name === 'injected_tokens')) {
+    db.exec('ALTER TABLE usage_ledger ADD COLUMN injected_tokens INTEGER NOT NULL DEFAULT 0');
   }
   const userVersion = Number(db.prepare('PRAGMA user_version;').get()?.user_version ?? 0);
   if (userVersion !== SCHEMA_VERSION) {
@@ -285,7 +308,16 @@ export function openMemoryStore(path: string): MemoryStore {
     'UPDATE memories SET cross_session_hits = cross_session_hits + 1, updated_at=? WHERE id=?',
   );
   const ledgerStmt = db.prepare(
-    'INSERT INTO usage_ledger (ts, memory_id, session_id, injected, used, task_ok) VALUES (?, ?, ?, 1, 0, NULL)',
+    'INSERT INTO usage_ledger (ts, memory_id, session_id, injected, injected_tokens, used, task_ok) VALUES (?, ?, ?, 1, ?, 0, NULL) RETURNING id',
+  );
+  const ledgerUsedStmt = db.prepare('UPDATE usage_ledger SET used=1 WHERE id=? AND used=0');
+  const verifiedStmt = db.prepare('UPDATE memories SET verified=1, updated_at=? WHERE id=?');
+  const teleInjectionsStmt = db.prepare('SELECT COUNT(*) AS c FROM usage_ledger');
+  const teleUsedStmt = db.prepare('SELECT COUNT(*) AS c FROM usage_ledger WHERE used=1');
+  const teleAvgTokensStmt = db.prepare('SELECT AVG(injected_tokens) AS avg FROM usage_ledger');
+  const teleVerifiedStmt = db.prepare("SELECT COUNT(*) AS c FROM memories WHERE verified=1 AND status='active'");
+  const teleDailyStmt = db.prepare(
+    `SELECT substr(ts, 1, 10) AS day, COUNT(*) AS c, SUM(used) AS u FROM usage_ledger WHERE ts >= ? GROUP BY day ORDER BY day`,
   );
   const usageTotalStmt = db.prepare('SELECT COUNT(*) AS c FROM usage_ledger');
   const usageSessionsStmt = db.prepare('SELECT COUNT(DISTINCT session_id) AS c FROM usage_ledger WHERE session_id IS NOT NULL');
@@ -428,9 +460,45 @@ export function openMemoryStore(path: string): MemoryStore {
         pruneDeletedStmt.run();
       }
     },
-    recordHit(id, sessionId) {
+    recordHit(id, sessionId, injectedTokens) {
       hitStmt.run(now(), id);
-      ledgerStmt.run(now(), id, sessionId ?? null);
+      const result = ledgerStmt.run(now(), id, sessionId ?? null, injectedTokens ?? 0);
+      return Number(result.lastInsertRowid);
+    },
+    markLedgerUsed(ledgerId) {
+      if (Number.isInteger(ledgerId) && ledgerId > 0) {
+        ledgerUsedStmt.run(ledgerId);
+      }
+    },
+    markMemoryVerified(id) {
+      verifiedStmt.run(now(), id);
+    },
+    telemetry() {
+      const injections = Number(teleInjectionsStmt.get()?.c ?? 0);
+      const used = Number(teleUsedStmt.get()?.c ?? 0);
+      const avgTokens = Number(teleAvgTokensStmt.get()?.avg ?? 0);
+      const verifiedMemories = Number(teleVerifiedStmt.get()?.c ?? 0);
+      const totalActive = Number(countActiveStmt.get()?.c ?? 0);
+      const since = new Date(Date.now() - 30 * 86_400_000).toISOString();
+      const counted = new Map<string, { injections: number; used: number }>();
+      for (const row of teleDailyStmt.all(since) as Array<{ day: string; c: number; u: number }>) {
+        counted.set(String(row.day), { injections: Number(row.c), used: Number(row.u) });
+      }
+      const daily: Array<{ day: string; injections: number; used: number }> = [];
+      for (let i = 29; i >= 0; i--) {
+        const day = new Date(Date.now() - i * 86_400_000).toISOString().slice(0, 10);
+        const v = counted.get(day) ?? { injections: 0, used: 0 };
+        daily.push({ day, injections: v.injections, used: v.used });
+      }
+      return {
+        injections,
+        used,
+        usedRate: injections > 0 ? used / injections : 0,
+        avgInjectedTokens: Math.round(avgTokens),
+        verifiedMemories,
+        totalActive,
+        daily,
+      };
     },
     usageStats(days = 30) {
       const totalHits = Number(usageTotalStmt.get()?.c ?? 0);

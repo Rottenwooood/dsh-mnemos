@@ -134,7 +134,11 @@ export interface MemoryService {
   listRules(state?: RuleState): Rule[];
   getRule(id: string): Rule | undefined;
   setRuleState(id: string, state: RuleState): RuleStateResult;
-  recordHit(id: string, sessionId?: string): void;
+  recordHit(id: string, sessionId?: string, injectedTokens?: number): number;
+  markLedgerUsed(ledgerId: number): void;
+  markMemoryVerified(id: string): void;
+  getMemory(id: string): ReturnType<MemoryStore['getMemory']>;
+  telemetry(): ReturnType<MemoryStore['telemetry']>;
   usageStats(days?: number): ReturnType<MemoryStore['usageStats']>;
   listDeleted(): ReturnType<MemoryStore['listDeleted']>;
   listStale(days: number): string[];
@@ -440,8 +444,20 @@ export function createMemoryService(
       return { ok: true, rule: store.listRules().find((r) => r.id === id) };
     },
 
-    recordHit(id, sessionId) {
-      store.recordHit(id, sessionId);
+    recordHit(id, sessionId, injectedTokens) {
+      return store.recordHit(id, sessionId, injectedTokens);
+    },
+    markLedgerUsed(ledgerId) {
+      store.markLedgerUsed(ledgerId);
+    },
+    markMemoryVerified(id) {
+      store.markMemoryVerified(id);
+    },
+    getMemory(id) {
+      return store.getMemory(id);
+    },
+    telemetry() {
+      return store.telemetry();
     },
 
     usageStats(days) {

@@ -7,7 +7,7 @@ import { createMemoryService } from '../domain/service.js';
 import { createMemoryBus } from '../domain/bus.js';
 import { registerTools, ToolDeps } from '../dsh/tools.js';
 import { registerCommand, CommandDeps } from '../dsh/command.js';
-import { registerInjection, registerProtocolInjection, SignalCollector } from '../dsh/hooks.js';
+import { registerInjection, registerProtocolInjection, SignalCollector, UsageTracker } from '../dsh/hooks.js';
 import { gateFrom, apply } from '../index.js';
 import type { GitStore } from '../domain/gitstore.js';
 import { defaultConfig } from '../config.js';
@@ -271,7 +271,7 @@ describe('pre-step injection', () => {
     const { ctx, listeners } = fakeContext();
     const { service } = makeService();
     service.add(memoryWithKeywords(['pnpm']), 'human');
-    registerInjection(ctx, service, () => ({ ...defaultConfig(), injectMaxBytes: 4096 }));
+    registerInjection(ctx, service, () => ({ ...defaultConfig(), injectMaxBytes: 4096 }), new UsageTracker());
     const messages = await listen(listeners, [userMsg('how do I install with pnpm?')]);
     const texts = messages.flatMap((m) => m.content.map((c) => c.text));
     expect(texts.join('\n')).toContain('Use pnpm for builds.');
@@ -281,7 +281,7 @@ describe('pre-step injection', () => {
     const { ctx, listeners } = fakeContext();
     const { service } = makeService();
     service.add(memoryWithKeywords([]), 'human');
-    registerInjection(ctx, service, () => ({ ...defaultConfig(), injectMaxBytes: 4096 }));
+    registerInjection(ctx, service, () => ({ ...defaultConfig(), injectMaxBytes: 4096 }), new UsageTracker());
     const messages = await listen(listeners, [userMsg('about pnpm installs')]);
     const texts = messages.flatMap((m) => m.content.map((c) => c.text));
     expect(texts.join('\n')).toContain('Use pnpm for builds.');
@@ -291,7 +291,7 @@ describe('pre-step injection', () => {
     const { ctx, listeners } = fakeContext();
     const { service } = makeService();
     service.add(memoryWithKeywords(['pnpm']), 'human');
-    registerInjection(ctx, service, () => ({ ...defaultConfig(), injectMaxBytes: 4096 }));
+    registerInjection(ctx, service, () => ({ ...defaultConfig(), injectMaxBytes: 4096 }), new UsageTracker());
     const messages = await listen(listeners, []);
     expect(messages.length).toBe(0);
   });
@@ -300,7 +300,7 @@ describe('pre-step injection', () => {
     const { ctx, listeners } = fakeContext();
     const { service } = makeService();
     service.add(memoryWithKeywords(['pnpm']), 'human');
-    registerInjection(ctx, service, () => ({ ...defaultConfig(), injectMaxBytes: 4096 }));
+    registerInjection(ctx, service, () => ({ ...defaultConfig(), injectMaxBytes: 4096 }), new UsageTracker());
     const messages = await listen(listeners, [userMsg('tell me about git rebase')]);
     expect(messages.length).toBe(0);
   });
@@ -309,9 +309,28 @@ describe('pre-step injection', () => {
     const { ctx, listeners } = fakeContext();
     const { service } = makeService();
     service.add(memoryWithKeywords(['pnpm']), 'human');
-    registerInjection(ctx, service, () => ({ ...defaultConfig(), injectMaxBytes: 4096, injectionEnabled: false }));
+    registerInjection(ctx, service, () => ({ ...defaultConfig(), injectMaxBytes: 4096, injectionEnabled: false }), new UsageTracker());
     const messages = await listen(listeners, [userMsg('install with pnpm please')]);
     expect(messages.length).toBe(0);
+  });
+
+  it('marks an injected memory as used when the assistant references it next', async () => {
+    const { ctx, listeners } = fakeContext();
+    const { service } = makeService();
+    service.add(memoryWithKeywords(['pnpm']), 'human');
+    const usage = new UsageTracker();
+    registerInjection(ctx, service, () => ({ ...defaultConfig(), injectMaxBytes: 4096 }), usage);
+    await listen(listeners, [userMsg('install with pnpm')]);
+    expect(service.telemetry().injections).toBe(1);
+    expect(service.telemetry().used).toBe(0);
+    // The model's next message references the injected memory.
+    usage.onAssistantText('s1', 'Sure, I will use pnpm for the install.', service);
+    const after = service.telemetry();
+    expect(after.used).toBe(1);
+    expect(after.verifiedMemories).toBe(1);
+    // A new user message clears the pending credit for that session.
+    usage.onUserMessage('s1');
+    expect(service.telemetry().used).toBe(1);
   });
 });
 
