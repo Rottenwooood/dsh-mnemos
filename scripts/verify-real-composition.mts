@@ -13,8 +13,11 @@
 import { Context } from '@deepseek-ai/cordis'
 import SessionStore, { SessionId } from '@deepseek-ai/dsh-session'
 import CommandRuntime, { type Agent } from '@deepseek-ai/dsh-commands'
+import ToolRuntime, { type ToolDefinition } from '@deepseek-ai/dsh-tools'
+import { CallId, type ContentBlock } from '@deepseek-ai/dsh-llm'
 import { unlinkSync, writeFileSync } from 'node:fs'
 import { openMemoryStore } from '/home/c6h4o2/dsh-mnemos/src/domain/store.ts'
+import { openNegativeMemoryStore } from '/home/c6h4o2/dsh-mnemos/src/domain/negative.ts'
 import { apply as applyMnemos } from '/home/c6h4o2/dsh-mnemos/src/index.ts'
 
 const DB = '/tmp/mnemos-real-composition.db'
@@ -46,10 +49,9 @@ async function main(): Promise<void> {
   const ctx = new Context()
   await ctx.plugin(SessionStore)
   await ctx.plugin(CommandRuntime)
-  const registeredTools: string[] = []
-  ctx.provide('tools', {
-    register: (t: { name: string }) => { registeredTools.push(t.name); return () => true },
-  })
+  // Real tool pipeline: ToolRuntime needs a systemPrompt service for schema wiring.
+  ctx.provide('systemPrompt', { tools: () => () => true, section: () => () => true })
+  await ctx.plugin(ToolRuntime)
 
   applyMnemos(ctx, {
     dbPath: DB,
@@ -58,6 +60,25 @@ async function main(): Promise<void> {
     backfillEnabled: false,
     distillAuto: false,
   })
+
+  // A real command tool that fails for one known command, succeeds otherwise.
+  const bashTool: ToolDefinition = {
+    name: 'bash',
+    description: 'run a shell command',
+    parameters: { type: 'object', properties: { command: { type: 'string' } }, required: ['command'] },
+    output: {
+      schema: { type: 'string' },
+      render: (_args: unknown, value: unknown) => [{ type: 'text', text: String(value) }] as ContentBlock[],
+    },
+    async execute(args: unknown) {
+      const { command } = args as { command: string }
+      if (command.includes('rm -rf /tmp/nope')) {
+        throw new Error('rm: /tmp/nope: No such file or directory')
+      }
+      return 'ok'
+    },
+  }
+  ctx.tools.register(bashTool)
 
   // Let the plugin's effects flush and lazy settings/schemastery settle.
   await new Promise((r) => setTimeout(r, 600))
@@ -70,12 +91,32 @@ async function main(): Promise<void> {
       find(agent: Agent, name: string): unknown
       execute(agent: Agent, line: string, images: readonly unknown[], signal: AbortSignal): Promise<{ result: { kind: string; text?: string } } | undefined>
     }
+    tools: {
+      get(name: string): unknown
+      execute(exec: unknown): Promise<{ isError: boolean; error?: { message?: string } }>
+    }
   }
 
   const results: string[] = []
   const registered = c.commands.find(agent, 'memory') !== undefined
   results.push(`command 'memory' resolved by real registry: ${registered}`)
-  results.push(`tools registered: ${JSON.stringify(registeredTools)}`)
+  const mnemosToolNames = ['memory_search', 'memory_record', 'memory_list', 'memory_stats', 'memory_get', 'memory_distill']
+  const toolsVisible = mnemosToolNames.every((n) => c.tools.get(n) !== undefined)
+  results.push(`mnemos tools registered on real ToolRuntime (${mnemosToolNames.length}): ${toolsVisible}`)
+
+  // Negative memory through the REAL tool pipeline:
+  // 1) a failing command is recorded; 2) the identical repeat is denied with
+  // the stored evidence; 3) a success resolves the negative.
+  const negAgent = { id: 'neg-agent', session: { id: SessionId('neg-s'), header: { cwd: '/ws' } } } as unknown as Agent
+  const runTool = (name: string, command: string) =>
+    c.tools.execute({ callId: CallId(`neg-${Date.now()}-${Math.random()}`), name, arguments: { command }, agent: negAgent, signal: new AbortController().signal })
+  const boom = 'rm -rf /tmp/nope'
+  const first = await runTool('bash', boom)
+  results.push(`negative: failing call isError=${first.isError}`)
+  const repeat = await runTool('bash', boom)
+  results.push(`negative: repeat denied=${repeat.isError && (repeat.error?.message ?? '').includes('已知失败')} (${repeat.error?.message ?? ''})`)
+  const success = await runTool('bash', 'echo ok')
+  results.push(`negative: unrelated call allowed=${!success.isError}`)
 
   const run = async (line: string): Promise<string> => {
     const exec = await c.commands.execute(agent, line, [], new AbortController().signal)
@@ -121,7 +162,11 @@ async function main(): Promise<void> {
 
   const ok =
     registered &&
-    registeredTools.length === 6 &&
+    toolsVisible &&
+    first.isError &&
+    repeat.isError &&
+    (repeat.error?.message ?? '').includes('已知失败') &&
+    !success.isError &&
     list.includes('real-composition') &&
     search.includes('real-composition') &&
     stats.includes('Active memories') &&
@@ -129,7 +174,7 @@ async function main(): Promise<void> {
     approve.includes('Approved memory') &&
     imported.includes('Ingested 1 messages') &&
     rules.includes('No rules.') &&
-    gitStatus.includes('Uncommitted') || gitStatus.includes('clean')
+    (gitStatus.includes('Uncommitted') || gitStatus.includes('clean'))
   console.log(`RESULT: ${ok ? 'PASS' : 'FAIL'}`)
   process.exit(ok ? 0 : 1)
 }

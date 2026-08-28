@@ -8,6 +8,8 @@ import { createMemoryBus } from '../domain/bus.js';
 import { registerTools, ToolDeps } from '../dsh/tools.js';
 import { registerCommand, CommandDeps } from '../dsh/command.js';
 import { registerInjection, registerProtocolInjection, SignalCollector, UsageTracker } from '../dsh/hooks.js';
+import { registerNegativeMemory } from '../dsh/negative-hooks.js';
+import { openNegativeMemoryStore, negativeFingerprint } from '../domain/negative.js';
 import { gateFrom, apply } from '../index.js';
 import type { GitStore } from '../domain/gitstore.js';
 import { defaultConfig } from '../config.js';
@@ -488,6 +490,45 @@ describe('gateFrom', () => {
     expect(gate.blacklist).toEqual(['bad']);
     expect(gate.allowModelGlobalWrite).toBe(true);
     expect(gate.sensitivityCheckEnabled).toBe(false);
+  });
+});
+
+describe('negative memory hooks', () => {
+  function makeCtxWithToolEvents() {
+    const listeners: Record<string, (...a: any[]) => unknown> = {};
+    const ctx = {
+      on(name: string, listener: (...a: any[]) => unknown) {
+        listeners[name] = listener;
+        return () => true;
+      },
+      logger: () => ({ info: () => {}, warn: () => {}, error: () => {}, debug: () => {} }),
+    } as never;
+    return { ctx, listeners };
+  }
+
+  it('records a failed command and denies the identical repeat', async () => {
+    const { ctx, listeners } = makeCtxWithToolEvents();
+    const store = openNegativeMemoryStore(':memory:');
+    registerNegativeMemory(ctx as never, { store, getConfig: () => ({ ...defaultConfig() }) });
+    const execute = listeners['tools/execute'] as (exec: unknown, next: () => Promise<unknown>) => Promise<unknown>;
+    const preExecute = listeners['tools/pre-execute'] as (exec: unknown, next: () => Promise<{ kind: string }>) => Promise<unknown>;
+
+    const exec = { name: 'bash', arguments: { command: 'rm -rf /tmp/x' }, agent: { session: { header: { cwd: '/ws' } } } };
+    // failure -> recorded
+    await execute(exec, async () => ({ isError: true, error: { message: 'rm: refusing' } }));
+    // identical repeat -> denied
+    const denied = await preExecute(exec, async () => ({ kind: 'allow' }));
+    expect(denied).toMatchObject({ kind: 'deny' });
+    expect((denied as { reason: string }).reason).toContain('rm: refusing');
+    // a different command is allowed
+    const allowed = await preExecute({ ...exec, arguments: { command: 'ls' } }, async () => ({ kind: 'allow' }));
+    expect(allowed).toMatchObject({ kind: 'allow' });
+    // success resolves the negative memory
+    const fp = negativeFingerprint('bash', '/ws', 'rm -rf /tmp/x');
+    store.resolve(fp);
+    const after = await preExecute(exec, async () => ({ kind: 'allow' }));
+    expect(after).toMatchObject({ kind: 'allow' });
+    store.close();
   });
 });
 

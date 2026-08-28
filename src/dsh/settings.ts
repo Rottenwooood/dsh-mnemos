@@ -66,6 +66,8 @@ export const MNEMOS_SETTINGS_FIELDS: MnemosSettingsField[] = [
   { key: 'syncEnabled', kind: 'boolean', label: '自动跨机同步' },
   { key: 'syncIntervalMinutes', kind: 'number', label: '自动同步间隔（分钟）' },
   { key: 'gitBackend', kind: 'string', label: 'git 后端（isomorphic=纯 JS / system=系统 git）' },
+  { key: 'negativeMemoryEnabled', kind: 'boolean', label: '负面记忆（失败命令自动拦截）' },
+  { key: 'negativeMemoryTtlMs', kind: 'number', label: '负面记忆失效时长（毫秒）' },
   { key: 'llmProvider', kind: 'string', label: '提炼用 LLM provider（留空用 DSH 默认）' },
   { key: 'llmModel', kind: 'string', label: '提炼用 LLM 模型（留空用 DSH 默认）' },
 ];

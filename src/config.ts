@@ -68,6 +68,10 @@ export interface Config {
   syncIntervalMinutes: number;
   /** Git backend: 'system' (system git CLI, reliable for real remote sync) or 'isomorphic' (pure JS). */
   gitBackend: 'isomorphic' | 'system';
+  /** Record disproven commands and block a repeated identical attempt (negative memory). */
+  negativeMemoryEnabled: boolean;
+  /** How long a recorded failure stays active before auto-resolving, in ms. */
+  negativeMemoryTtlMs: number;
   /** LLM provider for distillation; empty falls back to DSH's agent-default-model. */
   llmProvider: string;
   /** LLM model id for distillation; empty falls back to DSH's agent-default-model. */
@@ -106,6 +110,8 @@ export function defaultConfig(): Config {
     syncEnabled: false,
     syncIntervalMinutes: 1440,
     gitBackend: 'system',
+    negativeMemoryEnabled: true,
+    negativeMemoryTtlMs: 300_000,
     llmProvider: '',
     llmModel: '',
   };

@@ -572,6 +572,8 @@ const FIELDS: MnemosField[] = [
   { key: 'distillWindow', kind: 'number', label: '单次提炼缓冲消息数', group: '提炼' },
   { key: 'gitVersioning', kind: 'boolean', label: 'git 版本管理', group: 'git' },
   { key: 'gitBackend', kind: 'string', label: 'git 后端', hint: 'isomorphic / system', group: 'git' },
+  { key: 'negativeMemoryEnabled', kind: 'boolean', label: '负面记忆', hint: '失败命令记录并自动拦截重复尝试', group: 'git' },
+  { key: 'negativeMemoryTtlMs', kind: 'number', label: '负面记忆失效时长（毫秒）', group: 'git' },
   { key: 'gitRemoteName', kind: 'string', label: 'git 远程名', group: 'git' },
   { key: 'gitRemoteUrl', kind: 'string', label: 'git 远程 URL', hint: '保存后即重定向 origin', group: 'git' },
   { key: 'memoryRepoDir', kind: 'string', label: 'git 记忆仓库目录', hint: '需重启生效', group: 'git' },
