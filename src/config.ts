@@ -76,6 +76,8 @@ export interface Config {
   consolidationEnabled: boolean;
   /** How often consolidation runs, in hours (>=1). */
   consolidationIntervalHours: number;
+  /** Re-inject the protocol standing-instruction block every N turns (compaction defense). */
+  protocolRefreshTurns: number;
   /** LLM provider for distillation; empty falls back to DSH's agent-default-model. */
   llmProvider: string;
   /** LLM model id for distillation; empty falls back to DSH's agent-default-model. */
@@ -118,6 +120,7 @@ export function defaultConfig(): Config {
     negativeMemoryTtlMs: 300_000,
     consolidationEnabled: true,
     consolidationIntervalHours: 24,
+    protocolRefreshTurns: 3,
     llmProvider: '',
     llmModel: '',
   };

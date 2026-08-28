@@ -272,13 +272,20 @@ export function registerProtocolInjection(
   service: MemoryService,
   getConfig: () => Config,
 ): void {
-  const injectedSessions = new Set<string>();
+  // Refresh cadence defeats context compaction (2608.22752: standing rules
+  // survive only ~10% after 5 rounds of summarization): protocol is the
+  // standing-instruction channel, so it is re-attached every N turns instead of
+  // once per session. The memory INDEX stays frozen (progressive disclosure).
+  const lastInjectedTurn = new Map<string, number>();
   ctx.on('agent/pre-step', async (payload: PreStepPayload, next) => {
     const decision = (await next()) as PreStepDecision;
     if (decision.kind === 'reject') return decision;
     payload.signal.throwIfAborted();
     const sessionId = (payload.agent as { session?: { id?: string } })?.session?.id;
-    if (sessionId !== undefined && injectedSessions.has(sessionId)) {
+    const refresh = getConfig().protocolRefreshTurns;
+    const last = sessionId === undefined ? undefined : lastInjectedTurn.get(sessionId);
+    const due = last === undefined || payload.turn - last >= Math.max(1, refresh);
+    if (!due) {
       return decision;
     }
     try {
@@ -286,7 +293,7 @@ export function registerProtocolInjection(
         return decision;
       }
       const protos = service.listActive().filter((m) => m.type === 'protocol').slice(0, 8);
-      if (sessionId !== undefined) injectedSessions.add(sessionId);
+      if (sessionId !== undefined) lastInjectedTurn.set(sessionId, payload.turn);
       if (protos.length > 0) {
         const text = `# dsh-mnemos 环境约定\n${protos.map((p) => `- ${p.summary}`).join('\n')}`;
         return { kind: 'enter', messages: [...decision.messages, makeUserMessage(text)] };

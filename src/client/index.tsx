@@ -704,6 +704,7 @@ const FIELDS: MnemosField[] = [
   { key: 'negativeMemoryTtlMs', kind: 'number', label: '负面记忆失效时长（毫秒）', group: 'git' },
   { key: 'consolidationEnabled', kind: 'boolean', label: '定期整合', hint: '场景+人格候选（propose-only）', group: 'git' },
   { key: 'consolidationIntervalHours', kind: 'number', label: '整合周期（小时）', group: 'git' },
+  { key: 'protocolRefreshTurns', kind: 'number', label: 'protocol 刷新间隔（轮次）', hint: '压缩防御：常驻指令定期重新注入', group: 'git' },
   { key: 'gitRemoteName', kind: 'string', label: 'git 远程名', group: 'git' },
   { key: 'gitRemoteUrl', kind: 'string', label: 'git 远程 URL', hint: '保存后即重定向 origin', group: 'git' },
   { key: 'memoryRepoDir', kind: 'string', label: 'git 记忆仓库目录', hint: '需重启生效', group: 'git' },

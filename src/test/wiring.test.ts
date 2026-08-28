@@ -339,7 +339,7 @@ describe('pre-step injection', () => {
 });
 
 describe('protocol injection (agent/pre-step)', () => {
-  it('injects active protocol memories once per session, before any tool call', async () => {
+  it('injects active protocol memories before any tool call and refreshes on cadence', async () => {
     const { ctx, listeners } = fakeContext();
     const { service } = makeService();
     service.add(
@@ -367,9 +367,12 @@ describe('protocol injection (agent/pre-step)', () => {
     const first = await listener(payload, async () => ({ kind: 'enter', messages: [] }));
     const texts = first.messages.flatMap((m) => m.content.map((c) => c.text));
     expect(texts.join('\n')).toContain('bwrap sandbox');
-    // Once per session: later steps do not re-inject.
-    const second = await listener({ ...payload, turn: 3, step: 0 }, async () => ({ kind: 'enter', messages: [] }));
-    expect(second.messages.length).toBe(0);
+    // Within the refresh cadence (default 3 turns): no re-injection.
+    const withinCadence = await listener({ ...payload, turn: 2, step: 0 }, async () => ({ kind: 'enter', messages: [] }));
+    expect(withinCadence.messages.length).toBe(0);
+    // Past the cadence: the standing instruction is re-attached (compaction defense).
+    const refreshed = await listener({ ...payload, turn: 5, step: 0 }, async () => ({ kind: 'enter', messages: [] }));
+    expect(refreshed.messages.length).toBe(1);
   });
 });
 
