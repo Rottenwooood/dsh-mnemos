@@ -17,8 +17,8 @@ node --import tsx/esm /home/c6h4o2/dsh-mnemos/scripts/eval/run-eval.mts
 | 事实召回 MRR | 0.94 |
 | 噪音查询精度（不该召回的不召回） | 1.00 |
 | 状态追踪（事实被修订后答当前值） | 通过 |
-| 平均注入 token | 36 |
-| 注入内容命中正确记忆 | 100% |
+| 每会话冻结记忆索引 | 8 行 ≈ 207 token（一次性，KV 缓存友好） |
+| 索引覆盖正确记忆 | 100% |
 
 管理页"记忆"页签顶部有**效果卡**（注入次数/命中率/平均 token/已验证记忆数），数据来自 `usage_ledger` 效果账本——每次注入会记录用了多少 token，模型下一条消息若引用了注入内容就记为命中并给该记忆打"已验证"标记。
 
@@ -44,8 +44,8 @@ dsh web
 
 ## 日常用法
 
-- **模型工具**：`memory_search`（搜索）、`memory_record`（写，含 keywords）、`memory_distill`（提炼缓冲会话 → 记忆/规则，写 keywords）、`memory_list`、`memory_stats` —— 模型在会话里自己会用。
-- **记忆注入**：低频——当会话里的**用户消息**命中某条记忆的关键词时，下一条模型请求自动注入该记忆。没有启发式/正则抽取。
+- **模型工具**：`memory_search`（搜索）、`memory_get`（取某条记忆全文，下钻）、`memory_record`（写，含 keywords）、`memory_distill`（提炼缓冲会话 → 记忆/规则，写 keywords）、`memory_list`、`memory_stats` —— 模型在会话里自己会用。
+- **记忆注入**：每会话开头注入一次**冻结的记忆索引**（每条一行：类型·短id·主题·关键词，字节稳定、命中 KV 缓存），模型需要细节时用 `memory_get` 下钻——"检索 ≠ 注入"，不把全文塞进请求。无启发式/正则抽取。
 - **提炼**：LLM 生成记忆（每条带 2-5 个关键词，供触发注入）；可手动（`memory_distill` 工具 / "现在提炼"按钮 / `/memory distill`），或开 `distillAuto` 后**每 N 次用户输入自动执行**（`distillEveryNTurns`）。
 - **人类命令** `/memory`：
   ```

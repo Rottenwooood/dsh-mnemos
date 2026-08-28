@@ -9,7 +9,7 @@
 import type { Context } from '@deepseek-ai/cordis';
 import { randomUUID } from 'node:crypto';
 import type { MemoryService } from '../domain/service.js';
-import { recallByKeywords } from '../domain/recall.js';
+import { recallIndex } from '../domain/recall.js';
 import type { Config } from '../config.js';
 import type { ImportedMessage } from '../domain/imports/types.js';
 
@@ -181,13 +181,10 @@ export function registerHooks(ctx: Context, collector: SignalCollector, usage: U
 }
 
 /**
- * Cold/hot layered injection: keyword-triggered and low-frequency.
- *
- * On each `agent/pre-step`, when the step carries NEW user text (the first
- * step of a user turn; tool-loop steps carry none), the session text is
- * scanned against each active memory's keywords. Any hit is injected as one
- * UserMessage into the next model request ("keyword appears → inject in the
- * next block"). No LLM, no embeddings, no per-session frozen snapshot.
+ * Progressive-disclosure injection (P1): inject a byte-stable frozen INDEX of
+ * applicable memories (global + this workspace) once per session, so the block
+ * is KV-cache friendly and cheap. The model drills into details with
+ * memory_get. Protocol conventions stay always-on beside it.
  */
 export function registerInjection(
   ctx: Context,
@@ -195,33 +192,31 @@ export function registerInjection(
   getConfig: () => Config,
   usage: UsageTracker,
 ): void {
+  const injectedSessions = new Set<string>();
   ctx.on('agent/pre-step', async (payload: PreStepPayload, next) => {
     const decision = (await next()) as PreStepDecision;
     if (decision.kind === 'reject') return decision;
     payload.signal.throwIfAborted();
     const sessionId = (payload.agent as { session?: { id?: string } })?.session?.id;
     const cwd = (payload.agent as { session?: { header?: { cwd?: string } } })?.session?.header?.cwd;
+    if (sessionId !== undefined && injectedSessions.has(sessionId)) {
+      return decision;
+    }
     try {
       const config = getConfig();
       if (!config.enabled || !config.injectionEnabled) {
         return decision;
       }
-      // Low-frequency scan: only a step carrying user input can trigger.
-      const userText = userTextOf(payload.messages);
-      if (!userText) {
-        return decision;
-      }
-      // Candidates = global memories + this workspace's memories (project A's
-      // facts must not inject into project B).
-      const injection = recallByKeywords(service, userText, {
+      const index = recallIndex(service, {
         maxBytes: config.injectMaxBytes,
         limit: config.injectLimit,
         workspace: cwd,
       });
-      if (injection.injectedCount > 0) {
-        const tokens = estimateTokens(injection.text);
+      if (sessionId !== undefined) injectedSessions.add(sessionId);
+      if (index.injectedCount > 0) {
+        const tokens = estimateTokens(index.text);
         const tracked: Array<{ memoryId: string; terms: string[]; ledgerId: number }> = [];
-        for (const id of injection.injectedIds) {
+        for (const id of index.injectedIds) {
           try {
             const ledgerId = service.recordHit(id, sessionId, tokens);
             const mem = service.getMemory(id);
@@ -231,7 +226,7 @@ export function registerInjection(
           }
         }
         usage.record(sessionId ?? '', tracked);
-        return { kind: 'enter', messages: [...decision.messages, makeUserMessage(injection.text)] };
+        return { kind: 'enter', messages: [...decision.messages, makeUserMessage(index.text)] };
       }
     } catch {
       // injection is best-effort; never fail a step because of memory recall

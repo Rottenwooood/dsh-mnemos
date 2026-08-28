@@ -121,7 +121,7 @@ async function main(): Promise<void> {
 
   const ok =
     registered &&
-    registeredTools.length === 5 &&
+    registeredTools.length === 6 &&
     list.includes('real-composition') &&
     search.includes('real-composition') &&
     stats.includes('Active memories') &&

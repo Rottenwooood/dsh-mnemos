@@ -96,7 +96,7 @@ function toolDeps(service: ReturnType<typeof makeService>['service']): ToolDeps 
 }
 
 describe('tools wiring', () => {
-  it('registers the five model-facing tools', () => {
+  it('registers the six model-facing tools', () => {
     const { ctx, tools } = fakeContext();
     const { service } = makeService();
     registerTools(ctx, toolDeps(service));
@@ -105,6 +105,7 @@ describe('tools wiring', () => {
       'memory_record',
       'memory_list',
       'memory_stats',
+      'memory_get',
       'memory_distill',
     ]);
   });
@@ -267,42 +268,29 @@ describe('pre-step injection', () => {
 
   const userMsg = (text: string) => ({ role: 'user', content: [{ type: 'text', text }] });
 
-  it('injects a memory when its keyword appears in the user text', async () => {
+  it('injects a frozen memory index (one line per memory) once per session', async () => {
     const { ctx, listeners } = fakeContext();
     const { service } = makeService();
     service.add(memoryWithKeywords(['pnpm']), 'human');
     registerInjection(ctx, service, () => ({ ...defaultConfig(), injectMaxBytes: 4096 }), new UsageTracker());
     const messages = await listen(listeners, [userMsg('how do I install with pnpm?')]);
     const texts = messages.flatMap((m) => m.content.map((c) => c.text));
-    expect(texts.join('\n')).toContain('Use pnpm for builds.');
+    // The index contains the topic, not the full summary.
+    expect(texts.join('\n')).toContain('pnpm');
+    expect(texts.join('\n')).not.toContain('Use pnpm for builds.');
+    expect(texts.join('\n')).toContain('记忆索引');
   });
 
-  it('falls back to the topic when a memory has no keywords', async () => {
-    const { ctx, listeners } = fakeContext();
-    const { service } = makeService();
-    service.add(memoryWithKeywords([]), 'human');
-    registerInjection(ctx, service, () => ({ ...defaultConfig(), injectMaxBytes: 4096 }), new UsageTracker());
-    const messages = await listen(listeners, [userMsg('about pnpm installs')]);
-    const texts = messages.flatMap((m) => m.content.map((c) => c.text));
-    expect(texts.join('\n')).toContain('Use pnpm for builds.');
-  });
-
-  it('does NOT inject without user text (tool-loop steps stay low-frequency)', async () => {
+  it('injects the index once per session, not per step or per user message', async () => {
     const { ctx, listeners } = fakeContext();
     const { service } = makeService();
     service.add(memoryWithKeywords(['pnpm']), 'human');
     registerInjection(ctx, service, () => ({ ...defaultConfig(), injectMaxBytes: 4096 }), new UsageTracker());
-    const messages = await listen(listeners, []);
-    expect(messages.length).toBe(0);
-  });
-
-  it('does NOT inject when the user text has no matching keyword', async () => {
-    const { ctx, listeners } = fakeContext();
-    const { service } = makeService();
-    service.add(memoryWithKeywords(['pnpm']), 'human');
-    registerInjection(ctx, service, () => ({ ...defaultConfig(), injectMaxBytes: 4096 }), new UsageTracker());
-    const messages = await listen(listeners, [userMsg('tell me about git rebase')]);
-    expect(messages.length).toBe(0);
+    const first = await listen(listeners, [userMsg('install with pnpm')]);
+    expect(first.length).toBe(1);
+    // Later steps / turns in the same session: frozen, no re-injection.
+    const second = await listen(listeners, [userMsg('still pnpm')]);
+    expect(second.length).toBe(0);
   });
 
   it('skips injection when the injection master switch is off', async () => {
@@ -312,6 +300,19 @@ describe('pre-step injection', () => {
     registerInjection(ctx, service, () => ({ ...defaultConfig(), injectMaxBytes: 4096, injectionEnabled: false }), new UsageTracker());
     const messages = await listen(listeners, [userMsg('install with pnpm please')]);
     expect(messages.length).toBe(0);
+  });
+
+  it('memory_get drills into the full detail of an indexed memory', async () => {
+    const { ctx, tools } = fakeContext();
+    const { service } = makeService();
+    registerTools(ctx, toolDeps(service));
+    service.add(memoryWithKeywords(['pnpm']), 'human');
+    const getTool = tools.find((t) => t.name === 'memory_get')!;
+    const out = (await (getTool as unknown as {
+      execute(args: unknown, e: unknown): Promise<{ found: boolean; summary: string }>;
+    }).execute({ query: 'pnpm' }, {})) as { found: boolean; summary: string };
+    expect(out.found).toBe(true);
+    expect(out.summary).toContain('Use pnpm for builds.');
   });
 
   it('marks an injected memory as used when the assistant references it next', async () => {
@@ -503,6 +504,6 @@ describe('apply', () => {
     } as unknown as Context;
     apply(ctx2, { dbPath: ':memory:', gitVersioning: false });
     expect(provided[0]?.[0]).toBe('mnemos');
-    expect(tools.length).toBe(5);
+    expect(tools.length).toBe(6);
   });
 });

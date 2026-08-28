@@ -75,12 +75,56 @@ export function buildInjection(ranked: RankedMemory[], maxBytes: number): Inject
 }
 
 /**
- * Keyword-triggered recall (the injection path): scan session text for each
- * candidate memory's keywords and inject the ones that hit. Candidates are the
- * memories that apply to this session: global ones plus workspace-scoped ones
- * of the session's own cwd (so project A's memories never inject into project
- * B). Memories without keywords fall back to their topic. Matching is a
- * case-insensitive substring on terms of length >= 2.
+ * Per-session frozen index (P1 progressive disclosure, engram-style): one line
+ * per applicable memory (global + this workspace), sorted deterministically by
+ * usage, byte-bounded. Injected ONCE per session — byte-stable, so it hits the
+ * KV cache — and full details are fetched on demand via memory_get. This
+ * replaces per-turn full-text injection: "retrieved ≠ injected".
+ */
+export function recallIndex(
+  service: MemoryService,
+  opts: { maxBytes?: number; limit?: number; workspace?: string } = {},
+): Injection {
+  const maxBytes = opts.maxBytes ?? 2048;
+  const limit = opts.limit ?? 50;
+  const rows = [
+    ...service.listActive('global'),
+    ...service.listActive('workspace', opts.workspace),
+  ]
+    .sort((a, b) => b.crossSessionHits - a.crossSessionHits || b.updatedAt.localeCompare(a.updatedAt))
+    .slice(0, limit);
+  const lines = rows.map((r) => {
+    const kws = r.keywords.length > 0 ? `（${r.keywords.slice(0, 4).join(' ')}）` : '';
+    const tag = r.scope === 'global' ? 'g' : 'w';
+    return `- [${r.type}/${tag}] ${memoryShortId(r.id)} ${r.topic}${kws}`;
+  });
+  let text = '# dsh-mnemos 记忆索引\n（要细节用 memory_get <短id>）\n';
+  const injectedIds: string[] = [];
+  for (let i = 0; i < lines.length; i++) {
+    const line = `${lines[i]}\n`;
+    if (Buffer.byteLength(text + line, 'utf8') > maxBytes) {
+      break;
+    }
+    text += line;
+    injectedIds.push(rows[i]!.id);
+  }
+  return {
+    text,
+    injectedCount: injectedIds.length,
+    droppedCount: rows.length - injectedIds.length,
+    injectedIds,
+  };
+}
+
+/** Short 8-char id prefix for memory_get lookups. */
+export function memoryShortId(id: string): string {
+  const last = id.split('/').at(-1) ?? id;
+  return last.replace(/[^a-zA-Z0-9_-]/g, '').slice(0, 8);
+}
+
+/**
+ * Keyword-scored recall (kept for search/drill-down paths): rank the memories
+ * applicable to a session by whether the given text hits their keywords.
  */
 export function recallByKeywords(
   service: MemoryService,

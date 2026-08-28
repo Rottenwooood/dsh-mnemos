@@ -15,7 +15,7 @@ import { writeFileSync } from 'node:fs'
 import { openMemoryStore } from '../../src/domain/store.js'
 import { createSensitiveDetector } from '../../src/domain/sensitive.js'
 import { createMemoryService, DEFAULT_GATE } from '../../src/domain/service.js'
-import { recallByKeywords } from '../../src/domain/recall.js'
+import { recallIndex } from '../../src/domain/recall.js'
 import { factCorpus, noiseQueries } from './corpus.js'
 
 function makeEnv(): { store: ReturnType<typeof openMemoryStore>; service: ReturnType<typeof createMemoryService> } {
@@ -93,28 +93,18 @@ async function main(): Promise<void> {
     store.close()
   }
 
-  // ---- T4 injection efficiency ----
+  // ---- T4 injection efficiency (frozen per-session index) ----
   {
     const { store, service } = makeEnv()
     for (const fact of corpus) service.add(fact.input, 'human')
-    let totalTokens = 0
-    let injections = 0
-    let hits = 0
-    for (const f of corpus) {
-      for (const q of f.queries) {
-        const inj = recallByKeywords(service, q, { maxBytes: 2048, workspace: '/eval' })
-        if (inj.injectedCount > 0) {
-          injections += 1
-          totalTokens += Buffer.byteLength(inj.text, 'utf8') / 3
-          if (inj.text.includes(f.input.topic)) hits += 1
-        }
-      }
-    }
+    const index = recallIndex(service, { maxBytes: 4096, workspace: '/eval' })
+    const tokens = Math.ceil(Buffer.byteLength(index.text, 'utf8') / 3)
+    const covered = corpus.filter((f) => index.text.includes(f.input.topic)).length
     results.T4_injection = {
-      trigger_cases: corpus.length * 2,
-      injections: injections,
-      avg_injected_tokens: +Math.round(totalTokens / Math.max(1, injections)).toFixed(0),
-      right_memory_injected_rate: +(hits / Math.max(1, injections)).toFixed(3),
+      index_lines: index.injectedCount,
+      avg_injected_tokens: tokens,
+      right_memory_injected_rate: +(covered / corpus.length).toFixed(3),
+      index_bytes: Buffer.byteLength(index.text, 'utf8'),
     }
     store.close()
   }
@@ -141,10 +131,10 @@ async function main(): Promise<void> {
     `- 当前值可见：${results.T3_state_tracking.current_value_visible}`,
     `- 旧值仍在首位：${results.T3_state_tracking.stale_value_still_ranked}`,
     '',
-    '## T4 注入效率',
-    `- 触发注入次数：${results.T4_injection.injections}`,
+    '## T4 注入效率（每会话冻结索引）',
+    `- 索引行数：${results.T4_injection.index_lines}`,
     `- 平均注入 token：**${results.T4_injection.avg_injected_tokens}**`,
-    `- 注入内容命中正确记忆：**${results.T4_injection.right_memory_injected_rate}**`,
+    `- 索引覆盖正确记忆：**${results.T4_injection.right_memory_injected_rate}**`,
     '',
     '## 说明',
     '- 这些数字只测"召回/注入/状态"，不测"任务成功率"；开/关记忆的任务 A/B 需要真实模型与代理循环，是后续步骤。',

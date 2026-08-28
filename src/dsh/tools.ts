@@ -13,7 +13,7 @@
  */
 import type { Context } from '@deepseek-ai/cordis';
 import type { MemoryService } from '../domain/service.js';
-import type { MemoryScope, MemoryType } from '../domain/types.js';
+import type { Memory, MemoryScope, MemoryType } from '../domain/types.js';
 import type { Caller, ToolDefinition } from './types.js';
 import type { Llm } from '../domain/llm.js';
 import { runDistillIncremental, DistillCursor } from '../domain/distill.js';
@@ -439,7 +439,80 @@ export function registerTools(ctx: Context, deps: ToolDeps): void {
     },
   };
 
-  for (const tool of [search, record, list, stats, distill]) {
+  const getDetail: MnemosTool = {
+    name: 'memory_get',
+    description:
+      'Fetch the FULL detail of one memory by its short id (the 8-char id shown in the memory index) or by its topic text. Use this to drill into a memory the index only summarized.',
+    parameters: {
+      type: 'object',
+      properties: {
+        query: { type: 'string', description: 'Short memory id (e.g. "a1b2c3d4") or topic text to look up.' },
+      },
+      required: ['query'],
+    },
+    output: {
+      schema: {
+        type: 'object',
+        additionalProperties: false,
+        required: ['found', 'id', 'topic', 'summary'],
+        properties: {
+          found: { type: 'boolean' },
+          id: { oneOf: [{ type: 'string' }, { type: 'null' }] },
+          topic: { oneOf: [{ type: 'string' }, { type: 'null' }] },
+          summary: { oneOf: [{ type: 'string' }, { type: 'null' }] },
+          detail: { oneOf: [{ type: 'string' }, { type: 'null' }] },
+          keywords: { type: 'array', items: { type: 'string' } },
+          type: { oneOf: [{ type: 'string' }, { type: 'null' }] },
+          scope: { oneOf: [{ type: 'string' }, { type: 'null' }] },
+          workspace: { oneOf: [{ type: 'string' }, { type: 'null' }] },
+          crossSessionHits: { type: 'number' },
+        },
+      },
+      render: (_args, value) => {
+        const v = value as { found: boolean; topic: string | null; summary: string | null; detail?: string | null; keywords?: string[] };
+        if (!v.found) return text('memory_get: no such memory.');
+        return text(`# ${v.topic}\n${v.summary ?? ''}${v.detail ? `\n\n${v.detail}` : ''}${v.keywords?.length ? `\n\n关键词：${v.keywords.join(' ')}` : ''}`);
+      },
+    },
+    execute(args: unknown): Promise<unknown> {
+      const a = args as { query?: unknown };
+      const query = asString(a.query);
+      if (!query) throw new Error('query is required');
+      const mem = resolveByIdOrTopic(service, query);
+      if (!mem) {
+        return Promise.resolve({ found: false, id: null, topic: null, summary: null, detail: null, keywords: [], type: null, scope: null, workspace: null, crossSessionHits: 0 });
+      }
+      return Promise.resolve({
+        found: true,
+        id: mem.id,
+        topic: mem.topic,
+        summary: mem.summary,
+        detail: mem.detail ?? null,
+        keywords: mem.keywords ?? [],
+        type: mem.type,
+        scope: mem.scope,
+        workspace: mem.workspace ?? null,
+        crossSessionHits: mem.crossSessionHits,
+      });
+    },
+  };
+
+  for (const tool of [search, record, list, stats, getDetail, distill]) {
     ctx.effect(() => ctx.tools.register(tool as unknown as ToolDefinition));
   }
+}
+
+/** Resolve a memory by its 8-char short id prefix, or fall back to a topic-keyword search. */
+function resolveByIdOrTopic(service: MemoryService, query: string): Memory | undefined {
+  const short = query.trim();
+  const active = service.listActive();
+  const byShort = active.find((r) => shortIdOf(r.id) === short || r.id.endsWith(short));
+  if (byShort) return service.getMemory(byShort.id);
+  const rows = service.search(short, 3);
+  return rows.length > 0 ? service.getMemory(rows[0]!.id) : undefined;
+}
+
+function shortIdOf(id: string): string {
+  const last = id.split('/').at(-1) ?? id;
+  return last.replace(/[^a-zA-Z0-9_-]/g, '').slice(0, 8);
 }
