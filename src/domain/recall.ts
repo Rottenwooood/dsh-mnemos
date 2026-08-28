@@ -83,26 +83,30 @@ export function buildInjection(ranked: RankedMemory[], maxBytes: number): Inject
  */
 export function recallIndex(
   service: MemoryService,
-  opts: { maxBytes?: number; limit?: number; workspace?: string; personaText?: string; personaMax?: number } = {},
+  opts: { maxBytes?: number; limit?: number; workspace?: string; personaText?: string; personaMax?: number; untrustedMax?: number } = {},
 ): Injection {
   const maxBytes = opts.maxBytes ?? 2048;
   const limit = opts.limit ?? 50;
   const personaMax = opts.personaMax ?? 2;
+  // Bounded occupancy (P3): untrusted (model/import) entries are capped in
+  // count and placed after trusted ones — no additive provenance weights, which
+  // poison-resistance work (2608.21230) shows has no usable setting.
+  const untrustedMax = opts.untrustedMax ?? 3;
   const now = Date.now();
   const rows = [
     ...service.listActive('global'),
     ...service.listActive('workspace', opts.workspace),
-  ]
-    // Power-law heat from accessedAt||createdAt (never updatedAt): recent use
-    // and reinforcement rank high, stale-but-edited memories do not.
-    .sort((a, b) => heatOf(b, now) - heatOf(a, now) || b.crossSessionHits - a.crossSessionHits)
-    .slice(0, limit);
-  const lines = rows.map((r) => {
+  ].sort((a, b) => heatOf(b, now) - heatOf(a, now) || b.crossSessionHits - a.crossSessionHits);
+  const trusted = rows.filter((r) => r.trust !== 'untrusted').slice(0, limit);
+  const untrusted = rows.filter((r) => r.trust === 'untrusted').slice(0, untrustedMax);
+  const ranked = [...trusted, ...untrusted];
+  const lines = ranked.map((r) => {
     const kws = r.keywords.length > 0 ? `（${r.keywords.slice(0, 4).join(' ')}）` : '';
     const tag = r.scope === 'global' ? 'g' : 'w';
-    return `- [${r.type}/${tag}] ${memoryShortId(r.id)} ${r.topic}${kws}`;
+    const src = r.trust === 'untrusted' ? '/未验证' : '';
+    return `- [${r.type}/${tag}${src}] ${memoryShortId(r.id)} ${r.topic}${kws}`;
   });
-  let text = '# dsh-mnemos 记忆索引\n（要细节用 memory_get <短id>）\n';
+  let text = '# dsh-mnemos 记忆索引\n（来源标记：/未验证 = 模型/导入内容，非人工确认；要细节用 memory_get <短id>）\n';
   const injectedIds: string[] = [];
   for (let i = 0; i < lines.length; i++) {
     const line = `${lines[i]}\n`;
@@ -110,7 +114,7 @@ export function recallIndex(
       break;
     }
     text += line;
-    injectedIds.push(rows[i]!.id);
+    injectedIds.push(ranked[i]!.id);
   }
   // Persona projection (pyramid L3): approved persona claims relevant to the
   // current task text (keyword-overlap), else workspace claims by weight, up to

@@ -45,6 +45,7 @@ CREATE TABLE IF NOT EXISTS memories (
   pinned INTEGER NOT NULL DEFAULT 0,
   supersedes_id TEXT,
   superseded_by_id TEXT,
+  trust TEXT NOT NULL DEFAULT 'trusted',
   status TEXT NOT NULL DEFAULT 'active'
 );
 CREATE INDEX IF NOT EXISTS idx_mem_scope ON memories(scope, workspace);
@@ -178,6 +179,7 @@ export interface SummaryRow {
   status: MemoryStatus;
   pinned: boolean;
   supersededById?: string;
+  trust: 'trusted' | 'untrusted';
 }
 
 export interface MemoryStore {
@@ -256,6 +258,7 @@ function toMemory(row: Record<string, unknown>): Memory {
     pinned: Number(row.pinned ?? 0) === 1,
     supersedesId: (row.supersedes_id as string | null) ?? undefined,
     supersededById: (row.superseded_by_id as string | null) ?? undefined,
+    trust: row.trust === 'untrusted' ? 'untrusted' : 'trusted',
   };
 }
 
@@ -275,6 +278,7 @@ function toSummary(row: Record<string, unknown>): SummaryRow {
     status: row.status as MemoryStatus,
     pinned: Number(row.pinned ?? 0) === 1,
     supersededById: (row.superseded_by_id as string | null) ?? undefined,
+    trust: row.trust === 'untrusted' ? 'untrusted' : 'trusted',
   };
 }
 
@@ -315,6 +319,9 @@ export function openMemoryStore(path: string): MemoryStore {
   if (!cols.some((c) => c.name === 'superseded_by_id')) {
     db.exec('ALTER TABLE memories ADD COLUMN superseded_by_id TEXT');
   }
+  if (!cols.some((c) => c.name === 'trust')) {
+    db.exec("ALTER TABLE memories ADD COLUMN trust TEXT NOT NULL DEFAULT 'trusted'");
+  }
   const ledgerCols = db.prepare('PRAGMA table_info(usage_ledger)').all() as Array<{ name: string }>;
   if (!ledgerCols.some((c) => c.name === 'injected_tokens')) {
     db.exec('ALTER TABLE usage_ledger ADD COLUMN injected_tokens INTEGER NOT NULL DEFAULT 0');
@@ -328,18 +335,18 @@ export function openMemoryStore(path: string): MemoryStore {
 
   const insMemory = db.prepare(
     `INSERT INTO memories
-       (id, type, scope, workspace, topic, summary, detail, evidence, confidence, source, writer, created_at, updated_at, keywords, cross_session_hits, observation_count, accessed_at, verified, pinned, supersedes_id, status)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?, 'active')`,
+       (id, type, scope, workspace, topic, summary, detail, evidence, confidence, source, writer, created_at, updated_at, keywords, cross_session_hits, observation_count, accessed_at, verified, pinned, supersedes_id, trust, status)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?, 'active')`,
   );
   const getMemoryStmt = db.prepare('SELECT * FROM memories WHERE id = ?');
   const listStmt = db.prepare(
-    `SELECT id, summary, type, scope, workspace, topic, keywords, updated_at, cross_session_hits, observation_count, accessed_at, created_at, pinned, superseded_by_id, status
+    `SELECT id, summary, type, scope, workspace, topic, keywords, updated_at, cross_session_hits, observation_count, accessed_at, created_at, pinned, superseded_by_id, trust, status
        FROM memories
       WHERE (? IS NULL OR status IS ?) AND (? IS NULL OR scope IS ?) AND (? IS NULL OR workspace IS ?) AND (? IS NULL OR type IS ?)
       ORDER BY updated_at DESC`,
   );
   const listDeletedStmt = db.prepare(
-    `SELECT id, summary, type, scope, workspace, topic, keywords, updated_at, cross_session_hits, observation_count, accessed_at, created_at, pinned, superseded_by_id, status
+    `SELECT id, summary, type, scope, workspace, topic, keywords, updated_at, cross_session_hits, observation_count, accessed_at, created_at, pinned, superseded_by_id, trust, status
        FROM memories WHERE status='deleted'
       ORDER BY updated_at DESC, rowid DESC LIMIT 5`,
   );
@@ -356,24 +363,24 @@ export function openMemoryStore(path: string): MemoryStore {
       ORDER BY m.accessed_at ASC, m.created_at ASC, m.observation_count ASC`,
   );
   const searchFtsStmt = db.prepare(
-    `SELECT m.id, m.summary, m.type, m.scope, m.workspace, m.topic, m.keywords, m.updated_at, m.cross_session_hits, m.status
+    `SELECT m.id, m.summary, m.type, m.scope, m.workspace, m.topic, m.keywords, m.updated_at, m.cross_session_hits, m.accessed_at, m.created_at, m.pinned, m.trust, m.status
        FROM memory_fts f JOIN memories m ON m.rowid = f.rowid
       WHERE memory_fts MATCH ? AND m.status = 'active'
       ORDER BY rank LIMIT ?`,
   );
   const searchLikeStmt = db.prepare(
-    `SELECT id, summary, type, scope, workspace, topic, keywords, updated_at, cross_session_hits, observation_count, accessed_at, created_at, pinned, superseded_by_id, status
+    `SELECT id, summary, type, scope, workspace, topic, keywords, updated_at, cross_session_hits, observation_count, accessed_at, created_at, pinned, superseded_by_id, trust, status
        FROM memories WHERE status='active' AND (summary LIKE ? OR topic LIKE ?)
        ORDER BY updated_at DESC LIMIT ?`,
   );
   const searchSupersededFtsStmt = db.prepare(
-    `SELECT m.id, m.summary, m.type, m.scope, m.workspace, m.topic, m.keywords, m.updated_at, m.cross_session_hits, m.accessed_at, m.created_at, m.pinned, m.status, m.superseded_by_id
+    `SELECT m.id, m.summary, m.type, m.scope, m.workspace, m.topic, m.keywords, m.updated_at, m.cross_session_hits, m.accessed_at, m.created_at, m.pinned, m.trust, m.status, m.superseded_by_id
        FROM memory_fts f JOIN memories m ON m.rowid = f.rowid
       WHERE memory_fts MATCH ? AND m.status = 'superseded'
       ORDER BY rank LIMIT ?`,
   );
   const searchSupersededLikeStmt = db.prepare(
-    `SELECT id, summary, type, scope, workspace, topic, keywords, updated_at, cross_session_hits, observation_count, accessed_at, created_at, pinned, superseded_by_id, status
+    `SELECT id, summary, type, scope, workspace, topic, keywords, updated_at, cross_session_hits, observation_count, accessed_at, created_at, pinned, superseded_by_id, trust, status
        FROM memories WHERE status='superseded' AND (summary LIKE ? OR topic LIKE ?)
        ORDER BY updated_at DESC LIMIT ?`,
   );
@@ -435,7 +442,7 @@ export function openMemoryStore(path: string): MemoryStore {
   const listAuditStmt = db.prepare('SELECT * FROM audit ORDER BY id DESC LIMIT ?');
 
   const listByWriterStmt = db.prepare(
-    `SELECT id, summary, type, scope, workspace, topic, keywords, updated_at, cross_session_hits, observation_count, accessed_at, created_at, pinned, superseded_by_id, status
+    `SELECT id, summary, type, scope, workspace, topic, keywords, updated_at, cross_session_hits, observation_count, accessed_at, created_at, pinned, superseded_by_id, trust, status
        FROM memories WHERE writer LIKE ? AND status='active' ORDER BY updated_at DESC`,
   );
   const blacklistGet = db.prepare('SELECT 1 FROM bus_blacklist WHERE name = ? LIMIT 1');
@@ -480,6 +487,7 @@ export function openMemoryStore(path: string): MemoryStore {
         m.accessedAt ?? m.createdAt,
         m.pinned ? 1 : 0,
         m.supersedesId ?? null,
+        m.trust ?? 'trusted',
       );
     },
     getMemory(id) {

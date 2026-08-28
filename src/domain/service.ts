@@ -317,6 +317,9 @@ export function createMemoryService(
       const byAgent = caller === 'model';
       if (autoApprovable(input, caller) && !forcePropose) {
         const memory = buildMemory(input);
+        // Provenance trust: only human-committed content is trusted; model
+        // writes and imports are untrusted until a human approves them.
+        memory.trust = caller === 'human' ? 'trusted' : 'untrusted';
         store.addMemory(memory);
         onWrite?.();
         const auditId = audit('add', 'memory', memory.id, input, false, byAgent);
@@ -361,9 +364,10 @@ export function createMemoryService(
           // old one is marked superseded with its replacement link — both stay
           // in the store (MELD: contradictions are not silently dropped). Recall
           // ranks the current value ahead and annotates the superseded one.
-          const replacement = buildMemory(raw.memory);
-          replacement.supersedesId = raw.replaceMemoryId;
-          store.addMemory(replacement);
+        const replacement = buildMemory(raw.memory);
+        replacement.supersedesId = raw.replaceMemoryId;
+        replacement.trust = 'trusted'; // human-approved replacement is vetted
+        store.addMemory(replacement);
           store.setSuperseded(raw.replaceMemoryId, replacement.id);
           store.updateApprovalState(id, 'approved');
           audit('replace', 'memory', raw.replaceMemoryId, { approvalId: id, from: existing, to: raw.memory, supersededBy: replacement.id }, false, false);
@@ -372,6 +376,7 @@ export function createMemoryService(
         }
         const input = raw as MemoryInput;
         const memory = buildMemory(input);
+        memory.trust = 'trusted'; // a human approved this content
         store.addMemory(memory);
         store.updateApprovalState(id, 'approved');
         audit('approve', 'approval', String(id), { approvalId: id, memoryId: memory.id }, false, false);

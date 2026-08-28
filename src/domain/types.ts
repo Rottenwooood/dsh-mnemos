@@ -2,6 +2,8 @@ export type MemoryType = 'project_fact' | 'procedure' | 'preference' | 'error_fi
 export type MemoryScope = 'global' | 'workspace';
 export type MemoryStatus = 'active' | 'archived' | 'deleted' | 'superseded';
 export type MemorySource = 'manual' | 'import' | 'evolve' | 'third_party';
+/** Provenance trust for poisoning defense (P3): untrusted = model/import/3rd-party content, human-approved = trusted. */
+export type MemoryTrust = 'trusted' | 'untrusted';
 
 export interface Evidence {
   sessionId: string;
@@ -39,6 +41,8 @@ export interface Memory extends MemoryInput {
   supersedesId?: string;
   /** Set on the old memory when a replacement is approved. */
   supersededById?: string;
+  /** Provenance trust; recall applies bounded occupancy to untrusted entries. */
+  trust?: MemoryTrust;
   status: MemoryStatus;
 }
 

@@ -200,6 +200,22 @@ async function main(): Promise<void> {
   results.push(`supersession: old marked superseded=${superseded}`)
   results.push(`/memory search (superseded) -> ${replaceSearch}`)
 
+  // Provenance trust through the real service: a model auto-committed write is
+  // untrusted, a human write is trusted; recall/search marks untrusted entries.
+  const modelWrite = service.add(
+    { type: 'project_fact', scope: 'workspace', workspace: '/ws', topic: 'trust-check', summary: 'written by model', evidence: [{ sessionId: 's1', eventRange: [0, 0], quote: 'trust-check' }], confidence: 1, source: 'evolve', writer: 'model' },
+    'model',
+  )
+  const modelUntrusted = modelWrite.memory?.trust === 'untrusted'
+  const humanWrite = service.add(
+    { type: 'project_fact', scope: 'workspace', workspace: '/ws', topic: 'trust-human', summary: 'written by human', evidence: [], confidence: 1, source: 'manual', writer: 'human' },
+    'human',
+  )
+  const humanTrusted = humanWrite.memory?.trust === 'trusted'
+  results.push(`trust: model write untrusted=${modelUntrusted}, human write trusted=${humanTrusted}`)
+  const trustSearch = await run('/memory search trust-check')
+  results.push(`trust: search marks untrusted=${trustSearch.includes('未验证来源')}`)
+
   console.log(results.join('\n'))
 
   const ok =
@@ -225,7 +241,10 @@ async function main(): Promise<void> {
     replaceApprove.includes('Approved memory') &&
     superseded &&
     replaceSearch.includes('rev 2') &&
-    replaceSearch.includes('已被新值取代')
+    replaceSearch.includes('已被新值取代') &&
+    modelUntrusted &&
+    humanTrusted &&
+    trustSearch.includes('未验证来源')
   console.log(`RESULT: ${ok ? 'PASS' : 'FAIL'}`)
   process.exit(ok ? 0 : 1)
 }

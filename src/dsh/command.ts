@@ -79,7 +79,7 @@ export function registerCommand(ctx: Context, deps: CommandDeps): void {
                 (r) =>
                   `- [${r.type}] ${r.topic} (${r.crossSessionHits} hit${
                     r.crossSessionHits === 1 ? '' : 's'
-                  }): ${r.summary}${r.supersededById ? ' — 已被新值取代' : ''}`,
+                  }): ${r.summary}${r.supersededById ? ' — 已被新值取代' : ''}${r.trust === 'untrusted' ? ' — 未验证来源' : ''}`,
               )
               .join('\n'),
           );
@@ -89,7 +89,7 @@ export function registerCommand(ctx: Context, deps: CommandDeps): void {
           if (rows.length === 0) {
             return ok('No active memories.');
           }
-          return ok(rows.map((r) => `- [${r.type}]${r.pinned ? ' [pinned]' : ''} ${r.topic}: ${r.summary}`).join('\n'));
+          return ok(rows.map((r) => `- [${r.type}]${r.pinned ? ' [pinned]' : ''} ${r.topic}: ${r.summary}${r.trust === 'untrusted' ? ' — 未验证来源' : ''}`).join('\n'));
         }
         case 'stats': {
           const rows = service.listActive();
