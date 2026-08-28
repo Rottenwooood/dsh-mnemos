@@ -7,7 +7,7 @@
  */
 import { mkdirSync, readFileSync, readdirSync, writeFileSync, unlinkSync, existsSync } from 'node:fs';
 import { join } from 'node:path';
-import { Memory } from './types.js';
+import { Memory, Evidence } from './types.js';
 import { MemoryStore } from './store.js';
 
 export function memoryShortId(id: string): string {
@@ -35,6 +35,7 @@ export function renderMemoryFile(memory: Memory): string {
     `scope: ${memory.scope}`,
     `workspace: ${memory.workspace ?? ''}`,
     `topic: ${memory.topic}`,
+    `summary: ${memory.summary}`,
     `status: ${memory.status}`,
     `confidence: ${memory.confidence}`,
     `keywords: ${(memory.keywords ?? []).join(', ')}`,
@@ -43,8 +44,6 @@ export function renderMemoryFile(memory: Memory): string {
     `created_at: ${memory.createdAt}`,
     `updated_at: ${memory.updatedAt}`,
     '---',
-    '',
-    memory.summary,
     '',
     memory.detail ? `## 详情\n\n${memory.detail}\n` : '',
     evidence ? `## 溯源\n\n${evidence}\n` : '',
@@ -86,7 +85,9 @@ export function parseMemoryFile(text: string): Partial<Memory> | undefined {
     return undefined;
   }
   const lines = body.split('\n');
-  const summary = lines.find((l) => l.trim().length > 0)?.trim() ?? '';
+  // summary moved into frontmatter (format B); fall back to the old convention
+  // (first non-empty body line) so pre-B files and old git history still parse.
+  const summary = meta.summary?.trim() || (lines.find((l) => l.trim().length > 0)?.trim() ?? '');
   const detailIdx = lines.findIndex((l) => l.startsWith('## 详情'));
   const detail =
     detailIdx !== -1
@@ -96,6 +97,21 @@ export function parseMemoryFile(text: string): Partial<Memory> | undefined {
           .join('\n')
           .trim()
       : undefined;
+  const evidenceIdx = lines.findIndex((l) => l.startsWith('## 溯源'));
+  const evidence: Evidence[] = evidenceIdx !== -1
+    ? lines
+        .slice(evidenceIdx + 1)
+        .filter((l) => !l.startsWith('## '))
+        .map((l) => l.replace(/^-\s*/, '').trim())
+        .filter(Boolean)
+        .map((l) => {
+          const m = l.match(/^(\S+)\s+\[(\d+)-(\d+)\]\s*(.*)$/);
+          return m
+            ? { sessionId: m[1]!, eventRange: [Number(m[2]), Number(m[3])] as [number, number], quote: m[4]! }
+            : null;
+        })
+        .filter((e): e is Evidence => e !== null)
+    : [];
   return {
     id,
     type: (meta.type ?? 'project_fact') as Memory['type'],
@@ -115,7 +131,7 @@ export function parseMemoryFile(text: string): Partial<Memory> | undefined {
     createdAt: meta.created_at,
     updatedAt: meta.updated_at,
     crossSessionHits: 0,
-    evidence: [],
+    evidence,
   };
 }
 

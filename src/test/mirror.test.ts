@@ -40,6 +40,8 @@ describe('markdown mirror', () => {
     const m = mem({ keywords: ['pnpm', 'install', '部署到 us-east-1'] });
     const text = renderMemoryFile(m);
     expect(text).toContain('keywords: pnpm, install, 部署到 us-east-1');
+    // summary lives in frontmatter now (format B), body has no bare first line.
+    expect(text).toMatch(/^summary: /m);
     const parsed = parseMemoryFile(text)!;
     expect(parsed.id).toBe(m.id);
     expect(parsed.topic).toBe('build tool');
@@ -47,6 +49,26 @@ describe('markdown mirror', () => {
     expect(parsed.detail).toContain('vitest');
     expect(parsed.scope).toBe('workspace');
     expect(parsed.keywords).toEqual(['pnpm', 'install', '部署到 us-east-1']);
+    // 溯源 (evidence) is written AND read back.
+    expect(parsed.evidence.length).toBeGreaterThan(0);
+  });
+
+  it('still parses pre-B files where summary is the bare first body line', () => {
+    const old = `---
+id: mm://mnemos/legacy-1
+type: project_fact
+scope: workspace
+workspace: ws
+topic: old style
+---
+The old bare-body summary here.
+## 详情
+
+extra context
+`;
+    const parsed = parseMemoryFile(old)!;
+    expect(parsed.summary).toContain('bare-body');
+    expect(parsed.detail).toContain('extra context');
   });
 
   it('derives a deterministic unique file name per memory', () => {
