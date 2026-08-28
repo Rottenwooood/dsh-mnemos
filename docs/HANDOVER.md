@@ -99,6 +99,16 @@
 - **/memory 命令名**：卸载 dsh-memento 后夺回自然命令名（原为避开冲突用 `/mnemos`）。
 - **管理台空参数修复**：`?type=`（全部类型）正确归一化为"不过滤"。
 
+### 2026 计划落地（docs/QUALITY_PLAN_2026.md）
+
+P0 效果账本/评测/仪表、P1 冻结索引+memory_get 下钻+幂律热度、P2 负面记忆/遗忘归档/pinned/场景+人格整合/知识接替链、P3 防投毒（有界占用+trust）/开放测量 ABI+conformance/压缩防御（protocol 刷新轮次）全部落地。验证入口：
+
+- 一键：`scripts/run-verify.sh`（typecheck+单测 → 评测 → conformance → 真实组合）
+- 真实组合（harness 目录）：`node --import tsx/esm /home/c6h4o2/dsh-mnemos/scripts/verify-real-composition.mts`
+- conformance（harness 目录）：`node --import tsx/esm /home/c6h4o2/dsh-mnemos/scripts/conformance.mts`
+
+新表：`negative_memory`（失败拦截）、`scenes`/`persona`（整合候选，propose-only）、`memories.trust/pinned/supersedes_id/superseded_by_id`、`memories` 增 `observation_count/accessed_at`（幂律热度输入）。开放 ABI 为 `ctx.mnemosAbi`（`recall/get/state/probe`），bus 对齐到 `recall/get/state`。
+
 ---
 
 ## 三、安装后用户可用的全部新增操作

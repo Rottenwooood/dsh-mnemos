@@ -27,6 +27,10 @@ node --import tsx/esm /home/c6h4o2/dsh-mnemos/scripts/eval/run-eval.mts
 - **跨会话记忆**：这次会话说的"用 pnpm 装依赖"，下次会话模型自动知道，不用重复教。
 - **有门禁**：敏感内容、重复、越界的写入被自动打回；普通写入直接入库，有风险的进"待审批"等人工确认。
 - **会自我进化**：定时/手动把会话提炼成记忆和规则；规则批准后注入模型；还能固化成 SKILL。
+- **会做梦（整合）**：定时/手动把散记忆归组成"场景"，从偏好/决策里归纳"人格画像"（证据加权）；全部只产生候选，你批了才算数。
+- **记忆有生命周期**：失效清理按热度（冷的最先归档）走"活跃→归档→可还原"；`固定` 的记忆不参与清理；事实被新事实取代时新旧都保留并接上"接替链"，召回时新值在前、旧值标注"已被取代"。
+- **记得住教训**：失败的命令会被记录，下次一模一样再来直接拦下并告诉模型为什么失败；成功重试后自动解除。
+- **防投毒**：模型/导入产生的记忆标记"未验证"，注入时数量有上限且排在人工确认的记忆后面，来源标记模型可见。
 - **可审计**：每一次写入/批准/拒绝都有记录。
 - **数据你的**：全部存本地 SQLite；每条记忆同时是一份 Markdown 文件，走 git 历史（可回滚、可恢复、可跨机同步、可备份）。
 
@@ -51,15 +55,18 @@ dsh web
   ```
   /memory search <关键词>          搜索记忆
   /memory list | stats             查看/统计
+  /memory archive <id> | restore <id> | pin <id> | unpin <id>   生命周期管理
   /memory approve <id> | reject <id>   审批待确认项
   /memory import <来源> <路径>      导入历史会话（进提炼缓冲）
   /memory distill [路径]            提炼（生成记忆/规则候选）
+  /memory consolidate               整合（场景 + 人格候选）
+  /memory scenes | persona          查看/批准/拒绝 场景与人格候选
   /memory rules <list|activate|...>   管理规则
   /memory skill <list|promote>     规则 → SKILL
   /memory git <status|push|pull|rollback|restore|backup|...>  版本/同步
   /memory bus <blacklist|...>      第三方插件治理
   ```
-- **浏览器界面**（better-sidebar「记忆」页签）：概览、30 天命中热力图、待审批、记忆列表（搜索/筛选/编辑/版本历史/删除）、已删除恢复、被拒历史、git 同步。
+- **浏览器界面**（better-sidebar「记忆」页签）：概览、30 天命中热力图、待审批、场景/人格候选、记忆列表（活跃/已归档，搜索/筛选/编辑/固定/归档/版本历史/删除）、已删除恢复、被拒历史、git 同步。
 
 ## 同步到 GitHub
 
@@ -74,11 +81,29 @@ dsh web
 | `enabled` | 插件总开关 |
 | `autoApprove` / `autoApproveConfidence` | 是否自动放行高置信度记忆、阈值 |
 | `injectionEnabled` / `injectLimit` / `injectMaxBytes` | 是否注入、注入条数/字节预算 |
+| `protocolRefreshTurns` | 环境约定重新注入间隔（轮次），防上下文压缩把常驻指令吃掉 |
 | `gitRemoteUrl` / `gitBackend` / `syncEnabled` | 跨机同步：远端地址 / 后端 / 自动同步 |
 | `distillAuto` / `distillEveryNTurns` | 自动提炼开关与间隔（次用户输入） |
 | `sessionLogDirs` / `backfillEnabled` | 启动时回填历史会话日志 |
+| `negativeMemoryEnabled` / `negativeMemoryTtlMs` | 失败命令拦截与失效时长 |
+| `consolidationEnabled` / `consolidationIntervalHours` | 定期整合（场景+人格）开关与周期 |
 
 完整字段表、配置示例与使用场景见 **[docs/HANDOVER.md](docs/HANDOVER.md)**。
+
+## 机制对照（2026 生态/研究）
+
+| dsh-mnemos 机制 | 对齐来源 |
+|---|---|
+| 冻结索引注入 + `memory_get` 下钻（检索≠注入） | engram / meow / memory-manager / LongMemEval |
+| 幂律热度排序 + 强化计数 | dsh-evolve 衰减语义 |
+| 有界占用 + 来源标记防投毒 | 2608.21230 / Veracium |
+| 失败命令拦截 + 自失效（负面记忆） | dsh-negative-ledger / deja-vu |
+| 活跃→归档→删除 + pinned（绝不硬删） | dsh-evolve 状态机 |
+| 场景 + 人格（propose-only 审批） | self-improved 金字塔 / meow 做梦 / mneme |
+| 知识接替链（保留双方 + 标注当前值） | StateMemBench / MELD |
+| protocol 按轮次刷新（防压缩悬崖） | 2608.22752 |
+| 开放测量 ABI + conformance | memento conformance suite |
+| 效果账本 + 可复跑评测 | memlab / LongMemEval 方法论 |
 
 ## 开发
 
@@ -89,13 +114,18 @@ pnpm test                  # 单元测试
 pnpm run build:client      # 改了浏览器端（src/client/）后需要
 ```
 
-改完建议跑完整验证（真实环境）：
+改完跑完整验证（一键，含真实环境）：
 
 ```sh
-# 1) 真实命令注册表分发 /memory 各子命令（在 deepseek-harness 目录）
+scripts/run-verify.sh      # typecheck+单测 → 确定性评测 → ABI conformance → 真实注册表组合
+```
+
+单步（在 deepseek-harness 目录）：
+```sh
+# 真实命令注册表分发 /memory 各子命令 + 负面记忆 + 接替链 + 信任
 node --import tsx/esm /home/c6h4o2/dsh-mnemos/scripts/verify-real-composition.mts
-# 2) 全部 /mnemos/api HTTP 流程（先启动 dsh web）
-node --import tsx/esm /home/c6h4o2/dsh-mnemos/scripts/e2e-http.mts
+# 开放测量 ABI 一致性（证明不是空壳）
+node --import tsx/esm /home/c6h4o2/dsh-mnemos/scripts/conformance.mts
 ```
 
 ## 数据位置
