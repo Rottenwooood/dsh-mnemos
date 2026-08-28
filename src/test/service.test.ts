@@ -161,4 +161,38 @@ describe('memory service write path', () => {
     service.recordHit(res.memory!.id, 'sess-1');
     expect(store.getMemory(res.memory!.id)?.crossSessionHits).toBe(1);
   });
+
+  it('approving a replacement keeps both and links them via the supersession chain', async () => {
+    const { service, store } = makeService();
+    const old = service.add(
+      { ...input(), topic: 'build tool', summary: 'uses npm' },
+      'human',
+    ).memory!;
+    const proposed = service.proposeReplacement(
+      { ...input(), topic: 'build tool', summary: 'uses pnpm' },
+      old.id,
+      'model',
+    );
+    expect(proposed.outcome).toBe('proposed');
+    const approved = service.approve(proposed.approvalId!, 'approve');
+    expect(approved.ok).toBe(true);
+    const oldRow = store.getMemory(old.id)!;
+    const newRow = store.getMemory(approved.memory!.id)!;
+    // Old kept but marked superseded, pointing at its replacement.
+    expect(oldRow.status).toBe('superseded');
+    expect(oldRow.supersededById).toBe(newRow.id);
+    expect(newRow.supersedesId).toBe(old.id);
+    expect(newRow.status).toBe('active');
+    // The old value still matches recall but ranks after the current one and is
+    // annotated.
+    const hits = service.search('build tool', 10);
+    expect(hits[0]!.id).toBe(newRow.id);
+    expect(hits.map((h) => h.id)).toContain(old.id);
+    expect(hits.find((h) => h.id === old.id)!.supersededById).toBe(newRow.id);
+    // The old value is no longer an index candidate (superseded != active).
+    const { recallIndex, memoryShortId } = await import('../domain/recall.js');
+    const index = recallIndex(service, { workspace: 'my-ws' });
+    expect(index.text).toContain(memoryShortId(newRow.id));
+    expect(index.text).not.toContain(memoryShortId(old.id));
+  });
 });

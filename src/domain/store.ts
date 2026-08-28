@@ -43,6 +43,8 @@ CREATE TABLE IF NOT EXISTS memories (
   accessed_at TEXT NOT NULL DEFAULT '',
   verified INTEGER NOT NULL DEFAULT 0,
   pinned INTEGER NOT NULL DEFAULT 0,
+  supersedes_id TEXT,
+  superseded_by_id TEXT,
   status TEXT NOT NULL DEFAULT 'active'
 );
 CREATE INDEX IF NOT EXISTS idx_mem_scope ON memories(scope, workspace);
@@ -175,6 +177,7 @@ export interface SummaryRow {
   updatedAt: string;
   status: MemoryStatus;
   pinned: boolean;
+  supersededById?: string;
 }
 
 export interface MemoryStore {
@@ -188,6 +191,7 @@ export interface MemoryStore {
   updateMemory(id: string, patch: Partial<MemoryInput>): void;
   setMemoryStatus(id: string, status: MemoryStatus): void;
   setPinned(id: string, pinned: boolean): void;
+  setSuperseded(id: string, supersededById: string): void;
   recordHit(id: string, sessionId?: string, injectedTokens?: number): number;
   markLedgerUsed(ledgerId: number): void;
   markMemoryVerified(id: string): void;
@@ -250,6 +254,8 @@ function toMemory(row: Record<string, unknown>): Memory {
     accessedAt: String(row.accessed_at || row.created_at),
     status: row.status as MemoryStatus,
     pinned: Number(row.pinned ?? 0) === 1,
+    supersedesId: (row.supersedes_id as string | null) ?? undefined,
+    supersededById: (row.superseded_by_id as string | null) ?? undefined,
   };
 }
 
@@ -268,6 +274,7 @@ function toSummary(row: Record<string, unknown>): SummaryRow {
     updatedAt: String(row.updated_at),
     status: row.status as MemoryStatus,
     pinned: Number(row.pinned ?? 0) === 1,
+    supersededById: (row.superseded_by_id as string | null) ?? undefined,
   };
 }
 
@@ -302,6 +309,12 @@ export function openMemoryStore(path: string): MemoryStore {
   if (!cols.some((c) => c.name === 'pinned')) {
     db.exec('ALTER TABLE memories ADD COLUMN pinned INTEGER NOT NULL DEFAULT 0');
   }
+  if (!cols.some((c) => c.name === 'supersedes_id')) {
+    db.exec('ALTER TABLE memories ADD COLUMN supersedes_id TEXT');
+  }
+  if (!cols.some((c) => c.name === 'superseded_by_id')) {
+    db.exec('ALTER TABLE memories ADD COLUMN superseded_by_id TEXT');
+  }
   const ledgerCols = db.prepare('PRAGMA table_info(usage_ledger)').all() as Array<{ name: string }>;
   if (!ledgerCols.some((c) => c.name === 'injected_tokens')) {
     db.exec('ALTER TABLE usage_ledger ADD COLUMN injected_tokens INTEGER NOT NULL DEFAULT 0');
@@ -315,18 +328,18 @@ export function openMemoryStore(path: string): MemoryStore {
 
   const insMemory = db.prepare(
     `INSERT INTO memories
-       (id, type, scope, workspace, topic, summary, detail, evidence, confidence, source, writer, created_at, updated_at, keywords, cross_session_hits, observation_count, accessed_at, verified, pinned, status)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, 'active')`,
+       (id, type, scope, workspace, topic, summary, detail, evidence, confidence, source, writer, created_at, updated_at, keywords, cross_session_hits, observation_count, accessed_at, verified, pinned, supersedes_id, status)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?, 'active')`,
   );
   const getMemoryStmt = db.prepare('SELECT * FROM memories WHERE id = ?');
   const listStmt = db.prepare(
-    `SELECT id, summary, type, scope, workspace, topic, keywords, updated_at, cross_session_hits, observation_count, accessed_at, pinned, status
+    `SELECT id, summary, type, scope, workspace, topic, keywords, updated_at, cross_session_hits, observation_count, accessed_at, pinned, superseded_by_id, status
        FROM memories
       WHERE (? IS NULL OR status IS ?) AND (? IS NULL OR scope IS ?) AND (? IS NULL OR workspace IS ?) AND (? IS NULL OR type IS ?)
       ORDER BY updated_at DESC`,
   );
   const listDeletedStmt = db.prepare(
-    `SELECT id, summary, type, scope, workspace, topic, keywords, updated_at, cross_session_hits, observation_count, accessed_at, pinned, status
+    `SELECT id, summary, type, scope, workspace, topic, keywords, updated_at, cross_session_hits, observation_count, accessed_at, pinned, superseded_by_id, status
        FROM memories WHERE status='deleted'
       ORDER BY updated_at DESC, rowid DESC LIMIT 5`,
   );
@@ -349,8 +362,19 @@ export function openMemoryStore(path: string): MemoryStore {
       ORDER BY rank LIMIT ?`,
   );
   const searchLikeStmt = db.prepare(
-    `SELECT id, summary, type, scope, workspace, topic, keywords, updated_at, cross_session_hits, observation_count, accessed_at, pinned, status
+    `SELECT id, summary, type, scope, workspace, topic, keywords, updated_at, cross_session_hits, observation_count, accessed_at, pinned, superseded_by_id, status
        FROM memories WHERE status='active' AND (summary LIKE ? OR topic LIKE ?)
+       ORDER BY updated_at DESC LIMIT ?`,
+  );
+  const searchSupersededFtsStmt = db.prepare(
+    `SELECT m.id, m.summary, m.type, m.scope, m.workspace, m.topic, m.keywords, m.updated_at, m.cross_session_hits, m.status, m.superseded_by_id
+       FROM memory_fts f JOIN memories m ON m.rowid = f.rowid
+      WHERE memory_fts MATCH ? AND m.status = 'superseded'
+      ORDER BY rank LIMIT ?`,
+  );
+  const searchSupersededLikeStmt = db.prepare(
+    `SELECT id, summary, type, scope, workspace, topic, keywords, updated_at, cross_session_hits, observation_count, accessed_at, pinned, superseded_by_id, status
+       FROM memories WHERE status='superseded' AND (summary LIKE ? OR topic LIKE ?)
        ORDER BY updated_at DESC LIMIT ?`,
   );
   const updateMem = db.prepare(
@@ -411,7 +435,7 @@ export function openMemoryStore(path: string): MemoryStore {
   const listAuditStmt = db.prepare('SELECT * FROM audit ORDER BY id DESC LIMIT ?');
 
   const listByWriterStmt = db.prepare(
-    `SELECT id, summary, type, scope, workspace, topic, keywords, updated_at, cross_session_hits, observation_count, accessed_at, pinned, status
+    `SELECT id, summary, type, scope, workspace, topic, keywords, updated_at, cross_session_hits, observation_count, accessed_at, pinned, superseded_by_id, status
        FROM memories WHERE writer LIKE ? AND status='active' ORDER BY updated_at DESC`,
   );
   const blacklistGet = db.prepare('SELECT 1 FROM bus_blacklist WHERE name = ? LIMIT 1');
@@ -455,6 +479,7 @@ export function openMemoryStore(path: string): MemoryStore {
         m.observationCount ?? 0,
         m.accessedAt ?? m.createdAt,
         m.pinned ? 1 : 0,
+        m.supersedesId ?? null,
       );
     },
     getMemory(id) {
@@ -486,19 +511,24 @@ export function openMemoryStore(path: string): MemoryStore {
     },
     searchMemories(query, limit) {
       const fq = ftsQuery(query);
+      let active: Array<Record<string, unknown>> = [];
+      let superseded: Array<Record<string, unknown>> = [];
       if (fq) {
         try {
-          const rows = searchFtsStmt.all(fq, limit) as Record<string, unknown>[];
-          if (rows.length > 0) {
-            return rows.map(toSummary);
-          }
+          active = searchFtsStmt.all(fq, limit) as Array<Record<string, unknown>>;
+          superseded = searchSupersededFtsStmt.all(fq, limit) as Array<Record<string, unknown>>;
         } catch {
           // fall through to LIKE
         }
       }
-      const like = `%${query.replace(/[%_]/g, (c) => `\\${c}`)}%`;
-      const rows = searchLikeStmt.all(like, like, limit) as Record<string, unknown>[];
-      return rows.map(toSummary);
+      if (active.length === 0 && superseded.length === 0) {
+        const like = `%${query.replace(/[%_]/g, (c) => `\\${c}`)}%`;
+        active = searchLikeStmt.all(like, like, limit) as Array<Record<string, unknown>>;
+        superseded = searchSupersededLikeStmt.all(like, like, limit) as Array<Record<string, unknown>>;
+      }
+      // Active hits first; superseded (replaced) hits appended so recall ranks
+      // the current value ahead of the one it replaced.
+      return [...active, ...superseded].map(toSummary);
     },
     updateMemory(id, patch) {
       const existing = store.getMemory(id);
@@ -531,6 +561,11 @@ export function openMemoryStore(path: string): MemoryStore {
     },
     setPinned(id, pinned) {
       db.prepare('UPDATE memories SET pinned=?, updated_at=? WHERE id=?').run(pinned ? 1 : 0, now(), id);
+    },
+    setSuperseded(id, supersededById) {
+      db.prepare(
+        `UPDATE memories SET status='superseded', superseded_by_id=?, updated_at=? WHERE id=? AND status != 'deleted'`,
+      ).run(supersededById, now(), id);
     },
     recordHit(id, sessionId, injectedTokens) {
       hitStmt.run(now(), now(), id);

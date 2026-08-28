@@ -183,6 +183,23 @@ async function main(): Promise<void> {
   const personaApprove = personaId ? await run(`/memory persona approve ${personaId}`) : ''
   results.push(`/memory persona approve -> ${personaApprove}`)
 
+  // Supersession through the real registry: propose a replacement of seed-1,
+  // approve it, confirm the old value is demoted+annotated and the new is active.
+  const replaceProposal = service.proposeReplacement(
+    { type: 'project_fact', scope: 'workspace', workspace: '/ws', topic: 'real-composition', summary: 'Booted through the real command registry (rev 2).', evidence: [], confidence: 1, source: 'evolve', writer: 'model' },
+    'mm://mnemos/seed-1',
+    'model',
+  )
+  const replaceApprove = await run(`/memory approve ${replaceProposal.approvalId ?? 0}`)
+  const replaceSearch = await run('/memory search real-composition')
+  const seedAfterReplace = service.getMemory('mm://mnemos/seed-1')
+  const superseded = seedAfterReplace?.status === 'superseded'
+  results.push(`replacement approved=${replaceApprove.includes('Approved memory')}`)
+  results.push(`supersession: new value present=${replaceSearch.includes('rev 2')}`)
+  results.push(`supersession: old annotated as superseded=${replaceSearch.includes('已被新值取代')}`)
+  results.push(`supersession: old marked superseded=${superseded}`)
+  results.push(`/memory search (superseded) -> ${replaceSearch}`)
+
   console.log(results.join('\n'))
 
   const ok =
@@ -204,7 +221,11 @@ async function main(): Promise<void> {
     afterPin.includes('pinned') &&
     consolidateRun.includes('Consolidation:') &&
     personaList.includes('proposed') &&
-    personaApprove.includes('approved')
+    personaApprove.includes('approved') &&
+    replaceApprove.includes('Approved memory') &&
+    superseded &&
+    replaceSearch.includes('rev 2') &&
+    replaceSearch.includes('已被新值取代')
   console.log(`RESULT: ${ok ? 'PASS' : 'FAIL'}`)
   process.exit(ok ? 0 : 1)
 }

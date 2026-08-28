@@ -79,7 +79,7 @@ export function registerCommand(ctx: Context, deps: CommandDeps): void {
                 (r) =>
                   `- [${r.type}] ${r.topic} (${r.crossSessionHits} hit${
                     r.crossSessionHits === 1 ? '' : 's'
-                  }): ${r.summary}`,
+                  }): ${r.summary}${r.supersededById ? ' — 已被新值取代' : ''}`,
               )
               .join('\n'),
           );

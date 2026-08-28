@@ -1,6 +1,6 @@
 export type MemoryType = 'project_fact' | 'procedure' | 'preference' | 'error_fix' | 'decision' | 'protocol';
 export type MemoryScope = 'global' | 'workspace';
-export type MemoryStatus = 'active' | 'archived' | 'deleted';
+export type MemoryStatus = 'active' | 'archived' | 'deleted' | 'superseded';
 export type MemorySource = 'manual' | 'import' | 'evolve' | 'third_party';
 
 export interface Evidence {
@@ -35,6 +35,10 @@ export interface Memory extends MemoryInput {
   accessedAt?: string;
   /** Protected from cleanup/archive candidates. */
   pinned?: boolean;
+  /** The memory this one replaces (supersession chain, MELD/StateMemBench). */
+  supersedesId?: string;
+  /** Set on the old memory when a replacement is approved. */
+  supersededById?: string;
   status: MemoryStatus;
 }
 

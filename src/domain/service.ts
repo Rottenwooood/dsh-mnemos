@@ -357,11 +357,18 @@ export function createMemoryService(
           if (!existing) {
             return { ok: false, reason: 'target-not-found' };
           }
-          store.updateMemory(raw.replaceMemoryId, raw.memory);
+          // Supersession semantics (P2): the new value is a NEW memory and the
+          // old one is marked superseded with its replacement link — both stay
+          // in the store (MELD: contradictions are not silently dropped). Recall
+          // ranks the current value ahead and annotates the superseded one.
+          const replacement = buildMemory(raw.memory);
+          replacement.supersedesId = raw.replaceMemoryId;
+          store.addMemory(replacement);
+          store.setSuperseded(raw.replaceMemoryId, replacement.id);
           store.updateApprovalState(id, 'approved');
-          audit('replace', 'memory', raw.replaceMemoryId, { approvalId: id, from: existing, to: raw.memory }, false, false);
+          audit('replace', 'memory', raw.replaceMemoryId, { approvalId: id, from: existing, to: raw.memory, supersededBy: replacement.id }, false, false);
           onWrite?.();
-          return { ok: true, memory: store.getMemory(raw.replaceMemoryId) };
+          return { ok: true, memory: replacement };
         }
         const input = raw as MemoryInput;
         const memory = buildMemory(input);
