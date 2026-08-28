@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { openMemoryStore } from '../domain/store.js';
 import { createSensitiveDetector } from '../domain/sensitive.js';
-import { createMemoryService } from '../domain/service.js';
+import { createMemoryService, DEFAULT_GATE } from '../domain/service.js';
 import {
   DISTILL_SYSTEM_PROMPT,
   parseDistillResponse,
@@ -88,6 +88,32 @@ describe('distill runner', () => {
     const stored = service.listActive('workspace', 'ws')[0]!;
     expect(stored.type).toBe('protocol');
     expect(stored.keywords).toEqual(['bash', 'sandbox']);
+  });
+
+  it('honors an explicit scope override instead of the type default', async () => {
+    // allowModelGlobalWrite lets the model PROPOSE global facts (default gates
+    // would hard-deny them); the override then decides global vs workspace.
+    const store = openMemoryStore(':memory:');
+    const service = createMemoryService(store, createSensitiveDetector(), { ...DEFAULT_GATE, allowModelGlobalWrite: true });
+    // project_fact WITHOUT scope: default -> workspace being distilled.
+    const llmDefault = fakeLlm(() =>
+      JSON.stringify([{ type: 'project_fact', topic: 'build tool', summary: 'Repo builds with pnpm.', confidence: 0.95 }]),
+    );
+    await createDistillRunner(llmDefault, service, { scope: 'workspace', workspace: 'ws', sessionId: 's1' }).run([msg({ role: 'user', text: 'pnpm build', index: 0 })]);
+    expect(service.listActive('workspace', 'ws').find((m) => m.topic === 'build tool')).toBeDefined();
+    expect(service.listActive('global').find((m) => m.topic === 'build tool')).toBeUndefined();
+    // project_fact WITH scope:"global" -> lands as GLOBAL (model global writes
+    // need approval; approve it, then it must be active under global only).
+    const llmScoped = fakeLlm(() =>
+      JSON.stringify([{ type: 'project_fact', scope: 'global', topic: 'org convention', summary: 'All repos must pin engines.', confidence: 0.95 }]),
+    );
+    await createDistillRunner(llmScoped, service, { scope: 'workspace', workspace: 'ws', sessionId: 's1' }).run([msg({ role: 'user', text: 'pin engines everywhere', index: 0 })]);
+    const pending = store.listApprovals('proposed');
+    expect(pending.length).toBe(1);
+    const approved = service.approve(pending[0]!.id, 'approve');
+    expect(approved.ok).toBe(true);
+    expect(service.listActive('global').find((m) => m.topic === 'org convention')).toBeDefined();
+    expect(service.listActive('workspace', 'ws').find((m) => m.topic === 'org convention')).toBeUndefined();
   });
 
   it('drops invalid LLM output and never writes it', async () => {

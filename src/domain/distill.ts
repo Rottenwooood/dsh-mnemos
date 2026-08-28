@@ -21,18 +21,36 @@ Read the conversation and extract durable, reusable facts the user would want re
 Follow the JSON schema exactly. Output ONLY a JSON array, no prose, no markdown fences.
 Each item:
 {"type":"project_fact"|"procedure"|"preference"|"error_fix"|"decision"|"protocol",
- "topic":"short normalized title",
- "summary":"one-sentence fact",
- "detail":"optional longer context",
+ "scope":"workspace"|"global",       // optional, see below
+ "topic":"...",
+ "summary":"...",
+ "detail":"...",                     // optional
  "confidence":0.0-1.0,
  "keywords":["...","..."]}
-Rules:
+
+FIELD REFERENCE - what each field is USED for and HOW to write it:
+
+- type: what kind of fact this is. It prefixes every injected line and decides routing.
+    project_fact: a verifiable fact about the project, codebase or environment (build tool, file layout, network limits). Default when unsure.
+    procedure: a repeatable workflow with steps, worth running again.
+    preference: a stated user preference or way of working.
+    error_fix: a problem that was solved a specific way; record the cause AND the working fix.
+    decision: a choice that was made, WITH the reason, so it is not re-litigated later.
+    protocol: an ENVIRONMENT or TOOL-CALLING convention the agent must always operate under. Protocol entries are injected EVERY session, so keep them few and general - never per-task details.
+- scope: where the fact applies. "workspace" = this project only; "global" = everywhere for this user. If omitted: preference -> global, everything else -> the workspace being distilled. Override only when that default is wrong (a preference specific to THIS project is "workspace"; an environment convention that holds everywhere is "global"). Note: global non-preference writes are gated by deployment policy and may be rejected unless explicitly allowed - when unsure, keep it "workspace".
+- topic: the ONE-LINE TITLE the model sees at the START OF EVERY SESSION in the memory index, so it must be readable on its own:
+    - a short noun phrase, under ~40 characters, NOT a sentence and NEVER cut off mid-phrase;
+    - write it in the user's own language;
+    - bad: "用户多次以'执行一些linux命令，用于测试'发起任务，期望全面测试环境（基础命"
+    - good: "用户期望全面测试环境（基础命令/文件/管道/磁盘/内存/网络/后台）并汇总"
+- summary: the FULL fact the model reads on drill-down (memory_get / search). One self-contained sentence carrying the whole actionable fact without needing the conversation: who/what + condition + outcome. State the fact; never write "the user said...".
+- detail: ONLY when one sentence is not enough (steps, constraints, alternatives). Never duplicate summary.
+- confidence: how certain and verifiable this is from the transcript. Lower to <=0.6 when inferred, from a single ambiguous mention, or about long-term intent.
+- keywords: 2-5 SHORT, DISCRIMINATIVE terms or phrases the user would TYPE VERBATIM later. Keywords drive injection, so pick terms that uniquely surface THIS memory and are unlikely to appear in unrelated talk. One word or short noun phrase each; lowercase; no punctuation; never the whole sentence.
+
+Extraction rules:
 - Extract only high-signal facts: explicit user instructions/preferences, workflows, errors that were fixed, decisions with reasons.
-- Do NOT extract one-off trivia, code snippets, or credentials.
-- A "procedure" is a repeatable workflow; a "preference" is a stated user preference; an "error_fix" is a problem that was solved a specific way.
-- A "protocol" is an ENVIRONMENT or TOOL-CALLING convention the agent must always operate under (e.g. "every bash call runs in a fresh bwrap sandbox; /tmp is tmpfs and is wiped"). Protocol memories are injected every session, so keep them few and general — not per-task details.
-- Set confidence low (<=0.6) when unsure.
-- "keywords" must contain 2-5 SHORT, DISCRIMINATIVE terms or phrases the user would type verbatim later (e.g. "pnpm", "deploy to us-east-1", "git hooks"). Keywords drive automatic injection later, so pick terms that uniquely surface THIS memory and are unlikely to appear in unrelated talk. One word or a short noun phrase each; lowercase; no punctuation; never the whole sentence.`;
+- Do NOT extract one-off trivia, code snippets, or credentials.`;
 
 export interface DistillEntry {
   type: MemoryType;
@@ -41,6 +59,8 @@ export interface DistillEntry {
   detail?: string;
   confidence: number;
   keywords?: string[];
+  /** Optional override of the scope default (preference→global, else workspace). */
+  scope?: 'global' | 'workspace';
 }
 
 export interface DistillOutput {
@@ -148,7 +168,8 @@ function isValidEntry(v: unknown): v is DistillEntry {
     typeof o.summary === 'string' &&
     o.summary.trim().length > 0 &&
     keywordsValid &&
-    (o.confidence === undefined || (typeof o.confidence === 'number' && o.confidence >= 0 && o.confidence <= 1))
+    (o.confidence === undefined || (typeof o.confidence === 'number' && o.confidence >= 0 && o.confidence <= 1)) &&
+    (o.scope === undefined || o.scope === 'global' || o.scope === 'workspace')
   );
 }
 
@@ -204,7 +225,7 @@ function toMemoryInput(
   opts: DistillOptions,
   conflict: boolean,
 ): MemoryInput {
-  const scope = d.type === 'preference' ? 'global' : opts.scope;
+  const scope = d.scope ?? (d.type === 'preference' ? 'global' : opts.scope);
   return {
     type: d.type,
     scope,
