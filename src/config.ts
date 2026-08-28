@@ -72,6 +72,10 @@ export interface Config {
   negativeMemoryEnabled: boolean;
   /** How long a recorded failure stays active before auto-resolving, in ms. */
   negativeMemoryTtlMs: number;
+  /** Periodic consolidation (scenes + persona proposals), propose-only. */
+  consolidationEnabled: boolean;
+  /** How often consolidation runs, in hours (>=1). */
+  consolidationIntervalHours: number;
   /** LLM provider for distillation; empty falls back to DSH's agent-default-model. */
   llmProvider: string;
   /** LLM model id for distillation; empty falls back to DSH's agent-default-model. */
@@ -112,6 +116,8 @@ export function defaultConfig(): Config {
     gitBackend: 'system',
     negativeMemoryEnabled: true,
     negativeMemoryTtlMs: 300_000,
+    consolidationEnabled: true,
+    consolidationIntervalHours: 24,
     llmProvider: '',
     llmModel: '',
   };

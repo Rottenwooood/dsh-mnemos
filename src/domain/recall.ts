@@ -83,10 +83,11 @@ export function buildInjection(ranked: RankedMemory[], maxBytes: number): Inject
  */
 export function recallIndex(
   service: MemoryService,
-  opts: { maxBytes?: number; limit?: number; workspace?: string } = {},
+  opts: { maxBytes?: number; limit?: number; workspace?: string; personaText?: string; personaMax?: number } = {},
 ): Injection {
   const maxBytes = opts.maxBytes ?? 2048;
   const limit = opts.limit ?? 50;
+  const personaMax = opts.personaMax ?? 2;
   const now = Date.now();
   const rows = [
     ...service.listActive('global'),
@@ -110,6 +111,39 @@ export function recallIndex(
     }
     text += line;
     injectedIds.push(rows[i]!.id);
+  }
+  // Persona projection (pyramid L3): approved persona claims relevant to the
+  // current task text (keyword-overlap), else workspace claims by weight, up to
+  // personaMax, within the byte budget. These are index text only — not ledger
+  // tracked, not memory_get addresses.
+  const approved = service.listPersona('approved').sort((a, b) => b.weight - a.weight);
+  if (approved.length > 0 && Buffer.byteLength(text, 'utf8') < maxBytes) {
+    const words = new Set(
+      (opts.personaText ?? '')
+        .toLowerCase()
+        .split(/[^\p{L}\p{N}]+/u)
+        .filter((w) => w.length > 2),
+    );
+    const scored = approved
+      .map((p) => {
+        const claimWords = new Set(
+          p.claim.toLowerCase().split(/[^\p{L}\p{N}]+/u).filter((w) => w.length > 2),
+        );
+        const relevance = words.size > 0
+          ? [...claimWords].filter((w) => words.has(w)).length
+          : p.workspace === opts.workspace ? 1 : 0;
+        return { p, relevance };
+      })
+      .sort((a, b) => b.relevance - a.relevance || b.p.weight - a.p.weight)
+      .slice(0, personaMax)
+      .filter((x) => x.relevance > 0);
+    for (const { p } of scored) {
+      const line = `- [persona] ${p.claim}\n`;
+      if (Buffer.byteLength(text + line, 'utf8') > maxBytes) {
+        break;
+      }
+      text += line;
+    }
   }
   return {
     text,

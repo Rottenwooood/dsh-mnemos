@@ -211,6 +211,7 @@ export function registerInjection(
         maxBytes: config.injectMaxBytes,
         limit: config.injectLimit,
         workspace: cwd,
+        personaText: userTextOf(payload.messages ?? []),
       });
       if (sessionId !== undefined) injectedSessions.add(sessionId);
       if (index.injectedCount > 0) {

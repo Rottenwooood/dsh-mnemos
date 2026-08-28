@@ -23,6 +23,7 @@ import type { LlmRuntimeLike, LlmTarget } from './llm-adapter.js';
 import { detectSource, parseAny } from '../domain/imports/detect.js';
 import { processImported } from '../domain/backfill.js';
 import type { SignalCollector } from './hooks.js';
+import type { ConsolidationResult } from '../domain/consolidation.js';
 
 /** Structural face of the node IncomingMessage/ServerResponse the routes use. */
 type Req = IncomingMessage;
@@ -38,6 +39,8 @@ export interface MnemosRouteDeps {
   collector?: SignalCollector;
   /** Manual distillation trigger ("现在提炼"); null when no LLM adapter is mounted. */
   runDistillNow: () => Promise<{ memories: number; rules: number; conflicts: number } | null>;
+  /** Manual consolidation trigger (scenes + persona proposals). */
+  runConsolidation: () => ConsolidationResult;
   /** The harness llm service (optional; absent in llm-less profiles). */
   llm?: LlmRuntimeLike;
   /** Resolve the plugin's distillation model target (DSH default fallback). */
@@ -459,6 +462,42 @@ export function createMnemosRouteHandler(deps: MnemosRouteDeps): (req: Req, res:
       if (method === 'POST' && route === '/distill') {
         const result = await deps.runDistillNow();
         json(res, 200, result ?? { error: 'LLM unavailable' });
+        return;
+      }
+      if (method === 'POST' && route === '/consolidate') {
+        json(res, 200, deps.runConsolidation());
+        return;
+      }
+      if (method === 'GET' && route === '/scenes') {
+        const state = url.searchParams.get('state') || undefined;
+        json(res, 200, { scenes: deps.service.listScenes(state as 'proposed' | 'approved' | 'rejected' | undefined) });
+        return;
+      }
+      if (method === 'POST' && route === '/scenes/state') {
+        const body = await readJson(req);
+        const id = typeof body.id === 'string' ? body.id : '';
+        const state = body.state === 'approved' || body.state === 'rejected' ? body.state : 'proposed';
+        if (!id) {
+          json(res, 400, { ok: false, reason: 'id is required' });
+          return;
+        }
+        json(res, 200, deps.service.setSceneState(id, state));
+        return;
+      }
+      if (method === 'GET' && route === '/persona') {
+        const state = url.searchParams.get('state') || undefined;
+        json(res, 200, { claims: deps.service.listPersona(state as 'proposed' | 'approved' | 'rejected' | undefined) });
+        return;
+      }
+      if (method === 'POST' && route === '/persona/state') {
+        const body = await readJson(req);
+        const id = typeof body.id === 'string' ? body.id : '';
+        const state = body.state === 'approved' || body.state === 'rejected' ? body.state : 'proposed';
+        if (!id) {
+          json(res, 400, { ok: false, reason: 'id is required' });
+          return;
+        }
+        json(res, 200, deps.service.setPersonaState(id, state));
         return;
       }
       if (route.startsWith('/git/')) {

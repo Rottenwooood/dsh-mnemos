@@ -171,6 +171,18 @@ async function main(): Promise<void> {
   results.push(`/memory pin -> ${pinned}`)
   results.push(`pinned marked=${afterPin.includes('pinned')}`)
 
+  // Consolidation through the real registry: propose scenes+persona, approve
+  // the persona claim, and confirm it projects into the frozen index.
+  const consolidateRun = await run('/memory consolidate')
+  results.push(`/memory consolidate -> ${consolidateRun}`)
+  const scenesList = await run('/memory scenes')
+  results.push(`/memory scenes -> ${scenesList}`)
+  const personaList = await run('/memory persona')
+  results.push(`/memory persona -> ${personaList}`)
+  const personaId = personaList.match(/- \S+ \S+ (\S+): /)?.[1] ?? ''
+  const personaApprove = personaId ? await run(`/memory persona approve ${personaId}`) : ''
+  results.push(`/memory persona approve -> ${personaApprove}`)
+
   console.log(results.join('\n'))
 
   const ok =
@@ -189,7 +201,10 @@ async function main(): Promise<void> {
     rules.includes('No rules.') &&
     (gitStatus.includes('Uncommitted') || gitStatus.includes('clean')) &&
     !afterArchive.includes('real-composition') &&
-    afterPin.includes('pinned')
+    afterPin.includes('pinned') &&
+    consolidateRun.includes('Consolidation:') &&
+    personaList.includes('proposed') &&
+    personaApprove.includes('approved')
   console.log(`RESULT: ${ok ? 'PASS' : 'FAIL'}`)
   process.exit(ok ? 0 : 1)
 }

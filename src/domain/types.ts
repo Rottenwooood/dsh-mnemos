@@ -84,3 +84,31 @@ export interface ApprovalCandidate {
   evidence: Evidence[];
   createdAt: string;
 }
+
+export type ProposalState = 'proposed' | 'approved' | 'rejected';
+
+/** A consolidation scene: a group of memories from one task/effort. */
+export interface Scene {
+  id: string;
+  workspace: string | null;
+  title: string;
+  summary: string;
+  memoryIds: string[];
+  state: ProposalState;
+  proposedBy: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+/** A persona claim: an evidence-weighted stable trait distilled from preferences. */
+export interface PersonaClaim {
+  id: string;
+  workspace: string | null;
+  claim: string;
+  memoryIds: string[];
+  weight: number;
+  state: ProposalState;
+  proposedBy: string;
+  createdAt: string;
+  updatedAt: string;
+}

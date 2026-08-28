@@ -22,6 +22,7 @@ function commandDeps(service: ReturnType<typeof makeService>['service']): Comman
     config: defaultConfig(),
     collector: new SignalCollector(() => {}),
     distillCursor: { current: {} },
+    consolidate: () => ({ scenesProposed: 0, scenesSkipped: 0, personaProposed: 0, personaSkipped: 0 }),
     persistCursor: () => {},
   };
 }

@@ -28,6 +28,7 @@ function makeDeps(overrides: Partial<MnemosRouteDeps> = {}): MnemosRouteDeps {
     resolveModel: async () => undefined,
     getConfig: () => defaultConfig(),
     collector: new SignalCollector(() => {}),
+    runConsolidation: () => ({ scenesProposed: 0, scenesSkipped: 0, personaProposed: 0, personaSkipped: 0 }),
     ...overrides,
   };
 }
