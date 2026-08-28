@@ -2,7 +2,7 @@ import { describe, it, expect } from 'vitest';
 import { openMemoryStore } from '../domain/store.js';
 import { createSensitiveDetector } from '../domain/sensitive.js';
 import { createMemoryService, rrfFuse } from '../domain/service.js';
-import { buildInjection, recallByKeywords, recallQuery, RankedMemory } from '../domain/recall.js';
+import { buildInjection, recallByKeywords, recallIndex, recallQuery, RankedMemory } from '../domain/recall.js';
 
 function ranked(partial: Partial<RankedMemory> = {}): RankedMemory {
   return {
@@ -99,8 +99,7 @@ describe('layered recall', () => {
     expect(res.every((r) => r.summary.includes('pnpm'))).toBe(true);
   });
 
-  it('keyword recall covers global memories plus only the session workspace', () => {
-    const store = openMemoryStore(':memory:');
+  it('keyword recall covers global memories plus only the session workspace', () => {    const store = openMemoryStore(':memory:');
     const service = createMemoryService(store, createSensitiveDetector());
     const add = (m: Parameters<typeof service.add>[0]) => service.add(m, 'human');
     add({ type: 'preference', scope: 'global', topic: 'uv', summary: 'User prefers uv.', keywords: ['uv'], evidence: [], confidence: 1, source: 'manual', writer: 'human' });
@@ -115,5 +114,21 @@ describe('layered recall', () => {
     expect(recallByKeywords(service, 'install with yarn', { workspace: '/projA' }).text).not.toContain('yarn');
     // Project B memory injects in project B.
     expect(recallByKeywords(service, 'install with yarn', { workspace: '/projB' }).text).toContain('projB uses yarn');
+  });
+
+  it('the frozen index ranks recently-accessed memories above stale ones (power-law heat)', () => {
+    const store = openMemoryStore(':memory:');
+    const service = createMemoryService(store, createSensitiveDetector());
+    const add = (m: Parameters<typeof service.add>[0]) => service.add(m, 'human');
+    const fresh = add({ type: 'project_fact', scope: 'workspace', workspace: '/ws', topic: 'pnpm', summary: 'fresh fact', keywords: ['pnpm'], evidence: [], confidence: 1, source: 'manual', writer: 'human' }).memory!;
+    const stale = add({ type: 'project_fact', scope: 'workspace', workspace: '/ws', topic: 'yarn', summary: 'stale fact', keywords: ['yarn'], evidence: [], confidence: 1, source: 'manual', writer: 'human' }).memory!;
+    // access the fresh one now (bumps accessedAt), leave the stale one untouched
+    service.recordHit(fresh.id, 's1', 100);
+    store.updateMemory(stale.id, { summary: 'edited, but that is not an access' });
+    const index = recallIndex(service, { workspace: '/ws' });
+    const freshLine = index.text.split('\n').findIndex((l) => l.includes('pnpm'));
+    const staleLine = index.text.split('\n').findIndex((l) => l.includes('yarn'));
+    expect(freshLine).toBeGreaterThan(-1);
+    expect(staleLine).toBeGreaterThan(freshLine);
   });
 });

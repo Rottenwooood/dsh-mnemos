@@ -87,11 +87,14 @@ export function recallIndex(
 ): Injection {
   const maxBytes = opts.maxBytes ?? 2048;
   const limit = opts.limit ?? 50;
+  const now = Date.now();
   const rows = [
     ...service.listActive('global'),
     ...service.listActive('workspace', opts.workspace),
   ]
-    .sort((a, b) => b.crossSessionHits - a.crossSessionHits || b.updatedAt.localeCompare(a.updatedAt))
+    // Power-law heat from accessedAt||createdAt (never updatedAt): recent use
+    // and reinforcement rank high, stale-but-edited memories do not.
+    .sort((a, b) => heatOf(b, now) - heatOf(a, now) || b.crossSessionHits - a.crossSessionHits)
     .slice(0, limit);
   const lines = rows.map((r) => {
     const kws = r.keywords.length > 0 ? `（${r.keywords.slice(0, 4).join(' ')}）` : '';
@@ -120,6 +123,13 @@ export function recallIndex(
 export function memoryShortId(id: string): string {
   const last = id.split('/').at(-1) ?? id;
   return last.replace(/[^a-zA-Z0-9_-]/g, '').slice(0, 8);
+}
+
+/** Power-law coldness H = 1/(1+λ·Δt)^α on days since accessedAt||createdAt. */
+export function heatOf(row: { accessedAt: string; updatedAt: string }, now = Date.now()): number {
+  const at = Date.parse(row.accessedAt || row.updatedAt);
+  const dtDays = Number.isFinite(at) ? Math.max(0, (now - at) / 86_400_000) : 0;
+  return 1 / Math.pow(1 + 0.2 * dtDays, 1.0);
 }
 
 /**

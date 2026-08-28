@@ -29,6 +29,10 @@ export interface Memory extends MemoryInput {
   createdAt: string;
   updatedAt: string;
   crossSessionHits: number;
+  /** How many times this memory has been observed/reinforced. */
+  observationCount?: number;
+  /** Last time the memory was actually used (accessed), distinct from updatedAt. */
+  accessedAt?: string;
   status: MemoryStatus;
 }
 

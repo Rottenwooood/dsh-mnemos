@@ -36,6 +36,8 @@ CREATE TABLE IF NOT EXISTS memories (
   updated_at TEXT NOT NULL,
   keywords TEXT,
   cross_session_hits INTEGER NOT NULL DEFAULT 0,
+  observation_count INTEGER NOT NULL DEFAULT 0,
+  accessed_at TEXT NOT NULL DEFAULT '',
   verified INTEGER NOT NULL DEFAULT 0,
   status TEXT NOT NULL DEFAULT 'active'
 );
@@ -142,6 +144,8 @@ export interface SummaryRow {
   topic: string;
   keywords: string[];
   crossSessionHits: number;
+  observationCount: number;
+  accessedAt: string;
   updatedAt: string;
   status: MemoryStatus;
 }
@@ -208,6 +212,8 @@ function toMemory(row: Record<string, unknown>): Memory {
     createdAt: String(row.created_at),
     updatedAt: String(row.updated_at),
     crossSessionHits: Number(row.cross_session_hits),
+    observationCount: Number(row.observation_count ?? 0),
+    accessedAt: String(row.accessed_at || row.created_at),
     status: row.status as MemoryStatus,
   };
 }
@@ -222,6 +228,8 @@ function toSummary(row: Record<string, unknown>): SummaryRow {
     topic: String(row.topic),
     keywords: parseKeywords(row.keywords),
     crossSessionHits: Number(row.cross_session_hits),
+    observationCount: Number(row.observation_count ?? 0),
+    accessedAt: String(row.accessed_at || row.created_at),
     updatedAt: String(row.updated_at),
     status: row.status as MemoryStatus,
   };
@@ -249,6 +257,12 @@ export function openMemoryStore(path: string): MemoryStore {
   if (!cols.some((c) => c.name === 'verified')) {
     db.exec('ALTER TABLE memories ADD COLUMN verified INTEGER NOT NULL DEFAULT 0');
   }
+  if (!cols.some((c) => c.name === 'observation_count')) {
+    db.exec('ALTER TABLE memories ADD COLUMN observation_count INTEGER NOT NULL DEFAULT 0');
+  }
+  if (!cols.some((c) => c.name === 'accessed_at')) {
+    db.exec("ALTER TABLE memories ADD COLUMN accessed_at TEXT NOT NULL DEFAULT ''");
+  }
   const ledgerCols = db.prepare('PRAGMA table_info(usage_ledger)').all() as Array<{ name: string }>;
   if (!ledgerCols.some((c) => c.name === 'injected_tokens')) {
     db.exec('ALTER TABLE usage_ledger ADD COLUMN injected_tokens INTEGER NOT NULL DEFAULT 0');
@@ -262,18 +276,18 @@ export function openMemoryStore(path: string): MemoryStore {
 
   const insMemory = db.prepare(
     `INSERT INTO memories
-       (id, type, scope, workspace, topic, summary, detail, evidence, confidence, source, writer, created_at, updated_at, keywords, cross_session_hits, status)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, 'active')`,
+       (id, type, scope, workspace, topic, summary, detail, evidence, confidence, source, writer, created_at, updated_at, keywords, cross_session_hits, observation_count, accessed_at, verified, status)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, 0, ?, 0, 'active')`,
   );
   const getMemoryStmt = db.prepare('SELECT * FROM memories WHERE id = ?');
   const listStmt = db.prepare(
-    `SELECT id, summary, type, scope, workspace, topic, keywords, updated_at, cross_session_hits, status
+    `SELECT id, summary, type, scope, workspace, topic, keywords, updated_at, cross_session_hits, observation_count, accessed_at, status
        FROM memories
       WHERE (? IS NULL OR status IS ?) AND (? IS NULL OR scope IS ?) AND (? IS NULL OR workspace IS ?) AND (? IS NULL OR type IS ?)
       ORDER BY updated_at DESC`,
   );
   const listDeletedStmt = db.prepare(
-    `SELECT id, summary, type, scope, workspace, topic, keywords, updated_at, cross_session_hits, status
+    `SELECT id, summary, type, scope, workspace, topic, keywords, updated_at, cross_session_hits, observation_count, accessed_at, status
        FROM memories WHERE status='deleted'
       ORDER BY updated_at DESC, rowid DESC LIMIT 5`,
   );
@@ -295,7 +309,7 @@ export function openMemoryStore(path: string): MemoryStore {
       ORDER BY rank LIMIT ?`,
   );
   const searchLikeStmt = db.prepare(
-    `SELECT id, summary, type, scope, workspace, topic, keywords, updated_at, cross_session_hits, status
+    `SELECT id, summary, type, scope, workspace, topic, keywords, updated_at, cross_session_hits, observation_count, accessed_at, status
        FROM memories WHERE status='active' AND (summary LIKE ? OR topic LIKE ?)
        ORDER BY updated_at DESC LIMIT ?`,
   );
@@ -305,7 +319,7 @@ export function openMemoryStore(path: string): MemoryStore {
   );
   const setStatus = db.prepare('UPDATE memories SET status=?, updated_at=? WHERE id=?');
   const hitStmt = db.prepare(
-    'UPDATE memories SET cross_session_hits = cross_session_hits + 1, updated_at=? WHERE id=?',
+    'UPDATE memories SET cross_session_hits = cross_session_hits + 1, observation_count = observation_count + 1, accessed_at=?, updated_at=? WHERE id=?',
   );
   const ledgerStmt = db.prepare(
     'INSERT INTO usage_ledger (ts, memory_id, session_id, injected, injected_tokens, used, task_ok) VALUES (?, ?, ?, 1, ?, 0, NULL) RETURNING id',
@@ -346,7 +360,7 @@ export function openMemoryStore(path: string): MemoryStore {
   const listAuditStmt = db.prepare('SELECT * FROM audit ORDER BY id DESC LIMIT ?');
 
   const listByWriterStmt = db.prepare(
-    `SELECT id, summary, type, scope, workspace, topic, keywords, updated_at, cross_session_hits, status
+    `SELECT id, summary, type, scope, workspace, topic, keywords, updated_at, cross_session_hits, observation_count, accessed_at, status
        FROM memories WHERE writer LIKE ? AND status='active' ORDER BY updated_at DESC`,
   );
   const blacklistGet = db.prepare('SELECT 1 FROM bus_blacklist WHERE name = ? LIMIT 1');
@@ -386,6 +400,7 @@ export function openMemoryStore(path: string): MemoryStore {
         m.createdAt,
         m.updatedAt,
         m.keywords && m.keywords.length > 0 ? JSON.stringify(m.keywords) : null,
+        m.accessedAt ?? m.createdAt,
       );
     },
     getMemory(id) {
@@ -461,7 +476,7 @@ export function openMemoryStore(path: string): MemoryStore {
       }
     },
     recordHit(id, sessionId, injectedTokens) {
-      hitStmt.run(now(), id);
+      hitStmt.run(now(), now(), id);
       const result = ledgerStmt.run(now(), id, sessionId ?? null, injectedTokens ?? 0);
       return Number(result.lastInsertRowid);
     },
