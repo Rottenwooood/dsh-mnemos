@@ -50,7 +50,7 @@ describe('markdown mirror', () => {
     expect(parsed.scope).toBe('workspace');
     expect(parsed.keywords).toEqual(['pnpm', 'install', '部署到 us-east-1']);
     // 溯源 (evidence) is written AND read back.
-    expect(parsed.evidence.length).toBeGreaterThan(0);
+    expect(parsed.evidence?.length).toBeGreaterThan(0);
   });
 
   it('still parses pre-B files where summary is the bare first body line', () => {
