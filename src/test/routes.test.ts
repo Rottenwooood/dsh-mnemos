@@ -151,7 +151,7 @@ describe('/mnemos/api route handler', () => {
     expect((exported.json.memories as unknown[]).length).toBeGreaterThanOrEqual(1);
   });
 
-  it('reports cleanup candidates and deletes them on POST', async () => {
+  it('reports cleanup candidates and archives them on POST (reversible)', async () => {
     const deps = makeDeps();
     const staleId = 'mm://mnemos/stale-1';
     deps.store.addMemory({
@@ -174,7 +174,16 @@ describe('/mnemos/api route handler', () => {
     const preview = await call(handler, 'GET', '/mnemos/api/cleanup?days=1');
     const ids = preview.json.ids as string[];
     expect(ids).toContain(staleId);
-    const removed = await call(handler, 'POST', '/mnemos/api/cleanup', { ids });
-    expect(removed.json.removed).toBe(ids.length);
+    const archived = await call(handler, 'POST', '/mnemos/api/cleanup', { ids });
+    expect(archived.json.archived).toBe(ids.length);
+    // Archive is reversible: the memory is archived (not deleted), and restore works.
+    expect(deps.store.getMemory(staleId)?.status).toBe('archived');
+    const restored = await call(handler, 'POST', '/mnemos/api/memory/restore', { id: staleId });
+    expect(restored.json.ok).toBe(true);
+    expect(deps.store.getMemory(staleId)?.status).toBe('active');
+    // Pin round trip: pin then unpin.
+    const pinned = await call(handler, 'POST', '/mnemos/api/memory/pin', { id: staleId, pinned: true });
+    expect(pinned.json.ok).toBe(true);
+    expect(deps.store.getMemory(staleId)?.pinned).toBe(true);
   });
 });

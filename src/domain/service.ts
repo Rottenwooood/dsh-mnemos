@@ -138,6 +138,9 @@ export interface MemoryService {
   markLedgerUsed(ledgerId: number): void;
   markMemoryVerified(id: string): void;
   getMemory(id: string): ReturnType<MemoryStore['getMemory']>;
+  archiveMemory(id: string): { ok: boolean; reason?: string };
+  restoreMemory(id: string): { ok: boolean; reason?: string };
+  setPinned(id: string, pinned: boolean): { ok: boolean; reason?: string };
   telemetry(): ReturnType<MemoryStore['telemetry']>;
   usageStats(days?: number): ReturnType<MemoryStore['usageStats']>;
   listDeleted(): ReturnType<MemoryStore['listDeleted']>;
@@ -470,6 +473,45 @@ export function createMemoryService(
 
     listStale(days) {
       return store.listStale(days);
+    },
+
+    archiveMemory(id) {
+      const existing = store.getMemory(id);
+      if (!existing) {
+        return { ok: false, reason: 'not-found' };
+      }
+      if (existing.status === 'archived') {
+        return { ok: false, reason: 'already-archived' };
+      }
+      store.setMemoryStatus(id, 'archived');
+      onWrite?.();
+      audit('archive', 'memory', id, { id, topic: existing.topic }, false, false);
+      return { ok: true };
+    },
+
+    restoreMemory(id) {
+      const existing = store.getMemory(id);
+      if (!existing) {
+        return { ok: false, reason: 'not-found' };
+      }
+      if (existing.status === 'active') {
+        return { ok: false, reason: 'already-active' };
+      }
+      store.setMemoryStatus(id, 'active');
+      onWrite?.();
+      audit('restore', 'memory', id, { id, topic: existing.topic }, false, false);
+      return { ok: true };
+    },
+
+    setPinned(id, pinned) {
+      const existing = store.getMemory(id);
+      if (!existing) {
+        return { ok: false, reason: 'not-found' };
+      }
+      store.setPinned(id, pinned);
+      onWrite?.();
+      audit(pinned ? 'pin' : 'unpin', 'memory', id, { id, topic: existing.topic }, false, false);
+      return { ok: true };
     },
 
     search(query, limit = 10) {

@@ -86,11 +86,36 @@ export function registerCommand(ctx: Context, deps: CommandDeps): void {
           if (rows.length === 0) {
             return ok('No active memories.');
           }
-          return ok(rows.map((r) => `- [${r.type}] ${r.topic}: ${r.summary}`).join('\n'));
+          return ok(rows.map((r) => `- [${r.type}]${r.pinned ? ' [pinned]' : ''} ${r.topic}: ${r.summary}`).join('\n'));
         }
         case 'stats': {
           const rows = service.listActive();
           return ok(`Active memories: ${rows.length}`);
+        }
+        case 'archive': {
+          const id = rest[0]?.trim();
+          if (!id) {
+            return ok('usage: /memory archive <memoryId>');
+          }
+          const r = service.archiveMemory(id);
+          return ok(r.ok ? `Archived ${id}.` : `Cannot archive: ${r.reason}.`);
+        }
+        case 'restore': {
+          const id = rest[0]?.trim();
+          if (!id) {
+            return ok('usage: /memory restore <memoryId>');
+          }
+          const r = service.restoreMemory(id);
+          return ok(r.ok ? `Restored ${id}.` : `Cannot restore: ${r.reason}.`);
+        }
+        case 'pin':
+        case 'unpin': {
+          const id = rest[0]?.trim();
+          if (!id) {
+            return ok(`usage: /memory ${verb} <memoryId>`);
+          }
+          const r = service.setPinned(id, verb === 'pin');
+          return ok(r.ok ? `${verb === 'pin' ? 'Pinned' : 'Unpinned'} ${id}.` : `Cannot ${verb}: ${r.reason}.`);
         }
         case 'approve': {
           const id = Number(rest[0]);
@@ -352,7 +377,7 @@ export function registerCommand(ctx: Context, deps: CommandDeps): void {
         }
         default:
           return ok(
-            'commands: search <query> | list | stats | approve <id> | reject <id> | import <src> <path> | backfill <dir> | distill [path] | rules <...> | skill <...> | bus <...> | git <...>',
+            'commands: search <query> | list | stats | archive <id> | restore <id> | pin <id> | unpin <id> | approve <id> | reject <id> | import <src> <path> | backfill <dir> | distill [path] | rules <...> | skill <...> | bus <...> | git <...>',
           );
       }
     },

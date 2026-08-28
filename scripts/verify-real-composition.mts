@@ -158,6 +158,19 @@ async function main(): Promise<void> {
   const gitStatus = await run('/memory git status')
   results.push(`/memory git status -> ${gitStatus}`)
 
+  // Archive/restore/pin through the real registry: archive hides it from
+  // /memory list, restore brings it back, pin marks it protected.
+  const archived = await run('/memory archive mm://mnemos/seed-1')
+  const afterArchive = await run('/memory list')
+  const restored = await run('/memory restore mm://mnemos/seed-1')
+  const pinned = await run('/memory pin mm://mnemos/seed-1')
+  const afterPin = await run('/memory list')
+  results.push(`/memory archive -> ${archived}`)
+  results.push(`archived hidden from list=${!afterArchive.includes('real-composition')}`)
+  results.push(`/memory restore -> ${restored}`)
+  results.push(`/memory pin -> ${pinned}`)
+  results.push(`pinned marked=${afterPin.includes('pinned')}`)
+
   console.log(results.join('\n'))
 
   const ok =
@@ -174,7 +187,9 @@ async function main(): Promise<void> {
     approve.includes('Approved memory') &&
     imported.includes('Ingested 1 messages') &&
     rules.includes('No rules.') &&
-    (gitStatus.includes('Uncommitted') || gitStatus.includes('clean'))
+    (gitStatus.includes('Uncommitted') || gitStatus.includes('clean')) &&
+    !afterArchive.includes('real-composition') &&
+    afterPin.includes('pinned')
   console.log(`RESULT: ${ok ? 'PASS' : 'FAIL'}`)
   process.exit(ok ? 0 : 1)
 }

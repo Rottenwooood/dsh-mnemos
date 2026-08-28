@@ -163,14 +163,10 @@ export function createMnemosRouteHandler(deps: MnemosRouteDeps): (req: Req, res:
           json(res, 200, { count: rows.length, memories: rows });
           return;
         }
-        if (status === 'all') {
-          const rows = deps.store.listSummaries(scope === 'all' ? undefined : scope === 'global' ? 'global' : 'workspace', workspace, undefined, type);
-          json(res, 200, { count: rows.length, memories: rows });
-          return;
-        }
-        const rows = deps.service.listActive(
+        const rows = deps.store.listSummaries(
           scope === 'all' ? undefined : scope === 'global' ? 'global' : 'workspace',
           workspace,
+          status === 'active' || status === 'archived' ? status : 'active',
           type,
         );
         json(res, 200, { count: rows.length, memories: rows });
@@ -225,6 +221,27 @@ export function createMnemosRouteHandler(deps: MnemosRouteDeps): (req: Req, res:
           return;
         }
         json(res, 200, deps.service.removeMemory(id));
+        return;
+      }
+      if (method === 'POST' && (route === '/memory/archive' || route === '/memory/restore')) {
+        const body = await readJson(req);
+        const id = typeof body.id === 'string' ? body.id : '';
+        if (!id) {
+          json(res, 400, { ok: false, reason: 'id is required' });
+          return;
+        }
+        json(res, 200, route === '/memory/archive' ? deps.service.archiveMemory(id) : deps.service.restoreMemory(id));
+        return;
+      }
+      if (method === 'POST' && route === '/memory/pin') {
+        const body = await readJson(req);
+        const id = typeof body.id === 'string' ? body.id : '';
+        const pinned = typeof body.pinned === 'boolean' ? body.pinned : true;
+        if (!id) {
+          json(res, 400, { ok: false, reason: 'id is required' });
+          return;
+        }
+        json(res, 200, deps.service.setPinned(id, pinned));
         return;
       }
       if (method === 'POST' && route === '/memory/edit') {
@@ -431,12 +448,12 @@ export function createMnemosRouteHandler(deps: MnemosRouteDeps): (req: Req, res:
       if (method === 'POST' && route === '/cleanup') {
         const body = await readJson(req);
         const ids = Array.isArray(body.ids) ? (body.ids as unknown[]).filter((v): v is string => typeof v === 'string') : [];
-        let removed = 0;
+        let archived = 0;
         for (const id of ids) {
-          const r = deps.service.removeMemory(id);
-          if (r.ok) removed += 1;
+          const r = deps.service.archiveMemory(id);
+          if (r.ok) archived += 1;
         }
-        json(res, 200, { removed, requested: ids.length });
+        json(res, 200, { archived, requested: ids.length });
         return;
       }
       if (method === 'POST' && route === '/distill') {

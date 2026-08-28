@@ -82,6 +82,7 @@ interface MemoryRow {
   crossSessionHits: number
   updatedAt: string
   status: string
+  pinned: boolean
 }
 
 /** One git commit from /mnemos/api/git/history. */
@@ -156,7 +157,8 @@ export function MnemosTab(): ReactNode {
   const telemetry = useJson<{ injections: number; used: number; usedRate: number; avgInjectedTokens: number; verifiedMemories: number; totalActive: number }>('/mnemos/api/telemetry')
   const pending = useJson<{ pending: PendingRow[] }>('/mnemos/api/pending')
   const [typeFilter, setTypeFilter] = useState('')
-  const memories = useJson<{ memories: MemoryRow[] }>(`/mnemos/api/memories?scope=all&type=${encodeURIComponent(typeFilter)}`)
+  const [statusFilter, setStatusFilter] = useState('active')
+  const memories = useJson<{ memories: MemoryRow[] }>(`/mnemos/api/memories?scope=all&type=${encodeURIComponent(typeFilter)}&status=${statusFilter}`)
   const deleted = useJson<{ memories: MemoryRow[] }>('/mnemos/api/memories?status=deleted')
   const usage = useJson<UsageStats>('/mnemos/api/usage')
   const git = useJson<{ changed: string[] }>('/mnemos/api/git/status')
@@ -408,6 +410,20 @@ export function MnemosTab(): ReactNode {
       <div className="mnemos-section" style={{ padding: 0 }}>
         <div className="mnemos-heading" style={{ fontSize: 13 }}> <Icon path={ICON_MEMORY} />记忆</div>
         <div style={{ display: 'flex', gap: 6, marginTop: 6, flexWrap: 'wrap' }}>
+          <button
+            className="mnemos-button"
+            style={{ opacity: statusFilter === 'active' ? 1 : 0.6 }}
+            onClick={() => setStatusFilter('active')}
+          >
+            活跃
+          </button>
+          <button
+            className="mnemos-button"
+            style={{ opacity: statusFilter === 'archived' ? 1 : 0.6 }}
+            onClick={() => setStatusFilter('archived')}
+          >
+            已归档
+          </button>
           <input
             className="mnemos-input"
             style={{ flex: 1, minWidth: 140 }}
@@ -422,7 +438,9 @@ export function MnemosTab(): ReactNode {
         </div>
         {visible.length === 0 && (memories.data?.memories.length ?? 0) === 0 ? (
           <div className="mnemos-intro" style={{ margin: '8px 0 0' }}>
-            还没有记忆。让模型在会话里记录项目事实（例如"用 pnpm 安装依赖"），或在设置页导入历史会话。
+            {statusFilter === 'archived'
+              ? '暂无已归档记忆。'
+              : '还没有记忆。让模型在会话里记录项目事实（例如"用 pnpm 安装依赖"），或在设置页导入历史会话。'}
           </div>
         ) : null}
         {visible.length === 0 && (memories.data?.memories.length ?? 0) > 0 ? (
@@ -449,6 +467,7 @@ export function MnemosTab(): ReactNode {
               <>
                 <div className="mnemos-intro" style={{ margin: 0 }}>
                   <span className="mnemos-badge">{m.scope === 'global' ? '全局' : '项目'}</span>{' '}
+                  {m.pinned ? <span className="mnemos-badge">固定</span> : null}{' '}
                   {m.topic} — {m.summary}（{usageByMemory.get(m.id)?.hits ?? m.crossSessionHits} 命中
                   {usageByMemory.get(m.id)?.sessions ? ` · ${usageByMemory.get(m.id)!.sessions} 会话` : ''}）
                 </div>
@@ -464,6 +483,35 @@ export function MnemosTab(): ReactNode {
                   >
                     版本历史
                   </button>
+                  {statusFilter === 'active' ? (
+                    <button
+                      className="mnemos-button"
+                      style={{ marginRight: 6 }}
+                      disabled={busy}
+                      onClick={() => void act('/mnemos/api/memory/pin', { id: m.id, pinned: !m.pinned }, m.pinned ? '已取消固定' : '已固定')}
+                    >
+                      {m.pinned ? '取消固定' : '固定'}
+                    </button>
+                  ) : null}
+                  {statusFilter === 'active' ? (
+                    <button
+                      className="mnemos-button"
+                      style={{ marginRight: 6 }}
+                      disabled={busy}
+                      onClick={() => void act('/mnemos/api/memory/archive', { id: m.id }, '已归档')}
+                    >
+                      归档
+                    </button>
+                  ) : (
+                    <button
+                      className="mnemos-button"
+                      style={{ marginRight: 6 }}
+                      disabled={busy}
+                      onClick={() => void act('/mnemos/api/memory/restore', { id: m.id }, '已还原')}
+                    >
+                      还原
+                    </button>
+                  )}
                   <button
                     className="mnemos-button"
                     disabled={busy}

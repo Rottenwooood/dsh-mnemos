@@ -33,6 +33,8 @@ export interface Memory extends MemoryInput {
   observationCount?: number;
   /** Last time the memory was actually used (accessed), distinct from updatedAt. */
   accessedAt?: string;
+  /** Protected from cleanup/archive candidates. */
+  pinned?: boolean;
   status: MemoryStatus;
 }
 

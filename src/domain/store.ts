@@ -39,6 +39,7 @@ CREATE TABLE IF NOT EXISTS memories (
   observation_count INTEGER NOT NULL DEFAULT 0,
   accessed_at TEXT NOT NULL DEFAULT '',
   verified INTEGER NOT NULL DEFAULT 0,
+  pinned INTEGER NOT NULL DEFAULT 0,
   status TEXT NOT NULL DEFAULT 'active'
 );
 CREATE INDEX IF NOT EXISTS idx_mem_scope ON memories(scope, workspace);
@@ -148,6 +149,7 @@ export interface SummaryRow {
   accessedAt: string;
   updatedAt: string;
   status: MemoryStatus;
+  pinned: boolean;
 }
 
 export interface MemoryStore {
@@ -160,6 +162,7 @@ export interface MemoryStore {
   searchMemories(query: string, limit: number): SummaryRow[];
   updateMemory(id: string, patch: Partial<MemoryInput>): void;
   setMemoryStatus(id: string, status: MemoryStatus): void;
+  setPinned(id: string, pinned: boolean): void;
   recordHit(id: string, sessionId?: string, injectedTokens?: number): number;
   markLedgerUsed(ledgerId: number): void;
   markMemoryVerified(id: string): void;
@@ -215,6 +218,7 @@ function toMemory(row: Record<string, unknown>): Memory {
     observationCount: Number(row.observation_count ?? 0),
     accessedAt: String(row.accessed_at || row.created_at),
     status: row.status as MemoryStatus,
+    pinned: Number(row.pinned ?? 0) === 1,
   };
 }
 
@@ -232,6 +236,7 @@ function toSummary(row: Record<string, unknown>): SummaryRow {
     accessedAt: String(row.accessed_at || row.created_at),
     updatedAt: String(row.updated_at),
     status: row.status as MemoryStatus,
+    pinned: Number(row.pinned ?? 0) === 1,
   };
 }
 
@@ -263,6 +268,9 @@ export function openMemoryStore(path: string): MemoryStore {
   if (!cols.some((c) => c.name === 'accessed_at')) {
     db.exec("ALTER TABLE memories ADD COLUMN accessed_at TEXT NOT NULL DEFAULT ''");
   }
+  if (!cols.some((c) => c.name === 'pinned')) {
+    db.exec('ALTER TABLE memories ADD COLUMN pinned INTEGER NOT NULL DEFAULT 0');
+  }
   const ledgerCols = db.prepare('PRAGMA table_info(usage_ledger)').all() as Array<{ name: string }>;
   if (!ledgerCols.some((c) => c.name === 'injected_tokens')) {
     db.exec('ALTER TABLE usage_ledger ADD COLUMN injected_tokens INTEGER NOT NULL DEFAULT 0');
@@ -281,13 +289,13 @@ export function openMemoryStore(path: string): MemoryStore {
   );
   const getMemoryStmt = db.prepare('SELECT * FROM memories WHERE id = ?');
   const listStmt = db.prepare(
-    `SELECT id, summary, type, scope, workspace, topic, keywords, updated_at, cross_session_hits, observation_count, accessed_at, status
+    `SELECT id, summary, type, scope, workspace, topic, keywords, updated_at, cross_session_hits, observation_count, accessed_at, pinned, status
        FROM memories
       WHERE (? IS NULL OR status IS ?) AND (? IS NULL OR scope IS ?) AND (? IS NULL OR workspace IS ?) AND (? IS NULL OR type IS ?)
       ORDER BY updated_at DESC`,
   );
   const listDeletedStmt = db.prepare(
-    `SELECT id, summary, type, scope, workspace, topic, keywords, updated_at, cross_session_hits, observation_count, accessed_at, status
+    `SELECT id, summary, type, scope, workspace, topic, keywords, updated_at, cross_session_hits, observation_count, accessed_at, pinned, status
        FROM memories WHERE status='deleted'
       ORDER BY updated_at DESC, rowid DESC LIMIT 5`,
   );
@@ -299,8 +307,9 @@ export function openMemoryStore(path: string): MemoryStore {
   );
   const listStaleStmt = db.prepare(
     `SELECT m.id FROM memories m
-      WHERE m.status='active' AND m.updated_at < ?
-        AND NOT EXISTS (SELECT 1 FROM usage_ledger u WHERE u.memory_id = m.id AND u.ts >= ?)`,
+      WHERE m.status='active' AND m.pinned=0 AND m.updated_at < ?
+        AND NOT EXISTS (SELECT 1 FROM usage_ledger u WHERE u.memory_id = m.id AND u.ts >= ?)
+      ORDER BY m.accessed_at ASC, m.created_at ASC, m.observation_count ASC`,
   );
   const searchFtsStmt = db.prepare(
     `SELECT m.id, m.summary, m.type, m.scope, m.workspace, m.topic, m.keywords, m.updated_at, m.cross_session_hits, m.status
@@ -309,7 +318,7 @@ export function openMemoryStore(path: string): MemoryStore {
       ORDER BY rank LIMIT ?`,
   );
   const searchLikeStmt = db.prepare(
-    `SELECT id, summary, type, scope, workspace, topic, keywords, updated_at, cross_session_hits, observation_count, accessed_at, status
+    `SELECT id, summary, type, scope, workspace, topic, keywords, updated_at, cross_session_hits, observation_count, accessed_at, pinned, status
        FROM memories WHERE status='active' AND (summary LIKE ? OR topic LIKE ?)
        ORDER BY updated_at DESC LIMIT ?`,
   );
@@ -360,7 +369,7 @@ export function openMemoryStore(path: string): MemoryStore {
   const listAuditStmt = db.prepare('SELECT * FROM audit ORDER BY id DESC LIMIT ?');
 
   const listByWriterStmt = db.prepare(
-    `SELECT id, summary, type, scope, workspace, topic, keywords, updated_at, cross_session_hits, observation_count, accessed_at, status
+    `SELECT id, summary, type, scope, workspace, topic, keywords, updated_at, cross_session_hits, observation_count, accessed_at, pinned, status
        FROM memories WHERE writer LIKE ? AND status='active' ORDER BY updated_at DESC`,
   );
   const blacklistGet = db.prepare('SELECT 1 FROM bus_blacklist WHERE name = ? LIMIT 1');
@@ -474,6 +483,9 @@ export function openMemoryStore(path: string): MemoryStore {
       if (status === 'deleted') {
         pruneDeletedStmt.run();
       }
+    },
+    setPinned(id, pinned) {
+      db.prepare('UPDATE memories SET pinned=?, updated_at=? WHERE id=?').run(pinned ? 1 : 0, now(), id);
     },
     recordHit(id, sessionId, injectedTokens) {
       hitStmt.run(now(), now(), id);

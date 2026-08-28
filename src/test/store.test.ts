@@ -122,6 +122,30 @@ describe('memory store', () => {
     store.close();
   });
 
+  it('excludes pinned memories from stale candidates and orders by heat (coldest first)', () => {
+    const store = openMemoryStore(':memory:');
+    const mk = (id: string, updatedAt: string, opts: { accessedAt?: string } = {}) =>
+      store.addMemory(mem({ id, updatedAt, accessedAt: opts.accessedAt } as Partial<MemoryInput> & { id: string; updatedAt: string; accessedAt?: string }));
+    mk('pinned-old', '2024-01-01T00:00:00.000Z');
+    store.setPinned('pinned-old', true);
+    mk('used-old', '2024-01-01T00:00:00.000Z', { accessedAt: '2024-02-01T00:00:00.000Z' });
+    mk('coldest', '2024-01-01T00:00:00.000Z');
+    const stale = store.listStale(30);
+    expect(stale).not.toContain('pinned-old');
+    // Coldest first: the memory last used longer ago (2024) precedes the never-moved one.
+    expect(stale).toEqual(['used-old', 'coldest']);
+    // pinning an active memory removes it from candidates.
+    store.setPinned('coldest', true);
+    expect(store.listStale(30)).toEqual(['used-old']);
+    // archived status machine: archive -> restore round trip.
+    store.setMemoryStatus('used-old', 'archived');
+    expect(store.listSummaries(undefined, undefined, 'archived').map((r) => r.id)).toContain('used-old');
+    expect(store.listStale(30)).toEqual([]);
+    store.setMemoryStatus('used-old', 'active');
+    expect(store.getMemory('used-old')?.status).toBe('active');
+    store.close();
+  });
+
   it('keeps only the 5 most recent deleted memories (prunes older ones)', () => {
     const store = openMemoryStore(':memory:');
     for (let i = 0; i < 8; i++) {
