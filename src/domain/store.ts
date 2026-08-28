@@ -180,6 +180,7 @@ export interface SummaryRow {
   pinned: boolean;
   supersededById?: string;
   trust: 'trusted' | 'untrusted';
+  writer: string;
 }
 
 export interface MemoryStore {
@@ -279,6 +280,7 @@ function toSummary(row: Record<string, unknown>): SummaryRow {
     pinned: Number(row.pinned ?? 0) === 1,
     supersededById: (row.superseded_by_id as string | null) ?? undefined,
     trust: row.trust === 'untrusted' ? 'untrusted' : 'trusted',
+    writer: String(row.writer ?? ''),
   };
 }
 
@@ -340,7 +342,7 @@ export function openMemoryStore(path: string): MemoryStore {
   );
   const getMemoryStmt = db.prepare('SELECT * FROM memories WHERE id = ?');
   const listStmt = db.prepare(
-    `SELECT id, summary, type, scope, workspace, topic, keywords, updated_at, cross_session_hits, observation_count, accessed_at, created_at, pinned, superseded_by_id, trust, status
+    `SELECT id, summary, type, scope, workspace, topic, keywords, writer, updated_at, cross_session_hits, observation_count, accessed_at, created_at, pinned, superseded_by_id, trust, status
        FROM memories
       WHERE (? IS NULL OR status IS ?) AND (? IS NULL OR scope IS ?) AND (? IS NULL OR workspace IS ?) AND (? IS NULL OR type IS ?)
       ORDER BY updated_at DESC`,

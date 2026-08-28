@@ -20,6 +20,7 @@ import { MemoryService } from './service.js';
 import { MemoryStore, SummaryRow } from './store.js';
 import { Memory, MemoryInput, MemoryScope, Rule } from './types.js';
 import { exactDedupKey } from './dedup.js';
+import { memoryShortId } from './recall.js';
 
 export interface BusIdentity {
   name: string;
@@ -49,6 +50,10 @@ export interface BusRecordResult {
 
 export interface MemoryBus {
   recall(opts: BusRecallOptions): SummaryRow[];
+  /** Full memory by id (or short id). */
+  get(idOrShortId: string): Memory | undefined;
+  /** Bus-visible state: active count, pending, per-writer memory counts. */
+  state(): { active: number; pending: number; writers: Array<{ name: string; count: number }> };
   record(input: MemoryInput, identity: BusIdentity): BusRecordResult;
   subscribe(listener: (event: BusEvent) => void): () => void;
   revoke(memoryId: string, identity: BusIdentity): { ok: boolean; reason?: string };
@@ -89,6 +94,28 @@ export function createMemoryBus(
         return service.search(opts.query, opts.limit ?? 10);
       }
       return service.listActive(opts.scope, opts.workspace);
+    },
+
+    get(idOrShortId) {
+      const byId = store.getMemory(idOrShortId);
+      if (byId) {
+        return byId;
+      }
+      const match = service.listActive().find((r) => memoryShortId(r.id) === idOrShortId);
+      return match ? store.getMemory(match.id) : undefined;
+    },
+
+    state() {
+      const active = store.listSummaries(undefined, undefined, 'active');
+      const writers = new Map<string, number>();
+      for (const r of active) {
+        writers.set(r.writer, (writers.get(r.writer) ?? 0) + 1);
+      }
+      return {
+        active: active.length,
+        pending: store.listApprovals('proposed').length,
+        writers: [...writers.entries()].map(([name, count]) => ({ name, count })),
+      };
     },
 
     record(input, identity) {

@@ -28,6 +28,7 @@ import { registerHooks, registerInjection, registerProtocolInjection, SignalColl
 import { openNegativeMemoryStore } from './domain/negative.js';
 import { registerNegativeMemory } from './dsh/negative-hooks.js';
 import { runConsolidation } from './domain/consolidation.js';
+import { createMnemosAbi } from './dsh/adapter.js';
 import { createLlmFromContext } from './dsh/llm-adapter.js';
 import { installMnemosSettings } from './dsh/settings.js';
 import { registerMnemosRoutes } from './dsh/routes.js';
@@ -168,6 +169,9 @@ export function apply(ctx: Context, raw: Partial<Config> = {}): void {
     store.close();
   });
   ctx.effect(() => ctx.provide('mnemos', service));
+
+  const abi = createMnemosAbi(store, service, '1.0.0', config.dbPath);
+  ctx.effect(() => ctx.provide('mnemosAbi', abi));
 
   const bus = createMemoryBus(service, store, (event) => ctx.emit('mnemos/memory', event));
   ctx.effect(() => ctx.provide('mnemosBus', bus));
