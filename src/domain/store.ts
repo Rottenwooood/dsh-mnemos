@@ -122,7 +122,7 @@ export interface UsageStat {
   lastUsed: string | null;
 }
 
-/** Ledger-derived usage summary: the single source for cross-session stats and the heatmap. */
+/** Ledger-derived usage summary: the single source for cross-session stats. */
 export interface UsageStats {
   /** Total real hits (model referenced injected memory). */
   totalHits: number;
@@ -130,8 +130,6 @@ export interface UsageStats {
   totalInjections: number;
   distinctSessions: number;
   perMemory: UsageStat[];
-  /** per-calendar-day hit counts for the last `days` days (zero-filled). */
-  daily: Array<{ day: string; count: number }>;
 }
 
 /** Effect telemetry: does injected memory actually get used, at what cost. */
@@ -176,7 +174,8 @@ export interface MemoryStore {
   setMemoryStatus(id: string, status: MemoryStatus): void;
   setPinned(id: string, pinned: boolean): void;
   setSuperseded(id: string, supersededById: string): void;
-  recordHit(id: string, sessionId?: string, injectedTokens?: number): number;
+  /** Record an INJECTION of a memory (usage_ledger row, used=0 until markLedgerUsed). */
+  recordInjection(id: string, sessionId?: string, injectedTokens?: number): number;
   markLedgerUsed(ledgerId: number): void;
   markMemoryVerified(id: string): void;
   telemetry(): TelemetryStats;
@@ -393,9 +392,6 @@ export function openMemoryStore(path: string): MemoryStore {
     `SELECT memory_id, COUNT(*) AS injections, SUM(used) AS hits, COUNT(DISTINCT session_id) AS sessions, MAX(ts) AS last_used
        FROM usage_ledger GROUP BY memory_id ORDER BY hits DESC`,
   );
-  const usageDailyStmt = db.prepare(
-    `SELECT substr(ts, 1, 10) AS day, SUM(used) AS c FROM usage_ledger WHERE ts >= ? GROUP BY day ORDER BY day`,
-  );
   const listTopicsStmt = db.prepare(
     `SELECT topic FROM memories WHERE status='active' AND scope=? AND workspace=? AND type=?`,
   );
@@ -555,7 +551,7 @@ export function openMemoryStore(path: string): MemoryStore {
         `UPDATE memories SET status='superseded', superseded_by_id=?, updated_at=? WHERE id=? AND status != 'deleted'`,
       ).run(supersededById, now(), id);
     },
-    recordHit(id, sessionId, injectedTokens) {
+    recordInjection(id, sessionId, injectedTokens) {
       hitStmt.run(now(), now(), id);
       const result = ledgerStmt.run(now(), id, sessionId ?? null, injectedTokens ?? 0);
       return Number(result.lastInsertRowid);
@@ -606,17 +602,7 @@ export function openMemoryStore(path: string): MemoryStore {
         sessions: Number(row.sessions),
         lastUsed: (row.last_used as string | null) ?? null,
       }));
-      const since = new Date(Date.now() - days * 86_400_000).toISOString();
-      const counted = new Map<string, number>();
-      for (const row of usageDailyStmt.all(since) as Array<{ day: string; c: number }>) {
-        counted.set(String(row.day), Number(row.c));
-      }
-      const daily: Array<{ day: string; count: number }> = [];
-      for (let i = days - 1; i >= 0; i--) {
-        const day = new Date(Date.now() - i * 86_400_000).toISOString().slice(0, 10);
-        daily.push({ day, count: counted.get(day) ?? 0 });
-      }
-      return { totalHits, totalInjections, distinctSessions, perMemory, daily };
+      return { totalHits, totalInjections, distinctSessions, perMemory };
     },
     exactTopicExists(m) {
       const rows = listTopicsStmt.all(m.scope, m.workspace ?? null, m.type) as Array<{

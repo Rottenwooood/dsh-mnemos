@@ -174,6 +174,7 @@ export interface MemoryService {
   listRules(state?: RuleState): Rule[];
   getRule(id: string): Rule | undefined;
   setRuleState(id: string, state: RuleState): RuleStateResult;
+  /** Record an INJECTION of a memory into a session (ledger row; used=0 until the model references it). */
   recordHit(id: string, sessionId?: string, injectedTokens?: number): number;
   markLedgerUsed(ledgerId: number): void;
   markMemoryVerified(id: string): void;
@@ -571,7 +572,7 @@ export function createMemoryService(
     },
 
     recordHit(id, sessionId, injectedTokens) {
-      return store.recordHit(id, sessionId, injectedTokens);
+      return store.recordInjection(id, sessionId, injectedTokens);
     },
     markLedgerUsed(ledgerId) {
       store.markLedgerUsed(ledgerId);

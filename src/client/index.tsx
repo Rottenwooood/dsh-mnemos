@@ -110,32 +110,6 @@ interface UsageStats {
   totalInjections: number
   distinctSessions: number
   perMemory: Array<{ memoryId: string; hits: number; injections: number; sessions: number; lastUsed: string | null }>
-  daily: Array<{ day: string; count: number }>
-}
-
-/** Last-30-days hit heatmap: one cell per day, intensity = hits/max. */
-function Heatmap({ daily }: { daily: Array<{ day: string; count: number }> }): ReactNode {
-  const max = Math.max(1, ...daily.map((d) => d.count))
-  return (
-    <div style={{ display: 'flex', gap: 2, margin: '6px 0', overflowX: 'auto' }}>
-      {daily.map((d) => {
-        const intensity = d.count === 0 ? 0 : 0.15 + 0.85 * (d.count / max)
-        return (
-          <div
-            key={d.day}
-            title={`${d.day}：${d.count} 次命中`}
-            style={{
-              width: 9,
-              height: 18,
-              borderRadius: 2,
-              flex: '0 0 auto',
-              background: d.count === 0 ? 'var(--dsw-alias-color-bg-secondary, #eee)' : `rgba(64, 158, 255, ${intensity})`,
-            }}
-          />
-        )
-      })}
-    </div>
-  )
 }
 
 /** Material-Design-Icon-style inline SVG (mdi path data), colored by the harness token. */
@@ -156,7 +130,6 @@ function Icon({ path, size = 15 }: { path: string; size?: number }): ReactNode {
 
 // mdi paths (Material Design Icons, Apache-2.0)
 const ICON_OVERVIEW = 'M13,3V9H21V3M13,21H21V11H13M3,21H11V15H3M3,13H11V3H3V13Z'
-const ICON_HEATMAP = 'M22,21H2V3H4V19H6V10H10V19H12V6H16V19H18V14H22V21Z'
 const ICON_PENDING = 'M12,20A8,8 0 0,0 20,12A8,8 0 0,0 12,4A8,8 0 0,0 4,12A8,8 0 0,0 12,20M12,2A10,10 0 0,1 22,12A10,10 0 0,1 12,22C6.47,22 2,17.5 2,12A10,10 0 0,1 12,2M12.5,7V12.25L17,14.92L16.25,16.15L11,13V7H12.5Z'
 const ICON_MEMORY = 'M12,3C7.58,3 4,4.79 4,7C4,9.21 7.58,11 12,11C16.42,11 20,9.21 20,7C20,4.79 16.42,3 12,3M4,9V12C4,14.21 7.58,16 12,16C16.42,16 20,14.21 20,12V9C20,11.21 16.42,13 12,13C7.58,13 4,11.21 4,9M4,14V17C4,19.21 7.58,21 12,21C16.42,21 20,19.21 20,17V14C20,16.21 16.42,18 12,18C7.58,18 4,16.21 4,14Z'
 const ICON_RESTORE = 'M12,3A9,9 0 0,0 3,12H0L4,16L8,12H5A7,7 0 0,1 12,5A7,7 0 0,1 19,12A7,7 0 0,1 12,19C10.5,19 9.1,18.5 8,17.6L6.6,19A9,9 0 0,0 12,21A9,9 0 0,0 21,12A9,9 0 0,0 12,3Z'
@@ -409,20 +382,6 @@ export function MnemosTab(): ReactNode {
       </div>
 
       <div className="mnemos-section" style={{ padding: 0 }}>
-        <div className="mnemos-heading" style={{ fontSize: 13 }}> <Icon path={ICON_HEATMAP} />命中热力图</div>
-        {usage.data ? (
-          <>
-            <div className="mnemos-intro" style={{ margin: '4px 0 0' }}>
-              累计 {usage.data.totalHits} 次命中 · {usage.data.totalInjections} 次注入 · {usage.data.distinctSessions} 个会话
-            </div>
-            <Heatmap daily={usage.data.daily} />
-          </>
-        ) : (
-          <div className="mnemos-intro" style={{ margin: '4px 0 0' }}>{usage.error ?? '加载中…'}</div>
-        )}
-      </div>
-
-      <div className="mnemos-section" style={{ padding: 0 }}>
         <div className="mnemos-heading" style={{ fontSize: 13 }}> <Icon path={ICON_MEMORY} />记忆</div>
         <div style={{ display: 'flex', gap: 6, marginTop: 6, flexWrap: 'wrap' }}>
           <button
@@ -483,7 +442,7 @@ export function MnemosTab(): ReactNode {
                 <div className="mnemos-intro" style={{ margin: 0 }}>
                   <span className="mnemos-badge">{m.scope === 'global' ? '全局' : '项目'}</span>{' '}
                   {m.pinned ? <span className="mnemos-badge">固定</span> : null}{' '}
-                  {m.topic} — {m.summary}（{usageByMemory.get(m.id)?.hits ?? m.crossSessionHits} 命中
+                  {m.topic} — {m.summary}（命中 {usageByMemory.get(m.id)?.hits ?? 0} 次 · 注入 {usageByMemory.get(m.id)?.injections ?? 0} 次
                   {usageByMemory.get(m.id)?.sessions ? ` · ${usageByMemory.get(m.id)!.sessions} 会话` : ''}）
                 </div>
                 <div style={{ marginTop: 6 }}>

@@ -28,6 +28,7 @@ import { registerHooks, registerInjection, registerProtocolInjection, SignalColl
 import { openNegativeMemoryStore } from './domain/negative.js';
 import { registerNegativeMemory } from './dsh/negative-hooks.js';
 import { createMnemosAbi } from './dsh/adapter.js';
+import { registerMnemosSkillProvider } from './dsh/skill-provider.js';
 import { createLlmFromContext } from './dsh/llm-adapter.js';
 import { installMnemosSettings } from './dsh/settings.js';
 import { registerMnemosRoutes } from './dsh/routes.js';
@@ -205,6 +206,8 @@ export function apply(ctx: Context, raw: Partial<Config> = {}): void {
     ctx.effect(() => ctx.provide('mnemosGit', gitStore));
     registerGitJobs(ctx, gitStore, getConfig, logger);
   }
+
+  registerMnemosSkillProvider(ctx, config.skillsDir, logger);
 
   const resolveLlmTarget = async (): Promise<{ provider: string; model: string } | undefined> => {
     const cfg = getConfig();

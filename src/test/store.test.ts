@@ -60,22 +60,22 @@ describe('memory store', () => {
     const store = openMemoryStore(':memory:');
     const m = mem({ id: 'hit1' });
     store.addMemory(m);
-    store.recordHit('hit1', 'sess-42');
+    store.recordInjection('hit1', 'sess-42');
     expect(store.getMemory('hit1')?.crossSessionHits).toBe(1);
-    store.recordHit('hit1', 'sess-43');
+    store.recordInjection('hit1', 'sess-43');
     expect(store.getMemory('hit1')?.crossSessionHits).toBe(2);
     store.close();
   });
 
-  it('derives usage stats from the ledger (single source for heatmap)', () => {
+  it('derives usage stats from the ledger (injections vs hits)', () => {
     const store = openMemoryStore(':memory:');
     store.addMemory(mem({ id: 'a1' }));
     store.addMemory(mem({ id: 'a2' }));
-    const l1 = store.recordHit('a1', 'sess-1');
-    const l2 = store.recordHit('a1', 'sess-2');
-    const l3 = store.recordHit('a2', 'sess-2');
+    const l1 = store.recordInjection('a1', 'sess-1');
+    const l2 = store.recordInjection('a1', 'sess-2');
+    const l3 = store.recordInjection('a2', 'sess-2');
     const stats = store.usageStats(7);
-    // recordHit records an INJECTION; used=0 until markLedgerUsed fires.
+    // recordInjection records an INJECTION; used=0 until markLedgerUsed fires.
     expect(stats.totalInjections).toBe(3);
     expect(stats.totalHits).toBe(0);
     expect(stats.distinctSessions).toBe(2);
@@ -87,8 +87,6 @@ describe('memory store', () => {
     expect(a2?.injections).toBe(1);
     expect(a2?.sessions).toBe(1);
     expect(a1?.lastUsed).toBeTruthy();
-    expect(stats.daily).toHaveLength(7);
-    expect(stats.daily.at(-1)?.count).toBe(0);
     // Mark two injections as actually referenced (hits).
     store.markLedgerUsed(l1);
     store.markLedgerUsed(l2);
@@ -96,15 +94,14 @@ describe('memory store', () => {
     expect(stats2.totalHits).toBe(2);
     expect(stats2.totalInjections).toBe(3);
     expect(stats2.perMemory.find((u) => u.memoryId === 'a1')?.hits).toBe(2);
-    expect(stats2.daily.at(-1)?.count).toBe(2);
     store.close();
   });
 
   it('telemetry aggregates injection/used/token stats and verified flags', () => {
     const store = openMemoryStore(':memory:');
     store.addMemory(mem({ id: 't1' }));
-    const l1 = store.recordHit('t1', 's1', 100);
-    store.recordHit('t1', 's2', 200);
+    const l1 = store.recordInjection('t1', 's1', 100);
+    store.recordInjection('t1', 's2', 200);
     store.markLedgerUsed(l1);
     const t = store.telemetry();
     expect(t.injections).toBe(2);

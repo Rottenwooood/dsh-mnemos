@@ -39,6 +39,10 @@ declare module '@deepseek-ai/cordis' {
     settings?: SettingsServiceFace;
     /** Present only when the optional dsh-better-sidebar plugin is mounted. */
     betterSidebar?: unknown;
+    /** The harness skill registry, when a skill service is mounted. */
+    skills?: {
+      registerProvider(create: () => unknown): () => void;
+    };
   }
 
   interface Events {

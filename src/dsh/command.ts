@@ -74,7 +74,7 @@ export function registerCommand(ctx: Context, deps: CommandDeps): void {
             rows
               .map(
                 (r) =>
-                  `- [${r.type}] ${r.topic} (${r.crossSessionHits} hit${
+                  `- [${r.type}] ${r.topic} (${r.crossSessionHits} injection${
                     r.crossSessionHits === 1 ? '' : 's'
                   }): ${r.summary}${r.supersededById ? ' — 已被新值取代' : ''}${r.trust === 'untrusted' ? ' — 未验证来源' : ''}`,
               )

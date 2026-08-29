@@ -114,7 +114,9 @@ describe('/mnemos/api route handler', () => {
     const stats = await call(handler, 'GET', '/mnemos/api/stats');
     expect(stats.json.totalActive).toBe(1);
     const usage = await call(handler, 'GET', '/mnemos/api/usage?days=7');
-    expect(usage.json.daily).toHaveLength(7);
+    expect(typeof usage.json.totalHits).toBe('number');
+    expect(typeof usage.json.totalInjections).toBe('number');
+    expect(Array.isArray(usage.json.perMemory)).toBe(true);
   });
 
   it('lists pending approvals and approves one through the service gate', async () => {
