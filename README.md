@@ -1,22 +1,17 @@
+<div align="center">
+
 # dsh-mnemos
 
 [简体中文](README.zh.md)
 
-**Governed, self-evolving, cross-session memory for DeepSeek Harness.** Everything the model remembers is written through an approval gate, lives in local SQLite, and is versioned in git — with reproducible effect numbers that move every time you change the code.
+**A governed, self-evolving DSH plugin for cross-session memory — with reproducible effect numbers.**
+
+Everything the model remembers is written through an approval gate; all data lives in local SQLite, mirrored as git-versioned Markdown — and the effect numbers move every time you change the code.
 
 ![CI](https://img.shields.io/github/actions/workflow/status/Rottenwooood/dsh-mnemos/ci.yml?branch=main&label=CI) ![License](https://img.shields.io/badge/license-MIT-blue) ![Version](https://img.shields.io/github/v/tag/Rottenwooood/dsh-mnemos?label=version) ![Node](https://img.shields.io/badge/node-%3E%3D22.19-brightgreen)
 
 ---
-
-## What it is / what it isn't
-
-**What it is.** A DSH plugin that gives the model cross-session memory. Facts you tell it in one session are injected at the start of the next, so you don't re-explain yourself. Every write path — model tools, /memory commands, third-party plugins, the browser panel — goes through a single approval-gated `MemoryService`. Data is fully local: SQLite (WAL + FTS5) with a git-versioned Markdown mirror for history, rollback, backup, and cross-machine sync.
-
-**What it isn't.**
-
-- Not a memory *warehouse* or a vector store — it does not attempt unbounded accumulation.
-- Not a silent rewriter — conflicting facts become *replacement proposals* that wait for a human decision, never auto-overwritten.
-- Not a trust-everything sink — model/import/third-party writes are marked *untrusted*, bounded in number, ranked behind human-confirmed memories at injection time, and the source is visible to the model.
+</div>
 
 ## Why mnemos
 
@@ -24,13 +19,13 @@ The whole thing hangs on five design principles.
 
 1. **Effect numbers you can reproduce — not a toy.** LongMemEval-S hit@1 **87.2%** vs deja-vu's published **85.3%** (same data, same metrics, same query text), plus a deterministic no-LLM eval and a live `usage_ledger` effect card. Most memory plugins publish no numbers at all.
 
-2. **The model is never trusted blindly.** Every write — model tools, /memory, third-party plugins, the browser — goes through one approval gate: sensitive / duplicate / out-of-budget writes are rejected, risky ones wait for a human. Model/import/third-party memories are marked *untrusted* and bounded at injection (anti-poisoning). Failed commands are intercepted at execution time — the next identical attempt is blocked with evidence (negative memory). Every write / approval / rejection is audited.
+2. **Every memory passes a gate — auditable.** Every write — model tools, /memory, third-party plugins, the browser — goes through one approval gate: sensitive / duplicate / out-of-budget writes are rejected, risky ones wait for a human. Model/import/third-party memories are marked *unverified* and bounded at injection (anti-poisoning). Failed commands are intercepted at execution time — the next identical attempt is blocked with evidence (negative memory). Every write / approval / rejection is audited.
 
 3. **It evolves and corrects itself.** Sessions distill into memories *and* rules. A rule lives in the memory store and is injected by mnemos — or, once approved, **promoted to a DSH SKILL**: a standard Markdown skill file any agent can load on demand, so the knowledge leaves mnemos and works anywhere in the harness. Facts update in place (the old value stays recoverable in git); only genuine conflicts become *replacement proposals* for a human. Heat-based cleanup keeps the store bounded (active → archived → restorable; `pinned` never leaves).
 
-4. **Your data, portable, cross-device.** Local SQLite (WAL + FTS5); every memory is also a Markdown file in a git repo — history, diff, rollback, restore, backup, and merge-based sync (conflicts flagged, never silently overwritten). Two git backends: `system` (your git CLI — reliable) or `isomorphic` (pure-JS npm package, the default — can time out on slow connections). Imports ChatGPT / Claude Code / Codex / DSH history.
+4. **Your data, portable, cross-device.** Local SQLite (WAL + FTS5); every memory is also a Markdown file in a git repo — history, diff, rollback, restore, backup, and cross-device sync (via push/pull). Imports ChatGPT / Claude Code / Codex / DSH history.
 
-5. **Other plugins can share memory — permissioned, not assumed.** `ctx.mnemosBus` is an open memory bus: any DSH plugin can `recall` memories, `record` its own (stamped with a declared identity, always routed to the human approval queue), and `subscribe` to memory changes — plus runtime blacklist and revocation. A versioned ABI (`ctx.mnemosAbi`) exposes real effect numbers to external tools, proven by a conformance suite. Details in the [For developers](#for-developers) section.
+5. **An open memory bus.** `ctx.mnemosBus` is an open memory bus: any DSH plugin can `recall` memories, `record` its own (stamped with a declared identity, always routed to the human approval queue), and `subscribe` to memory changes — plus runtime blacklist and revocation. A versioned ABI (`ctx.mnemosAbi`) exposes real effect numbers to external tools, proven by a conformance suite. Details in the [For developers](#for-developers) section.
 
 ## Features
 
@@ -38,8 +33,9 @@ The whole thing hangs on five design principles.
 
 - **Model tools** (the model uses them in-session):
   `memory_search` (recall) · `memory_record` (write, with keywords) · `memory_distill` (summarize buffered sessions → memory/rule proposals) · `memory_list` · `memory_stats`.
-- **Cold-start injection, not prompt stuffing.** Once per session, a *frozen memory index* is injected (one line per memory: type · short-id · topic · keywords, byte-stable for KV-cache reuse). The model drills into details with `memory_get`. No heuristic/regular-expression extraction anywhere.
-- **/memory commands** — the complete list, scenarios, and troubleshooting live in [docs/HANDOVER.md](docs/HANDOVER.md); the key ones:
+- **Injection.** Once per session, a *frozen memory index* is injected (one line per memory: type · short-id · topic · keywords, byte-stable, KV-cache friendly, negligible token cost). The model drills into details with `memory_get`. No heuristic/regular-expression extraction anywhere.
+- **Hits.** A `memory_get` or `memory_search` call counts as a hit.
+- **/memory commands** — the complete list, usage scenarios, and troubleshooting live in [docs/HANDOVER.md](docs/HANDOVER.md); the key ones:
   ```
   /memory search <query> | list | stats
   /memory approve <id> | reject <id>
@@ -50,7 +46,7 @@ The whole thing hangs on five design principles.
   /memory git <status|log|rollback|restore|remote|push|pull|backup>
   /memory bus <blacklist|unblacklist|list|revoke|writers>
   ```
-- **Browser UI** (better-sidebar "记忆" tab): overview, 30-day hit heatmap, approval queue (approve / reject / edit-then-approve / batch-approve low-risk), memory list with search/filter/edit/version-history/rollback/delete, deleted-memory recovery, rejection history, and git sync.
+- **Browser UI** (better-sidebar "记忆" tab): overview, approval queue (approve / reject / edit-then-approve / batch-approve low-risk), memory list with search/filter/edit/version-history/rollback/delete, deleted-memory recovery, rejection history, and git sync.
 - **Distillation.** LLM-generated memories (each with 2–5 keywords that trigger injection), and rules — procedures/preferences/error-fixes become *rule proposals* that enter the approval flow. Approved rules are injected by mnemos; an approved rule can additionally be **promoted to a DSH SKILL** — a standard Markdown skill file (frontmatter + the rule text + source evidence) that any agent can load on demand through DSH's `skill` tool, making the knowledge usable outside mnemos. Only *approved* rules are promotable — never drafts — and promotion is idempotent.
 
 ### For developers
@@ -75,7 +71,7 @@ So another plugin gets the *same* treatment as the model: an identity stamp, the
 
 #### Measurement ABI — `ctx.mnemosAbi`
 
-Versioned `recall / get / state / probe` for external tools and evals to read real numbers (active / pending / untrusted / verified / injections / usage-rate). `scripts/conformance.mts` proves it is the actual implementation, not a stub.
+Versioned `recall / get / state / probe` for external tools and evals to read real numbers (active / pending / unverified / verified / injections / hit-rate). `scripts/conformance.mts` proves it is the actual implementation, not a stub.
 
 #### Import adapters
 
@@ -99,11 +95,11 @@ node --import tsx/esm /path/to/dsh-mnemos/scripts/eval/run-eval.mts
 | Frozen memory index per session | 8 lines ≈ 207 tokens (KV-cache friendly) |
 | Index covers the correct memory | 100% |
 
-The "记忆" tab header shows a live **effect card** (injections / hit-rate / avg tokens / verified memories) fed by the `usage_ledger`. A memory counts as a **hit** only when the model actively retrieves it through a tool (`memory_get` / `memory_search`) in the session where it was injected — reply-text matching would be meaningless, because an LLM inevitably echoes words from the user's own message. A hit marks the memory *verified*.
+The "记忆" tab header shows a live **effect card** (injections / hit-rate / avg tokens / verified memories) fed by the `usage_ledger` ledger.
 
 ### Public dataset benchmarks (LongMemEval-S / LoCoMo-10)
 
-Measured on the production retrieval path (FTS5 multi-level ladder: all-words AND → any-word OR → substring, fused with bigram-similarity via RRF) against deja-vu's published numbers. Methodology details: [scripts/bench/BENCHMARKS.md](scripts/bench/BENCHMARKS.md).
+Measured on the production retrieval path (FTS5 multi-level ladder: all-words AND → any-word OR → substring, fused with bigram-similarity via RRF) against deja-vu's published numbers, same protocol. Methodology details: [scripts/bench/BENCHMARKS.md](scripts/bench/BENCHMARKS.md).
 
 | Dataset | dsh-mnemos (production path) | deja-vu (official) |
 |---|---|---|
@@ -114,15 +110,14 @@ Honest notes:
 
 - **LongMemEval-S:** we beat deja-vu on every reported metric (hit@1 87.2% vs 85.3%, MRR 0.914 vs 0.896, evidence-recall@1 56.3% vs 55.0%).
 - **LoCoMo-10:** we trail (60.9% vs 69.8%). LoCoMo sessions are longer and the questions lean on cross-session reasoning; deja-vu's stem layer and stronger ranking variants win there. Closing this gap is on the roadmap, not a defect.
-- **Attribution is honest:** deja-vu's numbers were re-run locally and reproduced exactly (LongMemEval-S hit@1 85.3% / MRR 0.896, LoCoMo R@1 69.8% vs their published 69.6%), using the same data, same metrics, and the same verbatim query text through deja-vu's own `scripts/longmemeval` / `scripts/locomo` (requires go1.25, see [scripts/bench/BENCHMARKS.md](scripts/bench/BENCHMARKS.md)).
-- Before the retrieval ladder, the production path scored ~10% (LongMemEval-S) and ~7% (LoCoMo); the entire gap came from a query constructor that forced all-words AND, not from the underlying engine.
+- **Attribution is honest:** deja-vu's official numbers were reproduced locally (go1.25, running its own `scripts/longmemeval` / `scripts/locomo`; same data, same metrics, same verbatim query text): LongMemEval-S hit@1 85.3%, LoCoMo R@1 69.8%. Reproduction commands in [scripts/bench/BENCHMARKS.md](scripts/bench/BENCHMARKS.md).
 
 ## Install & quick start
 
-**Compatibility** (honest): developed and verified on **Linux / Node ≥ 22.19 / DSH web profile**. Windows/macOS are untested (see [Roadmap](#roadmap)). The model for distillation reuses DSH's configured default LLM (`agent-default-model`) — no separate API key needed.
+**Compatibility** (honest): developed and verified on **Linux / Node ≥ 22.19 / DSH web profile**. Windows/macOS are untested.
 
 ```sh
-# npm channel (once published)
+# npm channel
 dsh plugin --profile web add dsh-mnemos
 
 # git channel (latest main)
@@ -167,12 +162,12 @@ Different philosophies. **dsh-memento** is a *capability seam*: a typed `ctx.mem
 | Dimension | dsh-mnemos | dsh-memento |
 |---|---|---|
 | Retrieval | FTS5 ladder + bigram RRF, **public benchmark numbers** | substring search (no FTS5), no published numbers |
-| Lifecycle / heat eviction / pinned | yes | no (deliberately not a store) |
+| Lifecycle / heat eviction / pinned | yes | no |
 | Distillation / rules / SKILL | yes (LLM, approval-gated) | no |
 | Negative memory | yes | no |
 | git version history + cross-machine sync | yes (one .md per memory) | no |
 | Third-party writes | bus: identity-stamped, approval-queue, blacklist, revoke | adapter registry (pure data conversion), MCP server |
-| Protocol spec / MCP / adapters | bus + ABI + conformance; **no protocol spec, no MCP yet** | dsh-memory-protocol v1 + MCP + adapters |
+| Protocol spec / MCP / adapters | bus + ABI + conformance; **no MCP yet** | dsh-memory-protocol v1 + MCP + adapters |
 | npm / releases | not yet published | published, multi-channel install |
 | README | English + 中文 | 5 languages |
 
@@ -192,20 +187,6 @@ Honest state of the project — these are the gaps between "functional and measu
 - [ ] **Stabilize the `isomorphic` git backend** — it can time out / be flaky on slow connections in our testing; worth a reliability pass or documenting `system` as the recommended sync backend.
 - [ ] **MCP server** — align with memento's read-only stdio server for external clients.
 - [ ] Optional: a dsh-memory-protocol spec + adapter registry to match memento's ecosystem surface.
-
-## Security & data
-
-- **Zero network, zero credentials.** Local SQLite (WAL + FTS5), POSIX mode 0600. No engine/agent-loop/apiproxy changes; we only consume DSH's `tools`, `commands`, and session signals.
-- **Every write is audited** (denied writes included). Model-visible sources are stamped (`trusted`/`untrusted`, writer identity).
-- **Fail loud.** Budget exceeded → structured error, never silent truncation. Corrupt DB / newer schema → load fails loudly.
-- Data locations:
-  ```
-  ~/.dsh/mnemos/mnemos.db     SQLite (WAL + FTS5)
-  ~/.dsh/mnemos/repo/         git memory mirror (one .md per memory)
-  ~/.dsh/mnemos/skills/       SKILL files promoted from approved rules
-  ~/.dsh/mnemos/backfill-checkpoint.json · distill-cursor.json   cursors
-  ```
-- Vulnerability reporting: see [SECURITY.md](SECURITY.md).
 
 ## Design sources
 
@@ -230,21 +211,8 @@ pnpm install
 pnpm run typecheck
 pnpm test                 # 151 unit tests
 pnpm run build:client     # after touching src/client/
-```
 
-One-shot full verification (includes real-environment checks):
-
-```sh
 scripts/run-verify.sh     # typecheck+unit → deterministic eval → ABI conformance → real registry composition
-```
-
-Reproduce the public benchmarks ([data download](scripts/bench/BENCHMARKS.md)):
-
-```sh
-BENCH_DATA=/path/to/longmemeval_s_cleaned.json BENCH_SKIP_ABS=1 BENCH_LIMIT=470 \
-  BENCH_OUT=scripts/bench/longmemeval-scorecard.json pnpm run bench:longmemeval
-BENCH_DATA=/path/to/locomo10.json BENCH_OUT=scripts/bench/locomo-scorecard.json \
-  pnpm run bench:locomo
 ```
 
 ## License
