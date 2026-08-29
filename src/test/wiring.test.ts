@@ -297,6 +297,27 @@ describe('pre-step injection', () => {
     expect(second.length).toBe(0);
   });
 
+  it('dedups by agent.id when session.id is unavailable (web agents)', async () => {
+    const { ctx, listeners } = fakeContext();
+    const { service } = makeService();
+    service.add(memoryWithKeywords(['pnpm']), 'human');
+    registerInjection(ctx, service, () => ({ ...defaultConfig(), injectMaxBytes: 4096 }));
+    const hook = listeners.find((l) => l.name === 'agent/pre-step')!;
+    const call = async (msg: string) => {
+      const decision = await hook.listener(
+        { agent: { id: 'agent-web-1' }, messages: [{ role: 'user', content: [{ type: 'text', text: msg }] }], turn: 0, step: 0, signal: new AbortController().signal },
+        async () => ({ kind: 'enter', messages: [] }),
+      ) as { kind: string; messages: Array<{ content: Array<{ text: string }> }> };
+      return decision.messages;
+    };
+    const first = await call('install with pnpm');
+    expect(first.length).toBe(1);
+    expect(first[0]!.content[0]!.text).toContain('记忆索引'); // full frozen index
+    // Same agent id, no session.id anywhere: must NOT re-inject the full index.
+    const second = await call('still pnpm');
+    expect(second.length).toBe(0);
+  });
+
   it('re-injects a partial index when the interval elapsed and a keyword hits', async () => {
     const { ctx, listeners } = fakeContext();
     const { service } = makeService();

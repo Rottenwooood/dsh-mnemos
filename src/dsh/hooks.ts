@@ -142,6 +142,15 @@ export function registerHooks(ctx: Context, collector: SignalCollector): void {
 }
 
 /**
+ * Stable per-session dedup key for injection gating. Same fallback as tools.ts
+ * (`session?.id ?? id`): web agents may surface the session under either field.
+ */
+function sessionKeyOf(agent: unknown): string {
+  const a = agent as { session?: { id?: unknown }; id?: unknown } | undefined;
+  return typeof a?.session?.id === 'string' ? a.session.id : typeof a?.id === 'string' ? a.id : '';
+}
+
+/**
  * Progressive-disclosure injection (P1): inject a byte-stable frozen INDEX of
  * applicable memories (global + this workspace) once per session, so the block
  * is KV-cache friendly and cheap. The model drills into details with
@@ -158,7 +167,7 @@ export function registerInjection(
     const decision = (await next()) as PreStepDecision;
     if (decision.kind === 'reject') return decision;
     payload.signal.throwIfAborted();
-    const sessionId = (payload.agent as { session?: { id?: string } })?.session?.id;
+    const sessionKey = sessionKeyOf(payload.agent);
     const cwd = (payload.agent as { session?: { header?: { cwd?: string } } })?.session?.header?.cwd;
     const text = userTextOf(payload.messages ?? []);
     const config = getConfig();
@@ -166,23 +175,21 @@ export function registerInjection(
       return decision;
     }
     try {
-      if (!injectedSessions.has(sessionId ?? '')) {
+      if (!injectedSessions.has(sessionKey)) {
         // Session start: inject the FULL frozen index once (byte-stable).
         const index = recallIndex(service, {
           maxBytes: config.injectMaxBytes,
           limit: config.injectLimit,
           workspace: cwd,
         });
-        if (sessionId !== undefined) {
-          injectedSessions.add(sessionId);
-          // interval is measured from the last injection (full or partial).
-          lastPartial.set(sessionId, Date.now());
-        }
+        injectedSessions.add(sessionKey);
+        // interval is measured from the last injection (full or partial).
+        lastPartial.set(sessionKey, Date.now());
         if (index.injectedCount > 0) {
           const tokens = estimateTokens(index.text);
           for (const id of index.injectedIds) {
             try {
-              service.recordHit(id, sessionId, tokens);
+              service.recordHit(id, sessionKey, tokens);
             } catch {
               // injection accounting is best-effort
             }
@@ -194,7 +201,7 @@ export function registerInjection(
       // Mid-session PARTIAL refresh: only when both the interval has elapsed
       // AND the current message hits a memory's keywords. Still an index (short
       // ids), never full text — the model drills down with memory_get.
-      const last = lastPartial.get(sessionId ?? '') ?? 0;
+      const last = lastPartial.get(sessionKey) ?? 0;
       const minutes = config.injectRefreshIntervalMinutes;
       const interval = minutes > 0 ? minutes * 60_000 : 0; // 0 = no interval gate
       if (interval > 0 && Date.now() - last < interval) {
@@ -211,11 +218,11 @@ export function registerInjection(
       if (partial.injectedCount === 0) {
         return decision;
       }
-      if (sessionId !== undefined) lastPartial.set(sessionId, Date.now());
+      lastPartial.set(sessionKey, Date.now());
       const tokens = estimateTokens(partial.text);
       for (const id of partial.injectedIds) {
         try {
-          service.recordHit(id, sessionId, tokens);
+          service.recordHit(id, sessionKey, tokens);
         } catch {
           // best-effort
         }
@@ -275,11 +282,11 @@ export function registerProtocolInjection(
   const pendingRefresh = new Set<string>();
 
   ctx.on('session/event', (session, event) => {
-    const sessionId = (session as { id?: unknown })?.id;
-    if (typeof sessionId !== 'string') return;
+    const sessionKey = sessionKeyOf(session);
+    if (!sessionKey) return;
     const data = event.data as { error?: unknown } | undefined;
     if (event.type === 'compaction/end' && !data?.error) {
-      pendingRefresh.add(sessionId);
+      pendingRefresh.add(sessionKey);
     }
   });
 
@@ -287,9 +294,9 @@ export function registerProtocolInjection(
     const decision = (await next()) as PreStepDecision;
     if (decision.kind === 'reject') return decision;
     payload.signal.throwIfAborted();
-    const sessionId = (payload.agent as { session?: { id?: string } })?.session?.id;
-    const first = sessionId === undefined || !injectedSessions.has(sessionId);
-    const afterCompaction = sessionId !== undefined && pendingRefresh.has(sessionId);
+    const sessionKey = sessionKeyOf(payload.agent);
+    const first = !injectedSessions.has(sessionKey);
+    const afterCompaction = sessionKey !== '' && pendingRefresh.has(sessionKey);
     if (!first && !afterCompaction) {
       return decision;
     }
@@ -298,10 +305,8 @@ export function registerProtocolInjection(
         return decision;
       }
       const protos = service.listActive().filter((m) => m.type === 'protocol').slice(0, 8);
-      if (sessionId !== undefined) {
-        injectedSessions.add(sessionId);
-        pendingRefresh.delete(sessionId);
-      }
+      injectedSessions.add(sessionKey);
+      pendingRefresh.delete(sessionKey);
       if (protos.length > 0) {
         const text = `# dsh-mnemos 环境约定\n${protos.map((p) => `- ${p.summary}`).join('\n')}`;
         return { kind: 'enter', messages: [...decision.messages, makeUserMessage(text)] };
