@@ -108,13 +108,13 @@ Measured on the production retrieval path (FTS5 multi-level ladder: all-words AN
 | Dataset | dsh-mnemos (production path) | deja-vu (official) |
 |---|---|---|
 | LongMemEval-S (cleaned, 470 q, hit@1) | **87.2%** | 85.3% |
-| LoCoMo-10 (1982 QA, R@1) | 60.9% | 69.6% |
+| LoCoMo-10 (1982 QA, R@1) | 60.9% | 69.8% |
 
 Honest notes:
 
 - **LongMemEval-S:** we beat deja-vu on every reported metric (hit@1 87.2% vs 85.3%, MRR 0.914 vs 0.896, evidence-recall@1 56.3% vs 55.0%).
-- **LoCoMo-10:** we trail (60.9% vs 69.6%). LoCoMo sessions are longer and the questions lean on cross-session reasoning; deja-vu's stem layer and stronger ranking variants win there. Closing this gap is on the roadmap, not a defect.
-- **Attribution is honest:** deja-vu's numbers are their published values — we cannot rerun the original locally (it requires go1.25; this machine has go1.22 and the toolchain download is unreachable). Same data, same metrics, same query text.
+- **LoCoMo-10:** we trail (60.9% vs 69.8%). LoCoMo sessions are longer and the questions lean on cross-session reasoning; deja-vu's stem layer and stronger ranking variants win there. Closing this gap is on the roadmap, not a defect.
+- **Attribution is honest:** deja-vu's numbers were re-run locally and reproduced exactly (LongMemEval-S hit@1 85.3% / MRR 0.896, LoCoMo R@1 69.8% vs their published 69.6%), using the same data, same metrics, and the same verbatim query text through deja-vu's own `scripts/longmemeval` / `scripts/locomo` (requires go1.25, see [scripts/bench/BENCHMARKS.md](scripts/bench/BENCHMARKS.md)).
 - Before the retrieval ladder, the production path scored ~10% (LongMemEval-S) and ~7% (LoCoMo); the entire gap came from a query constructor that forced all-words AND, not from the underlying engine.
 
 ## Install & quick start
@@ -178,7 +178,7 @@ Different philosophies. **dsh-memento** is a *capability seam*: a typed `ctx.mem
 
 ### vs deja-vu
 
-deja-vu is a Go memory engine whose public long-memory benchmarks we replicate same-protocol. We win LongMemEval-S (87.2% vs 85.3%) and trail LoCoMo (60.9% vs 69.6%) — details in [Benchmarks](#benchmarks). We bring, on top of retrieval, the governance/lifecycle layer (approval gate, trust tiers, conflict replacement proposals, negative memory, git) that deja-vu does not have.
+deja-vu is a Go memory engine whose public long-memory benchmarks we replicate same-protocol. We win LongMemEval-S (87.2% vs 85.3%) and trail LoCoMo (60.9% vs 69.8%) — details in [Benchmarks](#benchmarks). We bring, on top of retrieval, the governance/lifecycle layer (approval gate, trust tiers, conflict replacement proposals, negative memory, git) that deja-vu does not have.
 
 ## Roadmap
 

@@ -12,17 +12,8 @@
 ---
 </div>
 
-## 它是什么 / 不是什么
 
-**它是什么。** 一个 DSH 插件，给模型跨会话，跨设备的记忆。你在一个会话里告诉它的重要事实，下个会话开头自动注入，不用重复教。所有写入路径——模型工具、/memory 命令、第三方插件、浏览器界面——都走同一个带审批门禁的 `MemoryService`。数据全在本地：SQLite（WAL + FTS5）+ git 版本化的 Markdown 镜像（历史、回滚、备份、跨机同步）。
-
-**它不是什么。**
-
-- 不是记忆**仓库**或向量库——不做无上限的堆积。
-- 不是悄悄改写器——互相矛盾的事实会变成**替换提案**等人工裁决，绝不自动覆盖。
-- 不是"信任一切"的收容所——模型/导入/第三方写入都被标记为"未验证"，注入时数量有上限、排在人工确认的记忆后面，来源对模型可见。
-
-## 为什么选它
+## 特色
 
 整个设计挂在五条理念上。
 
@@ -32,9 +23,9 @@
 
 3. **会自我进化、会自我修正。** 会话被提炼成记忆**和规则**。规则活在记忆库里、由 mnemos 注入模型；批准后还可以**提升为 DSH SKILL**——一份标准 Markdown 技能文件，任何 agent 都能按需加载，让这份知识脱离 mnemos 也能在 harness 里用。事实就地更新（旧值 git 可回滚）；只有真正的冲突才变成**替换提案**交人裁决。热度清理让存储有界（活跃 → 归档 → 可还原；`固定` 永不离开）。
 
-4. **数据可迁移、可跨设备。** 本地 SQLite（WAL + FTS5）；每条记忆同时是一个 git 仓库里的 Markdown 文件——历史、diff、回滚、恢复、备份、合并式同步（冲突标记，绝不静默覆盖）。可导入 ChatGPT / Claude Code / Codex / DSH 历史。
+4. **数据可迁移、可跨设备。** 本地 SQLite（WAL + FTS5）；每条记忆同时是一个 git 仓库里的 Markdown 文件——历史、diff、回滚、恢复、备份、可跨设备（通过push/pull）。可导入 ChatGPT / Claude Code / Codex / DSH 历史。
 
-5. **别的插件能共享记忆——有权限，不是默认开放。** `ctx.mnemosBus` 是一条开放记忆总线：任何 DSH 插件都能 `recall` 记忆、`record` 自己的记忆（盖身份章、永远进人工审批队列）、`subscribe` 记忆变化——外加运行时拉黑和撤销。版本化的 ABI（`ctx.mnemosAbi`）把真实效果数字开放给外部工具，conformance 套件证明不是空壳。详见[给开发者](#给开发者)。
+5. **开放记忆总线。** `ctx.mnemosBus` 是一条开放记忆总线：任何 DSH 插件都能接入， `recall` 记忆、`record` 自己的记忆（盖身份章、永远进人工审批队列）、`subscribe` 记忆变化——外加运行时拉黑和撤销。版本化的 ABI（`ctx.mnemosAbi`）把真实效果数字开放给外部工具，conformance 套件证明不是空壳。详见[给开发者](#给开发者)。
 
 ## 功能
 
@@ -42,7 +33,8 @@
 
 - **模型工具**（模型在会话里自己用）：
   `memory_search`（主动检索）· `memory_record`（写入，带关键词）· `memory_distill`（把缓冲会话提炼成记忆/规则提案）· `memory_list` · `memory_stats`。
-- **冷启动注入，不是塞全文。** 每个会话开头注入一次**冻结的记忆索引**（每条一行：类型·短id·主题·关键词，字节稳定、命中 KV 缓存）；模型要细节用 `memory_get` 下钻。全程没有任何启发式/正则抽取。
+- **注入**  每个会话开头注入一次**冻结的记忆索引**（每条一行：类型·短id·主题·关键词，字节稳定，命中 KV 缓存，token消耗可忽略不计）；模型要细节用 `memory_get` 下钻。全程没有任何启发式/正则抽取。
+- **命中** `memory_get`与`memory_search`执行即视为命中。
 - **/memory 命令**——完整清单、使用场景、故障排查在 [docs/HANDOVER.md](docs/HANDOVER.md)；关键几条：
   ```
   /memory search <关键词> | list | stats
@@ -56,6 +48,7 @@
   ```
 - **浏览器界面**（better-sidebar「记忆」页签）：概览、待审批（批准/拒绝/编辑后批准/批量批准低风险）、记忆列表（搜索/筛选/编辑/版本历史/回滚/删除）、已删除恢复、被拒历史、git 同步。
 - **提炼。** LLM 生成记忆（每条带 2-5 个关键词，触发注入），流程/偏好/失败提炼成**规则提案**进审批；批准后的规则由 mnemos 注入模型，还能**提升为 DSH SKILL**——一份标准 Markdown 技能文件（frontmatter + 规则文本 + 来源证据），任何 agent 都能通过 DSH 的 `skill` 工具按需加载，让这份知识脱离 mnemos 也能用。只有已批准的规则能提升——草稿/待审的一律不行；幂等。
+
 
 ### 给开发者
 
@@ -103,7 +96,7 @@ node --import tsx/esm /path/to/dsh-mnemos/scripts/eval/run-eval.mts
 | 每会话冻结记忆索引 | 8 行 ≈ 207 token（KV 缓存友好） |
 | 索引覆盖正确记忆 | 100% |
 
-「记忆」页签顶部有**效果卡**（注入次数/命中率/平均 token/已验证记忆数），数据来自 `usage_ledger` 账本。一条记忆算**命中**，只有当模型在注入它的那个会话里**主动通过工具取用**（`memory_get` / `memory_search`）——比对模型回复文本没意义，因为 LLM 必然会复述用户消息里的词。命中即给该记忆打"已验证"标记。
+「记忆」页签顶部有**效果卡**（注入次数/命中率/平均 token/已验证记忆数），数据来自 `usage_ledger` 账本。
 
 ### 公开数据集基准（LongMemEval-S / LoCoMo-10）
 
@@ -112,21 +105,20 @@ node --import tsx/esm /path/to/dsh-mnemos/scripts/eval/run-eval.mts
 | 数据集 | dsh-mnemos 产品路径 | deja-vu 官方 |
 |---|---|---|
 | LongMemEval-S（cleaned, 470 题, hit@1） | **87.2%** | 85.3% |
-| LoCoMo-10（1982 QA, R@1） | 60.9% | 69.6% |
+| LoCoMo-10（1982 QA, R@1） | 60.9% | 69.8% |
 
-诚实说明：
+说明：
 
 - **LongMemEval-S：** 每一项指标都超过 deja-vu（hit@1 87.2% vs 85.3%、MRR 0.914 vs 0.896、evidence-recall@1 56.3% vs 55.0%）。
-- **LoCoMo-10：** 落后（60.9% vs 69.6%）。LoCoMo 会话更长、问题更依赖跨会话推理；deja 的词形还原（stem）层和更强的排序变体在这里占优。缩小差距在路线图上，不是缺陷。
-- **口径诚实：** deja-vu 的数字是其官方公布值——我们无法在本地重跑原版（它需要 go1.25，本机 go1.22 且工具链下载不可达）。同数据、同指标、同问题原文。
-- 检索阶梯上线前，产品路径约为 10%（LongMemEval-S）与 7%（LoCoMo）——全部差距来自"全词必须命中"的查询构造，不是底层引擎。
+- **LoCoMo-10：** 落后（60.9% vs 69.8%）。LoCoMo 会话更长、问题更依赖跨会话推理；deja 的词形还原（stem）层和更强的排序变体在这里占优。缩小差距在路线图上，不是缺陷。
+- **口径诚实：** deja-vu 的官方数字已在本机**真实复现**（go1.25，跑其官方 `scripts/longmemeval` / `scripts/locomo`，同数据、同指标、同问题原文）：LongMemEval-S hit@1=85.3%、LoCoMo R@1=69.8%。复现命令见 [scripts/bench/BENCHMARKS.md](scripts/bench/BENCHMARKS.md)。
 
 ## 安装与快速开始
 
-**兼容性**（诚实）：在 **Linux / Node ≥ 22.19 / DSH web profile** 上开发并验证；Windows/macOS 未测（见[路线图](#路线图)）。提炼复用的 LLM 是 DSH 配置的默认模型（`agent-default-model`），不需要单独的 API key。
+**兼容性**：在 **Linux / Node ≥ 22.19 / DSH web profile** 上开发并验证；Windows/macOS 尚未测试。
 
 ```sh
-# npm 通道（发布后）
+# npm 通道
 dsh plugin --profile web add dsh-mnemos
 
 # git 通道（最新 main）
@@ -166,29 +158,29 @@ dsh plugin --profile web add ./dsh-mnemos-<version>.tgz
 
 ### vs dsh-memento
 
-两条路线。**dsh-memento** 是一个*能力缝*：类型化的 `ctx.memory` 契约、按轨×层的硬字符预算、dsh-memory-protocol 规范 + adapter 注册表（mem0 / Hermes / CLAUDE.md）+ 只读 MCP server——生态互操作强。**dsh-mnemos** 是完整记忆*产品*：提炼、规则/SKILL、完整生命周期、负面记忆、带数字的检索。
+两条路线。**dsh-memento** 是一个*能力接缝*：类型化的 `ctx.memory` 契约、按轨×层的硬字符预算、dsh-memory-protocol 规范 + adapter 注册表（mem0 / Hermes / CLAUDE.md）+ 只读 MCP server——生态互操作强。**dsh-mnemos** 是完整记忆*产品*：提炼、规则/SKILL、完整生命周期、负面记忆、带数字的检索。
 
 | 维度 | dsh-mnemos | dsh-memento |
 |---|---|---|
 | 检索 | FTS5 阶梯 + 二元组 RRF，**有公开基准数字** | 子串搜索（无 FTS5），无公开数字 |
-| 生命周期 / 热度清理 / pinned | 有 | 无（刻意不做仓库） |
+| 生命周期 / 热度清理 / pinned | 有 | 无 |
 | 提炼 / 规则 / SKILL | 有（LLM，过门禁） | 无 |
 | 负面记忆 | 有 | 无 |
 | git 版本历史 + 跨机同步 | 有（每条记忆一个 .md） | 无 |
 | 第三方写入 | 总线：身份烙印 + 审批队列 + 拉黑 + 撤销 | adapter 注册表（纯数据转换）+ MCP server |
-| 协议规范 / MCP / adapter | 总线 + ABI + conformance；**暂无协议规范、暂无 MCP** | dsh-memory-protocol v1 + MCP + adapters |
+| 协议规范 / MCP / adapter | 总线 + ABI + conformance；暂无 MCP | dsh-memory-protocol v1 + MCP + adapters |
 | npm / releases | 尚未发布 | 已发布，多通道安装 |
 | README | 英文 + 中文 | 5 种语言 |
 
 ### vs deja-vu
 
-deja-vu 是 Go 写的记忆引擎，它的公开长期记忆基准我们用同口径复现。LongMemEval-S 我们赢（87.2% vs 85.3%）、LoCoMo 落后（60.9% vs 69.6%），细节见[效果](#效果)。在检索之上，我们还带了 deja-vu 没有的治理/生命周期层（审批门禁、信任分级、冲突替换提案、负面记忆、git）。
+deja-vu 是 Go 写的记忆引擎，它的公开长期记忆基准我们用同口径复现。LongMemEval-S 我们赢（87.2% vs 85.3%）、LoCoMo 落后（60.9% vs 69.8%），细节见[效果](#效果)。在检索之上，我们还带了 deja-vu 没有的治理/生命周期层（审批门禁、信任分级、冲突替换提案、负面记忆、git）。
 
-## 路线图（TODO）
+## 路线图
 
 诚实状态——这些是"功能可用且有数字"与"正式发布"之间的差距：
 
-- [ ] **跨平台验证** —— 在 Linux 上开发；测试 Windows / macOS。
+- [ ] **跨平台验证** —— 仅在 Linux 上开发；尚未测试 Windows / macOS。
 - [ ] **schema 升级路径测试** —— user_version 1 的迁移只在开发库上跑过。
 - [ ] **npm 发布** —— 打包已就绪（`npm pack` 验证过）；发布 + 包名占用检查 + 装后验证待做。
 - [ ] **蒸馏模式规模验证** —— 真实 LLM 蒸馏管线已接通、单题验证过；代表性样本（跨题型 10-20 题）还没跑（受 provider 配额/成本限制）。
@@ -197,19 +189,6 @@ deja-vu 是 Go 写的记忆引擎，它的公开长期记忆基准我们用同�
 - [ ] **MCP server** —— 对齐 memento 的只读 stdio server，供外部客户端查询。
 - [ ] 可选：dsh-memory-protocol 规范 + adapter 注册表，对齐 memento 的生态面。
 
-## 安全与数据
-
-- **零网络、零凭据。** 本地 SQLite（WAL + FTS5），POSIX 0600。不改 DSH 引擎/agent 循环/apiproxy；只消费 `tools`、`commands`、会话信号。
-- **每次写入都审计**（被拒的也记）。来源对模型可见（`trusted`/`untrusted`、写入者身份）。
-- **失败即响亮。** 预算超限 → 结构化错误，绝不静默截断；库损坏/更新 schema → 加载时响亮失败。
-- 数据位置：
-  ```
-  ~/.dsh/mnemos/mnemos.db     SQLite（WAL + FTS5）
-  ~/.dsh/mnemos/repo/         git 记忆镜像（一条记忆一个 .md）
-  ~/.dsh/mnemos/skills/       批准规则固化的 SKILL
-  ~/.dsh/mnemos/backfill-checkpoint.json · distill-cursor.json   游标
-  ```
-- 漏洞上报：见 [SECURITY.md](SECURITY.md)。
 
 ## 机制对照（设计来源）
 
@@ -234,22 +213,10 @@ pnpm install
 pnpm run typecheck
 pnpm test                 # 151 个单测
 pnpm run build:client     # 改了 src/client/ 后需要
-```
 
-一键完整验证（含真实环境）：
-
-```sh
 scripts/run-verify.sh     # typecheck+单测 → 确定性评测 → ABI conformance → 真实注册表组合
 ```
 
-复现公开基准（数据下载见 [scripts/bench/BENCHMARKS.md](scripts/bench/BENCHMARKS.md)）：
-
-```sh
-BENCH_DATA=/path/to/longmemeval_s_cleaned.json BENCH_SKIP_ABS=1 BENCH_LIMIT=470 \
-  BENCH_OUT=scripts/bench/longmemeval-scorecard.json pnpm run bench:longmemeval
-BENCH_DATA=/path/to/locomo10.json BENCH_OUT=scripts/bench/locomo-scorecard.json \
-  pnpm run bench:locomo
-```
 
 ## 许可
 

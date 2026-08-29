@@ -66,6 +66,7 @@
     }
   },
   "deja_anchor": {
-    "r_at_1": 0.696
+    "r_at_1": 0.698,
+    "reproduced_locally": true
   }
 }

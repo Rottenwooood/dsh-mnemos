@@ -68,6 +68,7 @@
   "deja_anchor": {
     "hit_at_1": 0.853,
     "hit_at_5": 0.955,
-    "mrr": 0.896
+    "mrr": 0.896,
+    "reproduced_locally": true
   }
 }

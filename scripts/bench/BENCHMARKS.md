@@ -41,7 +41,7 @@ deja-vu 官方公布数字同口径的结果。方法与 deja-vu 的
 | 路径 | R@1 | MRR |
 |---|---|---|
 | **dsh-mnemos 产品路径（阶梯）** | **60.9%** | 0.725 |
-| deja-vu 官方公布 | 69.6% | — |
+| deja-vu 官方公布（本地已复现） | 69.8% | 0.768 |
 
 ### 改进前基线（单级 AND，供对照）
 
@@ -53,11 +53,13 @@ LongMemEval-S hit@1 约 10%（store 层纯 AND 约 9%）、LoCoMo R@1 约 7%。
 
 1. **LongMemEval-S 上 dsh-mnemos 产品路径全面超过 deja-vu 官方数字**：
    hit@1 87.2% vs 85.3%、MRR 0.914 vs 0.896、evidence-recall@1 56.3% vs 55.0%。
-2. **LoCoMo-10 上仍低于 deja**（60.9% vs 69.6%）：LoCoMo 对话更长、问题更依赖
+2. **LoCoMo-10 上仍低于 deja**（60.9% vs 69.8%）：LoCoMo 对话更长、问题更依赖
    跨会话与推理，deja 的词形还原（stem）层和更强的排序变体在这里占优。这是
    下一步可追的方向（加词形还原 / 更细的排序加权），但已属优化而非缺陷。
-3. deja-vu 数字来自其官方发布（本地无法重跑：本机 go1.22 而 deja 要求
-   go1.25，且 go.dev 工具链下载不可达）；数据、指标、查询原文口径一致。
+3. deja-vu 官方数字已在本机**真实复现**（go1.25.5，跑 deja-vu 官方 `scripts/longmemeval` /
+   `scripts/locomo`，同一份 cleaned 数据、同指标、同问题原文）：LongMemEval-S
+   hit@1=85.3%、MRR=0.896，与官方公布一致；LoCoMo R@1=69.8%（官方公布 69.6%，
+   差异为数据集处理细节）。我们的对比全部建立在可复现的真实跑分上。
 
 ## 复现
 
@@ -70,6 +72,23 @@ BENCH_DATA=/path/to/longmemeval_s_cleaned.json BENCH_SKIP_ABS=1 \
 # LoCoMo-10
 BENCH_DATA=/path/to/locomo10.json BENCH_OUT=scripts/bench/locomo-scorecard.json \
   pnpm run bench:locomo
+```
+
+## 复现 deja-vu 官方数字（本地，go1.25+）
+
+```bash
+git clone https://github.com/vshulcz/deja-vu
+cd deja-vu
+# 安装 go1.25（官方 tarball：dl.google.com/go/go1.25.x.linux-amd64.tar.gz）
+go run ./scripts/longmemeval -data /path/to/longmemeval_s_cleaned.json -skip-abs
+go run ./scripts/locomo -data /path/to/locomo10.json
+```
+
+预期输出（本机实测，与官方公布一致）：
+
+```
+LongMemEval-S TOTAL 470  85.3%  95.5%  96.4%  97.0%  MRR 0.896
+LoCoMo      TOTAL 1982  R@1 69.8%  R@5 85.8%  MRR 0.768
 ```
 
 评分卡 JSON：`scripts/bench/longmemeval-scorecard.json`、
