@@ -253,13 +253,18 @@ function toSummary(row: Record<string, unknown>): SummaryRow {
   };
 }
 
-/** Escape an FTS5 query string; falls back to a plain LIKE search on failure. */
-function ftsQuery(query: string): string | null {
+/**
+ * Escape an FTS5 query string to a phrase list. Returns null for an empty query.
+ * The returned string is either AND-joined ("t1" "t2" — every token must match)
+ * or OR-joined ("t1" OR "t2" — any token matches). The retrieval ladder runs
+ * AND first (most precise) and degrades to OR only when AND finds nothing.
+ */
+function ftsQuery(query: string, join: ' AND ' | ' OR ' = ' AND '): string | null {
   const q = query.trim().replace(/"/g, ' ');
   if (!q) {
     return null;
   }
-  const tokens = q.split(/\s+/).map((t) => `"${t}"`).join(' ');
+  const tokens = q.split(/\s+/).map((t) => `"${t}"`).join(join);
   return tokens;
 }
 
@@ -479,15 +484,22 @@ export function openMemoryStore(path: string): MemoryStore {
       return rows.map((r) => String(r.id));
     },
     searchMemories(query, limit) {
+      // Retrieval ladder: FTS5 AND (all tokens, precise) -> FTS5 OR (any token)
+      // -> LIKE substring. AND first keeps the precise behaviour; OR only fills
+      // the cases AND over-rejects (natural-language queries where the answer
+      // text paraphrases the question). Falls through to LIKE when FTS yields
+      // nothing (e.g. only stopwords).
       const fq = ftsQuery(query);
+      const oq = ftsQuery(query, ' OR ');
       let active: Array<Record<string, unknown>> = [];
       let superseded: Array<Record<string, unknown>> = [];
-      if (fq) {
+      for (const q of [fq, oq]) {
+        if (!q || (active.length > 0 && superseded.length > 0)) continue;
         try {
-          active = searchFtsStmt.all(fq, limit) as Array<Record<string, unknown>>;
-          superseded = searchSupersededFtsStmt.all(fq, limit) as Array<Record<string, unknown>>;
+          active = searchFtsStmt.all(q, limit) as Array<Record<string, unknown>>;
+          superseded = searchSupersededFtsStmt.all(q, limit) as Array<Record<string, unknown>>;
         } catch {
-          // fall through to LIKE
+          // fall through to the next tier
         }
       }
       if (active.length === 0 && superseded.length === 0) {

@@ -151,7 +151,7 @@ export function parseDistillResponse(text: string): DistillEntry[] {
 
 const TYPES = new Set<MemoryType>(['project_fact', 'procedure', 'preference', 'error_fix', 'decision', 'protocol']);
 
-function isValidEntry(v: unknown): v is DistillEntry {
+export function isValidEntry(v: unknown): v is DistillEntry {
   if (!v || typeof v !== 'object') {
     return false;
   }

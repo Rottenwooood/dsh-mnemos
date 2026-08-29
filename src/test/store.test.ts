@@ -223,4 +223,26 @@ describe('memory store', () => {
     expect(store.searchMemories('beta', 5)).toHaveLength(1);
     store.close();
   });
+
+  it('degrades to OR when the AND tier over-rejects a natural-language query', () => {
+    const store = openMemoryStore(':memory:');
+    store.addMemory(mem({ id: 't1', summary: 'graduated with a bachelors degree in 2021', topic: 'education' }));
+    store.addMemory(mem({ id: 't2', summary: 'favorite coffee drink is an oat latte', topic: 'food' }));
+    // AND tier: "degree graduated" both must hit one summary — no single
+    // memory holds both. OR tier must still surface the degree memory.
+    const andOnly = store.searchMemories('what degree did i graduate with', 5);
+    expect(andOnly.some((r) => r.id === 't1')).toBe(true);
+    expect(andOnly.some((r) => r.id === 't2')).toBe(false);
+    store.close();
+  });
+
+  it('falls through to LIKE when FTS yields nothing (stopword-only query)', () => {
+    const store = openMemoryStore(':memory:');
+    store.addMemory(mem({ id: 'l1', summary: 'deploy uses a two step pipeline' }));
+    // Every token here is a FTS stopword; FTS MATCH raises or returns empty,
+    // so the LIKE tier must still find the memory by substring.
+    const rows = store.searchMemories('uses a', 5);
+    expect(rows.some((r) => r.id === 'l1')).toBe(true);
+    store.close();
+  });
 });
