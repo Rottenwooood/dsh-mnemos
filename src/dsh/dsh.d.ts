@@ -49,7 +49,18 @@ declare module '@deepseek-ai/cordis' {
     /** Durable session feed: every appended event with the live session. */
     'session/event'(
       session: { id?: unknown; header?: { cwd?: unknown } },
-      event: { type: string; seq?: number; time?: number; data?: { role?: string; content?: unknown[]; text?: string } },
+      event: {
+        type: string;
+        seq?: number;
+        time?: number;
+        data?: {
+          turn?: number;
+          step?: number;
+          role?: string;
+          text?: string;
+          message?: { role?: string; content?: unknown[] };
+        };
+      },
     ): void;
     /** Memory-bus change notifications (committed/proposed/replaced/revoked/rule-approved). */
     'mnemos/memory'(event: BusEvent): void;

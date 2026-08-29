@@ -7,7 +7,7 @@ import { createMemoryService } from '../domain/service.js';
 import { createMemoryBus } from '../domain/bus.js';
 import { registerTools, ToolDeps } from '../dsh/tools.js';
 import { registerCommand, CommandDeps } from '../dsh/command.js';
-import { registerInjection, registerProtocolInjection, SignalCollector, UsageTracker } from '../dsh/hooks.js';
+import { registerHooks, registerInjection, registerProtocolInjection, SignalCollector, UsageTracker } from '../dsh/hooks.js';
 import { registerNegativeMemory } from '../dsh/negative-hooks.js';
 import { openNegativeMemoryStore, negativeFingerprint } from '../domain/negative.js';
 import { gateFrom, apply } from '../index.js';
@@ -350,6 +350,72 @@ describe('pre-step injection', () => {
     usage.onUserMessage('s1');
     expect(service.telemetry().used).toBe(1);
   });
+
+  it('detects a hit only from the final output text (message.content), not reasoning', async () => {
+    const { ctx, listeners } = fakeContext();
+    const { service } = makeService();
+    service.add(memoryWithKeywords(['pnpm']), 'human');
+    const usage = new UsageTracker();
+    registerInjection(ctx, service, () => ({ ...defaultConfig(), injectMaxBytes: 4096 }), usage);
+    registerHooks(ctx, new SignalCollector(() => {}), usage, service);
+    await listen(listeners, [userMsg('install with pnpm')]);
+    expect(service.telemetry().injections).toBe(1);
+    // The reasoning (thinking) block mentions pnpm but must NOT count as a hit.
+    const sessionHook = listeners.find((l) => l.name === 'session/event')!;
+    const emit = sessionHook.listener as (session: unknown, event: unknown) => void;
+    emit(
+      { id: 's1' },
+      {
+        type: 'assistant/message',
+        seq: 3,
+        data: {
+          turn: 1,
+          step: 1,
+          message: {
+            role: 'assistant',
+            content: [
+              { type: 'reasoning', text: 'The user mentioned pnpm so I should check that memory.' },
+              { type: 'text', text: 'Sure, I will use pnpm for the install.' },
+            ],
+          },
+        },
+      },
+    );
+    expect(service.telemetry().used).toBe(1);
+    expect(service.telemetry().verifiedMemories).toBe(1);
+  });
+
+  it('does not credit a hit when only the reasoning mentions the keyword', async () => {
+    const { ctx, listeners } = fakeContext();
+    const { service } = makeService();
+    service.add(memoryWithKeywords(['pnpm']), 'human');
+    const usage = new UsageTracker();
+    registerInjection(ctx, service, () => ({ ...defaultConfig(), injectMaxBytes: 4096 }), usage);
+    registerHooks(ctx, new SignalCollector(() => {}), usage, service);
+    await listen(listeners, [userMsg('install with pnpm')]);
+    const sessionHook = listeners.find((l) => l.name === 'session/event')!;
+    const emit = sessionHook.listener as (session: unknown, event: unknown) => void;
+    // Only a reasoning block mentions pnpm; the visible output does not.
+    emit(
+      { id: 's1' },
+      {
+        type: 'assistant/message',
+        seq: 3,
+        data: {
+          turn: 1,
+          step: 1,
+          message: {
+            role: 'assistant',
+            content: [
+              { type: 'reasoning', text: 'The user mentioned pnpm, let me recall that memory.' },
+              { type: 'text', text: 'Ok, let me run the install command.' },
+            ],
+          },
+        },
+      },
+    );
+    expect(service.telemetry().used).toBe(0);
+  });
 });
 
 describe('protocol injection (agent/pre-step)', () => {
@@ -405,7 +471,7 @@ describe('/mnemos distill command', () => {
     const { ctx, commands } = fakeContext();
     const { service } = makeService();
     const collector = new SignalCollector(() => {});
-    collector.onEvent({ id: 's1' }, { type: 'user/message', seq: 0, data: { role: 'user', content: [{ type: 'text', text: '记住：用 pnpm' }] } });
+    collector.onEvent({ id: 's1' }, { type: 'user/message', seq: 0, data: { message: { role: 'user', content: [{ type: 'text', text: '记住：用 pnpm' }] } } });
     const llm: Llm = {
       async complete() {
         return JSON.stringify([{ type: 'preference', topic: 'pnpm', summary: 'Use pnpm.', confidence: 0.9 }]);
@@ -492,9 +558,9 @@ describe('session signal collector', () => {
   it('detects an explicit remember request once', () => {
     const logs: string[] = [];
     const collector = new SignalCollector((m) => logs.push(m));
-    collector.onEvent({ id: 's1' }, { type: 'user/message', seq: 0, data: { role: 'user', content: [{ type: 'text', text: '记住：用 pnpm' }] } });
-    collector.onEvent({ id: 's1' }, { type: 'user/message', seq: 0, data: { role: 'user', content: [{ type: 'text', text: '记住：用 pnpm' }] } });
-    collector.onEvent({ id: 's1' }, { type: 'user/message', seq: 1, data: { role: 'user', content: [{ type: 'text', text: 'hello' }] } });
+    collector.onEvent({ id: 's1' }, { type: 'user/message', seq: 0, data: { message: { role: 'user', content: [{ type: 'text', text: '记住：用 pnpm' }] } } });
+    collector.onEvent({ id: 's1' }, { type: 'user/message', seq: 0, data: { message: { role: 'user', content: [{ type: 'text', text: '记住：用 pnpm' }] } } });
+    collector.onEvent({ id: 's1' }, { type: 'user/message', seq: 1, data: { message: { role: 'user', content: [{ type: 'text', text: 'hello' }] } } });
     expect(logs).toHaveLength(1);
     expect(logs[0]).toContain('remember-signal');
   });

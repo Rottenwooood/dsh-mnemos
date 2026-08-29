@@ -20,19 +20,33 @@ export interface DshSessionFeedEvent {
   type: string;
   seq?: number;
   time?: number;
-  data?: { role?: string; content?: unknown[]; text?: string };
+  data?: {
+    turn?: number;
+    step?: number;
+    role?: string;
+    text?: string;
+    message?: { role?: string; content?: unknown[] };
+  };
 }
 
-/** Concatenate a dsh content-block array (or plain text) into one string. */
-function blockText(value: unknown): string {
-  if (typeof value === 'string') return value;
-  if (Array.isArray(value)) {
-    return value
-      .map((b) => (typeof b === 'string' ? b : (b as { text?: unknown })?.text))
-      .filter((t): t is string => typeof t === 'string')
-      .join('\n');
+/**
+ * Extract the model-visible TEXT of a session message event: the `text` blocks
+ * of `message.content`. `reasoning` blocks (thinking) are deliberately excluded
+ * — they rephrase the input and would falsely credit a hit for any injected
+ * memory mentioned in the user's own message. DSH's `assistant/message` and
+ * `user/message` events carry the message under `data.message.content`.
+ */
+function messageTextOf(data: DshSessionFeedEvent['data']): string {
+  const content = data?.message?.content;
+  if (!Array.isArray(content)) return '';
+  const out: string[] = [];
+  for (const block of content) {
+    const b = block as { type?: string; text?: unknown };
+    if (b && typeof b === 'object' && b.type === 'text' && typeof b.text === 'string') {
+      out.push(b.text);
+    }
   }
-  return '';
+  return out.join('\n');
 }
 
 export class SignalCollector {
@@ -60,7 +74,7 @@ export class SignalCollector {
     if (event.type !== 'user/message' && event.type !== 'assistant/message') {
       return;
     }
-    const text = blockText(event.data?.content ?? event.data?.text);
+    const text = messageTextOf(event.data);
     if (!text.trim()) {
       return;
     }
@@ -70,9 +84,9 @@ export class SignalCollector {
       );
     }
     const role =
-      event.data?.role === 'assistant'
+      event.data?.message?.role === 'assistant'
         ? 'assistant'
-        : event.data?.role === 'tool'
+        : event.data?.message?.role === 'tool'
           ? 'tool'
           : event.type === 'user/message'
             ? 'user'
@@ -170,10 +184,11 @@ export function registerHooks(ctx: Context, collector: SignalCollector, usage: U
     collector.onEvent(session, event);
     const sessionId = (session as { id?: unknown })?.id;
     if (typeof sessionId !== 'string') return;
-    const data = event.data as { role?: unknown; content?: unknown[]; text?: unknown } | undefined;
-    const text = blockText(data?.content ?? data?.text);
-    if (event.type === 'assistant/message' && text) {
-      usage.onAssistantText(sessionId, text, service);
+    if (event.type === 'assistant/message') {
+      const text = messageTextOf(event.data);
+      if (text) {
+        usage.onAssistantText(sessionId, text, service);
+      }
     } else if (event.type === 'user/message') {
       usage.onUserMessage(sessionId);
     }
