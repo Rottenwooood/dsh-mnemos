@@ -28,7 +28,7 @@ The whole thing hangs on four design principles.
 ### For users
 
 - **Model tools** (the model uses them in-session):
-  `memory_search` (recall) · `memory_record` (write, with keywords) · `memory_distill` (summarize buffered sessions → memory/rule proposals) · `memory_list` · `memory_stats`.
+  `memory_search` (recall) · `memory_record` (write one entry now, gated, can update an outdated memory in place) · `memory_distill` (batch-distill the buffered conversation → memory/rule candidates, incremental dedup) · `memory_list` · `memory_stats`.
 - **Injection.** Once per session, a *memory index* is injected (one line per memory: type · short-id · topic · keywords, byte-stable, KV-cache friendly, negligible token cost). The model drills into details with `memory_get` or `memory_research`. When more than N minutes have passed and a keyword hits, the matching index entries are injected again.
 - **Environment conventions.** `protocol`-typed memories (environment/tool conventions, e.g. sandbox rules) ride a **separate channel**: injected once at the session's first step and re-attached after each context compaction, so they are always present before the agent acts; **they never enter the memory index**.
 - **Hits.** A `memory_get` or `memory_search` call counts as a hit.
@@ -44,7 +44,7 @@ The whole thing hangs on four design principles.
   /memory bus <blacklist|unblacklist|list|revoke|writers>
   ```
 - **Browser UI** (better-sidebar "记忆" tab): overview, approval queue (approve / reject / edit-then-approve / batch-approve low-risk), memory list with search/filter/edit/version-history/rollback/delete, deleted-memory recovery, rejection history, and git sync.
-- **Distillation.** LLM-generated memories (each with 2–5 keywords that trigger injection) of different types enter the approval flow. Approved rules are injected by mnemos, and can additionally be **promoted to a DSH SKILL** that any agent can load on demand through DSH's `skill` tool, making the knowledge usable outside mnemos.
+- **Distillation.** Unlike `memory_record` (one entry written now), distillation hands the **whole buffered conversation** to a dedicated specialist that **batch-mines** memory candidates, rule candidates and conflict-replacement proposals in one pass; an incremental cursor ensures already-distilled content is never reprocessed. Each memory carries 2–5 keywords (triggering injection), all candidates pass the approval gate; conflicts always go to a human, rule-class entries become rule proposals. Approved rules are injected by mnemos, and can additionally be **promoted to a DSH SKILL** that any agent can load on demand through DSH's `skill` tool, making the knowledge usable outside mnemos.
 
 ### For developers
 
@@ -143,9 +143,10 @@ All settings live in Settings → dsh-mnemos and mostly apply live. Highlights:
 | `protocolInjectEnabled` | inject environment/tool-convention (`protocol`) memories — once at the session's first step, re-attached after each context compaction; **not part of the memory index** |
 | `gitRemoteUrl` / `gitBackend` / `syncEnabled` | cross-machine sync: remote / backend / auto-sync |
 | `distillAuto` / `distillEveryNTurns` | auto-distill on/off and interval (user turns) |
+| `cleanupDays` | archive-candidate age: how many days without any injection/hit or update before a memory becomes a cleanup candidate |
 | `sessionLogDirs` / `backfillEnabled` | backfill historical session logs at startup |
 
-The full 31-field table, YAML snippets, usage scenarios, and troubleshooting: [docs/HANDOVER.md](docs/HANDOVER.md).
+The full 34-field table, YAML snippets, usage scenarios, and troubleshooting: [docs/HANDOVER.md](docs/HANDOVER.md).
 
 ## How it compares
 

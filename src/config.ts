@@ -54,6 +54,8 @@ export interface Config {
   distillEveryNTurns: number;
   /** Max session messages buffered for distillation at once. */
   distillWindow: number;
+  /** Days of inactivity without any ledger hit before a memory becomes an archive candidate (cleanup). */
+  cleanupDays: number;
   /** Directory holding the git-tracked Markdown mirror (memory repo). */
   memoryRepoDir: string;
   /** Version the memory mirror with git on every change. */
@@ -103,6 +105,7 @@ export function defaultConfig(): Config {
     distillAuto: false,
     distillEveryNTurns: 5,
     distillWindow: 200,
+    cleanupDays: 90,
     memoryRepoDir: join(home, '.dsh', 'mnemos', 'repo'),
     gitVersioning: true,
     gitRemoteName: 'origin',

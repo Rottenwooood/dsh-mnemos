@@ -440,9 +440,11 @@ export function createMnemosRouteHandler(deps: MnemosRouteDeps): (req: Req, res:
         return;
       }
       if (method === 'GET' && route === '/cleanup') {
-        const days = Number(url.searchParams.get('days') ?? 90);
-        const ids = deps.service.listStale(Number.isFinite(days) && days > 0 ? days : 90);
-        json(res, 200, { days: Number.isFinite(days) && days > 0 ? days : 90, count: ids.length, ids });
+        const configured = deps.getConfig().cleanupDays;
+        const days = Number(url.searchParams.get('days') ?? configured);
+        const daysVal = Number.isFinite(days) && days > 0 ? days : configured;
+        const ids = deps.service.listStale(daysVal);
+        json(res, 200, { days: daysVal, count: ids.length, ids });
         return;
       }
       if (method === 'POST' && route === '/cleanup') {

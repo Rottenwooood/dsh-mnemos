@@ -119,8 +119,8 @@ P0 效果账本/评测/仪表、P1 冻结索引+memory_get 下钻+幂律热度�
 | 工具 | 作用 |
 |---|---|
 | `memory_search` | 跨会话搜索记忆（RRF 混合召回），参数 `query`/`scope`/`limit` |
-| `memory_record` | 提议写一条记忆，参数 `topic`/`summary`/`detail`/`keywords`/`type`/`scope`/`confidence`；过门禁（committed / proposed / denied）。`keywords` 是触发注入的关键词 |
-| `memory_distill` | 提炼缓冲会话 → 记忆/规则候选，LLM 为每条记忆写 keywords；过门禁 |
+| `memory_record` | 单条即写即审：提议写一条记忆，参数 `topic`/`summary`/`detail`/`keywords`/`type`/`scope`/`confidence`；过门禁（committed / proposed / denied）。`keywords` 是触发注入的关键词；`replaceMemoryId` 可原地更新旧记忆（git 可回滚，不新建重复条目） |
+| `memory_distill` | 批量提炼缓冲会话（或转录文件）→ 记忆/规则候选，独立提炼角色 + 增量游标去重 + 冲突强制人工，LLM 为每条记忆写 keywords；过门禁 |
 | `memory_list` | 列出 active 记忆，按 `scope`/`workspace`/`type` 过滤 |
 | `memory_stats` | 统计：总数、按作用域/类型分布、门禁配置 |
 
@@ -187,6 +187,7 @@ P0 效果账本/评测/仪表、P1 冻结索引+memory_get 下钻+幂律热度�
 | `distillAuto` | bool | `false` | 自动提炼；开 = 每 N 次用户输入自动执行 | 即时 |
 | `distillEveryNTurns` | number | `5` | 自动提炼间隔（次用户输入） | 即时 |
 | `distillWindow` | number | `200` | 单次提炼缓冲消息数 | 即时 |
+| `cleanupDays` | number | `90` | 清理失效天数：多久没有注入/命中且未更新的记忆进入归档候选 | 即时 |
 | `memoryRepoDir` | string | `~/.dsh/mnemos/repo` | git 镜像仓库目录 | 重启 |
 | `gitVersioning` | bool | `true` | 记忆变更自动 git 提交 | 即时 |
 | `gitBackend` | enum | `isomorphic` | `isomorphic`（纯 JS）/ `system`（系统 git CLI） | 重启 |

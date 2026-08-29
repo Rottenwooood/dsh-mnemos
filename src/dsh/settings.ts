@@ -59,6 +59,7 @@ export const MNEMOS_SETTINGS_FIELDS: MnemosSettingsField[] = [
   { key: 'distillAuto', kind: 'boolean', label: '自动提炼（关=纯手动；开=每 N 次用户输入自动提炼）' },
   { key: 'distillEveryNTurns', kind: 'number', label: '自动提炼间隔（次用户输入）' },
   { key: 'distillWindow', kind: 'number', label: '单次提炼缓冲消息数' },
+  { key: 'cleanupDays', kind: 'number', label: '清理失效天数（多久没用过的记忆进入归档候选）' },
   { key: 'memoryRepoDir', kind: 'string', label: 'git 记忆仓库目录（需重启生效）' },
   { key: 'gitVersioning', kind: 'boolean', label: 'git 版本管理' },
   { key: 'gitRemoteName', kind: 'string', label: 'git 远程名' },

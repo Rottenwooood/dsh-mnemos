@@ -17,18 +17,18 @@
 
 1. **所有记忆经过门禁，可审计。** 每一次写入——模型工具、/memory、第三方插件、浏览器——都走同一个审批门禁：敏感/重复/越界的直接打回，有风险的等人工。模型/导入/第三方记忆标记"未验证"并在注入时设上限（防投毒）。每次写入/批准/拒绝都记审计。
 
-2. **会自我进化、会自我修正。** 会话被提炼成记忆**和规则**。规则活在记忆库里、由 mnemos 注入模型；批准后还可以**提升为 DSH SKILL**——一份标准 Markdown 技能文件，任何 agent 都能按需加载，让这份知识脱离 mnemos 也能在 harness 里用。事实就地更新（旧值 git 可回滚）；只有真正的冲突才变成**替换提案**交人裁决。热度清理让存储有界（活跃 → 归档 → 可还原；`固定` 永不离开）。
+2. **会自我进化、会自我修正。** 会话被提炼成记忆**和规则**。规则活在记忆库里、由 mnemos 注入模型；批准后还可以**提升为 DSH SKILL**——任何 agent 都能按需加载，让这份知识脱离 mnemos 也能在 harness 里用。事实就地更新（旧值 git 可回滚）；只有真正的冲突才变成**替换提案**交人裁决。热度清理让存储有界（活跃 → 归档 → 可还原；`固定` 永不离开）。
 
 3. **数据可从其他Agent导入、可管理、可跨设备同步。** 本地 SQLite（WAL + FTS5）；每条记忆同时是一个 git 仓库里的 Markdown 文件——历史、diff、回滚、恢复、备份、可跨设备（通过push/pull）。可导入 ChatGPT / Claude Code / Codex / DSH 历史。
 
-4. **开放记忆总线。** `ctx.mnemosBus` 是一条开放记忆总线：任何 DSH 插件都能接入， `recall` 记忆、`record` 自己的记忆（盖身份章、永远进人工审批队列）、`subscribe` 记忆变化——外加运行时拉黑和撤销。版本化的 ABI（`ctx.mnemosAbi`）把真实效果数字开放给外部工具，conformance 套件证明不是空壳。详见[给开发者](#给开发者)。
+4. **开放记忆总线。** `ctx.mnemosBus` 是一条开放记忆总线：任何 DSH 插件都能接入， `recall` 记忆、`record` 自己的记忆（盖身份章、永远进人工审批队列）、`subscribe` 记忆变化——外加运行时拉黑和撤销。。详见[给开发者](#给开发者)。
 
 ## 功能
 
 ### 给使用者
 
 - **模型工具**（模型在会话里自己用）：
-  `memory_search`（主动检索）· `memory_record`（写入，带关键词）· `memory_distill`（把缓冲会话提炼成记忆/规则提案）· `memory_list` · `memory_stats`。
+  `memory_search`（主动检索）· `memory_record`（单条即写即审，可原地更新旧记忆）· `memory_distill`（批量提炼缓冲会话→记忆/规则候选，增量去重）· `memory_list` · `memory_stats`。
 - **注入**  每个会话开头注入一次**记忆索引**（每条一行：类型·短id·主题·关键词，字节稳定，命中 KV 缓存，token消耗极少）；模型要详细信息用 `memory_get`或 `memory_research` 查询。时间间隔大于N分钟且检测到关键词时，再次注入对应的记忆索引。
 - **环境约定**  `protocol` 类型的记忆（环境约定，如沙箱规则）走**独立通道**：每会话首步注入一次、上下文压缩完成后重新注入，保证在 agent 行动前始终在场；**不进入记忆索引**。
 - **命中** `memory_get`与`memory_search`执行即视为命中。
@@ -44,7 +44,7 @@
   /memory bus <blacklist|unblacklist|list|revoke|writers>
   ```
 - **浏览器界面**（better-sidebar「记忆」页签）：概览、待审批（批准/拒绝/编辑后批准/批量批准低风险）、记忆列表（搜索/筛选/编辑/版本历史/回滚/删除）、已删除恢复、被拒历史、git 同步。
-- **提炼。** LLM 生成记忆（每条带 2-5 个关键词，触发注入），生成不同类型记忆进审批；批准后的规则由 mnemos 注入模型，还能**提升为 DSH SKILL**，任何 agent 都能通过 DSH 的 `skill` 工具按需加载，让这份知识脱离 mnemos 也能用。
+- **提炼。** 与 `memory_record` 的单条即写即审不同，提炼把**整段对话缓冲**交给独立提炼角色**批量**挖掘：一次性产出记忆候选、规则候选与冲突替换提案，增量游标保证不重复处理已提炼过的内容。每条带 2-5 个关键词（触发注入），全部过门禁；冲突强制人工裁决，规则类走规则提案；批准后的规则由 mnemos 注入模型，还能**提升为 DSH SKILL**，任何 agent 都能通过 DSH 的 `skill` 工具按需加载，让这份知识脱离 mnemos 也能用。
 
 
 ### 给开发者
@@ -144,9 +144,10 @@ dsh plugin --profile web add ./dsh-mnemos-<version>.tgz
 | `protocolInjectEnabled` | 注入环境约定（`protocol`）记忆——每会话首步注入一次，上下文压缩完成后重新注入；**不进记忆索引** |
 | `gitRemoteUrl` / `gitBackend` / `syncEnabled` | 跨机同步：远端 / 后端 / 自动同步 |
 | `distillAuto` / `distillEveryNTurns` | 自动提炼开关与间隔（次用户输入） |
+| `cleanupDays` | 清理失效天数：多久没有注入/命中且未更新的记忆进入归档候选 |
 | `sessionLogDirs` / `backfillEnabled` | 启动时回填历史会话日志 |
 
-全部 33 个字段、YAML 片段、使用场景、故障排查：[docs/HANDOVER.md](docs/HANDOVER.md)。
+全部 34 个字段、YAML 片段、使用场景、故障排查：[docs/HANDOVER.md](docs/HANDOVER.md)。
 
 ## 与其他方案对比
 

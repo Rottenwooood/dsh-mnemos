@@ -188,4 +188,16 @@ describe('/mnemos/api route handler', () => {
     expect(pinned.json.ok).toBe(true);
     expect(deps.store.getMemory(staleId)?.pinned).toBe(true);
   });
+
+  it('uses configured cleanupDays when no query overrides, and reports the effective days', async () => {
+    const deps = makeDeps({ getConfig: () => ({ ...defaultConfig(), cleanupDays: 45 }) });
+    const handler = createMnemosRouteHandler(deps);
+    // No query: the configured 45-day window is used and reported back.
+    const preview = await call(handler, 'GET', '/mnemos/api/cleanup');
+    expect(preview.json.days).toBe(45);
+    expect(preview.json.count).toBe(0);
+    // An explicit query overrides the configured window.
+    const overridden = await call(handler, 'GET', '/mnemos/api/cleanup?days=7');
+    expect(overridden.json.days).toBe(7);
+  });
 });

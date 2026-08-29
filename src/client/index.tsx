@@ -222,11 +222,11 @@ export function MnemosTab(): ReactNode {
   const cleanupStale = async (): Promise<void> => {
     setBusy(true)
     try {
-      const res = await fetch('/mnemos/api/cleanup?days=90')
-      const data = (await res.json()) as { count: number; ids: string[] }
+      const res = await fetch('/mnemos/api/cleanup')
+      const data = (await res.json()) as { days: number; count: number; ids: string[] }
       if (data.count === 0) {
         setNotice({ kind: 'ok', text: '没有可清理的失效记忆' })
-      } else if (window.confirm(`发现 ${data.count} 条长期未使用且未更新的记忆，将从列表清理（git 历史可恢复）。确认？`)) {
+      } else if (window.confirm(`发现 ${data.count} 条超过 ${data.days} 天未使用且未更新的记忆，将从列表清理（git 历史可恢复）。确认？`)) {
         const result = (await postJson('/mnemos/api/cleanup', { ids: data.ids })) as { removed: number }
         setNotice({ kind: 'ok', text: `已清理 ${result.removed} 条失效记忆` })
       }
@@ -600,6 +600,7 @@ const FIELDS: MnemosField[] = [
   { key: 'distillAuto', kind: 'boolean', label: '自动提炼', hint: '开 = 每 N 次用户输入自动提炼；关 = 纯手动按钮', group: '提炼' },
   { key: 'distillEveryNTurns', kind: 'number', label: '自动提炼间隔（次用户输入）', group: '提炼' },
   { key: 'distillWindow', kind: 'number', label: '单次提炼缓冲消息数', group: '提炼' },
+  { key: 'cleanupDays', kind: 'number', label: '清理失效天数', hint: '多久没有注入/命中且未更新的记忆进入归档候选', group: '提炼' },
   { key: 'gitVersioning', kind: 'boolean', label: 'git 版本管理', group: 'git' },
   { key: 'gitBackend', kind: 'string', label: 'git 后端', hint: 'isomorphic / system', group: 'git' },
   { key: 'injectRefreshIntervalMinutes', kind: 'number', label: '关键词部分注入间隔（分钟）', hint: '会话中命中关键词且到间隔时，重注入相关记忆索引', group: 'git' },
