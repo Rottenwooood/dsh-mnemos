@@ -12,8 +12,6 @@
 
 **What it is.** A DSH plugin that gives the model cross-session memory. Facts you tell it in one session are injected at the start of the next, so you don't re-explain yourself. Every write path — model tools, /memory commands, third-party plugins, the browser panel — goes through a single approval-gated `MemoryService`. Data is fully local: SQLite (WAL + FTS5) with a git-versioned Markdown mirror for history, rollback, backup, and cross-machine sync.
 
-**Cross-device sync is git, and git has two backends.** Every memory is a Markdown file in a git repo; that repo is the sync transport. Set a git remote and mnemos merges per-entry: independent memories merge cleanly, a memory changed on both machines is flagged as a conflict for you to resolve — never silently overwritten. Two backends: `gitBackend: system` (your git CLI — more reliable) and `gitBackend: isomorphic` (a pure-JS npm package, the default, works without system git — in our testing it can occasionally time out or be flaky on slow connections; if you sync a lot, prefer `system`).
-
 **What it isn't.**
 
 - Not a memory *warehouse* or a vector store — it does not attempt unbounded accumulation.
@@ -22,20 +20,17 @@
 
 ## Why mnemos
 
-1. **Effect numbers that beat the published baseline — and they're reproducible.** LongMemEval-S hit@1 **87.2%** vs deja-vu's published **85.3%** — same data, same metrics, same query text. Deterministic, no LLM, run it yourself. Most memory plugins publish no numbers at all.
-2. **Cross-session memory.** What you tell the model in one session is injected at the start of the next — it just knows "use pnpm for deps", no re-explaining.
-3. **An approval gate that can't be bypassed.** Sensitive content, duplicates, and out-of-budget writes are rejected automatically; normal writes commit, risky ones wait in a human approval queue. Every write path — model tools, /memory, third-party plugins, the browser — goes through the same gate.
-4. **Self-evolution.** Sessions are distilled into memories *and* rules; approved rules are injected into the model, and approved rules can be promoted to **SKILL files**. Runs on demand or automatically every N user turns (`distillAuto`).
-5. **A real memory lifecycle.** Heat-based cleanup walks active → archived → restorable (coldest first); `pinned` memories never leave; deleted memories stay recoverable.
-6. **Facts are corrected in place, not contradicted.** When a fact changes, the existing memory is edited in place — the old value stays recoverable in git history. Only genuinely conflicting claims become *replacement proposals* that wait for a human; recall never returns two live versions of one fact.
-7. **Failures are remembered with a mechanism, not vibes.** On a failed command, mnemos records tool + working directory + exact command with evidence. The next identical attempt is denied up front and the model is told why — from the stored evidence. The record self-expires after a TTL or the first successful retry. Negative memories are **never injected into prompts**; they are intercepted at execution time.
-8. **Anti-poisoning.** Model/import/third-party memories are marked *untrusted*: bounded in number, ranked behind human-confirmed memories at injection, with the source visible to the model.
-9. **Auditable.** Every write / approval / rejection / replacement / revocation lands in an audit ledger — denied writes included.
-10. **Your data, locally.** SQLite (WAL + FTS5); every memory is also a Markdown file in a git repo — history, diff, rollback, restore, backup, and cross-machine sync.
-11. **Cross-device sync is git, with two backends.** Independent memories merge cleanly across machines; a memory changed on both sides is flagged as a conflict for you to resolve — never silently overwritten. `gitBackend: system` (your git CLI — reliable) or `gitBackend: isomorphic` (pure-JS npm package, the default, works without system git — in our testing it can occasionally time out or be flaky on slow connections; if you sync a lot, prefer `system`).
-12. **Import foreign history.** Auto-detects and ingests ChatGPT exports, Claude Code logs, Codex logs, and DSH's own session logs — content-hashed, so re-importing dedupes.
-13. **Open to other plugins — a memory bus.** `ctx.mnemosBus`: read-only recall, writes that require a declared plugin identity and always enter the approval queue, change subscriptions, runtime blacklisting, and revocation (only the owning plugin or a human).
-14. **Open to measurement — a versioned ABI.** `ctx.mnemosAbi` exposes `recall / get / state / probe` so external tools and evals read real numbers (active / pending / untrusted / verified / injections / usage-rate) — proven by a conformance suite, not a stub.
+The whole thing hangs on five design principles.
+
+1. **Effect numbers you can reproduce — not a toy.** LongMemEval-S hit@1 **87.2%** vs deja-vu's published **85.3%** (same data, same metrics, same query text), plus a deterministic no-LLM eval and a live `usage_ledger` effect card. Most memory plugins publish no numbers at all.
+
+2. **The model is never trusted blindly.** Every write — model tools, /memory, third-party plugins, the browser — goes through one approval gate: sensitive / duplicate / out-of-budget writes are rejected, risky ones wait for a human. Model/import/third-party memories are marked *untrusted* and bounded at injection (anti-poisoning). Failed commands are intercepted at execution time — the next identical attempt is blocked with evidence (negative memory). Every write / approval / rejection is audited.
+
+3. **It evolves and corrects itself.** Sessions distill into memories *and* rules; approved rules inject into the model and can promote to **SKILL files**. Facts update in place (the old value stays recoverable in git); only genuine conflicts become *replacement proposals* for a human. Heat-based cleanup keeps the store bounded (active → archived → restorable; `pinned` never leaves).
+
+4. **Your data, portable, cross-device.** Local SQLite (WAL + FTS5); every memory is also a Markdown file in a git repo — history, diff, rollback, restore, backup, and merge-based sync (conflicts flagged, never silently overwritten). Two git backends: `system` (your git CLI — reliable) or `isomorphic` (pure-JS npm package, the default — can time out on slow connections). Imports ChatGPT / Claude Code / Codex / DSH history.
+
+5. **Open and measured.** `ctx.mnemosBus` for other plugins (identity-stamped writes → approval queue, blacklist, revoke); `ctx.mnemosAbi` (`recall / get / state / probe`) + a conformance suite for external measurement.
 
 ## Features
 
