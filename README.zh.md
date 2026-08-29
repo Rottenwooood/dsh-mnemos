@@ -15,11 +15,11 @@
 
 整个设计挂在四条理念上。
 
-1. **所有记忆经过门禁，可审计。** 每一次写入——模型工具、/memory、第三方插件、浏览器——都走同一个审批门禁：敏感/重复/越界的直接打回，有风险的等人工。模型/导入/第三方记忆标记"未验证"并在注入时设上限（防投毒）。失败命令在执行时拦截——下一次一模一样的尝试直接带着证据拦住（负面记忆）。每次写入/批准/拒绝都记审计。
+1. **所有记忆经过门禁，可审计。** 每一次写入——模型工具、/memory、第三方插件、浏览器——都走同一个审批门禁：敏感/重复/越界的直接打回，有风险的等人工。模型/导入/第三方记忆标记"未验证"并在注入时设上限（防投毒）。每次写入/批准/拒绝都记审计。
 
 2. **会自我进化、会自我修正。** 会话被提炼成记忆**和规则**。规则活在记忆库里、由 mnemos 注入模型；批准后还可以**提升为 DSH SKILL**——一份标准 Markdown 技能文件，任何 agent 都能按需加载，让这份知识脱离 mnemos 也能在 harness 里用。事实就地更新（旧值 git 可回滚）；只有真正的冲突才变成**替换提案**交人裁决。热度清理让存储有界（活跃 → 归档 → 可还原；`固定` 永不离开）。
 
-3. **数据可迁移、可跨设备。** 本地 SQLite（WAL + FTS5）；每条记忆同时是一个 git 仓库里的 Markdown 文件——历史、diff、回滚、恢复、备份、可跨设备（通过push/pull）。可导入 ChatGPT / Claude Code / Codex / DSH 历史。
+3. **数据可从其他Agent导入、可管理、可跨设备同步。** 本地 SQLite（WAL + FTS5）；每条记忆同时是一个 git 仓库里的 Markdown 文件——历史、diff、回滚、恢复、备份、可跨设备（通过push/pull）。可导入 ChatGPT / Claude Code / Codex / DSH 历史。
 
 4. **开放记忆总线。** `ctx.mnemosBus` 是一条开放记忆总线：任何 DSH 插件都能接入， `recall` 记忆、`record` 自己的记忆（盖身份章、永远进人工审批队列）、`subscribe` 记忆变化——外加运行时拉黑和撤销。版本化的 ABI（`ctx.mnemosAbi`）把真实效果数字开放给外部工具，conformance 套件证明不是空壳。详见[给开发者](#给开发者)。
 
@@ -29,7 +29,8 @@
 
 - **模型工具**（模型在会话里自己用）：
   `memory_search`（主动检索）· `memory_record`（写入，带关键词）· `memory_distill`（把缓冲会话提炼成记忆/规则提案）· `memory_list` · `memory_stats`。
-- **注入**  每个会话开头注入一次**冻结的记忆索引**（每条一行：类型·短id·主题·关键词，字节稳定，命中 KV 缓存，token消耗可忽略不计）；模型要细节用 `memory_get` 下钻。全程没有任何启发式/正则抽取。
+- **注入**  每个会话开头注入一次**记忆索引**（每条一行：类型·短id·主题·关键词，字节稳定，命中 KV 缓存，token消耗极少）；模型要详细信息用 `memory_get`或 `memory_research` 查询。时间间隔大于N分钟且检测到关键词时，再次注入对应的记忆索引。
+- **环境约定**  `protocol` 类型的记忆（环境约定，如沙箱规则）走**独立通道**：每会话首步注入一次、上下文压缩完成后重新注入，保证在 agent 行动前始终在场；**不进入记忆索引**。
 - **命中** `memory_get`与`memory_search`执行即视为命中。
 - **/memory 命令**——完整清单、使用场景、故障排查在 [docs/HANDOVER.md](docs/HANDOVER.md)；关键几条：
   ```
@@ -43,7 +44,7 @@
   /memory bus <blacklist|unblacklist|list|revoke|writers>
   ```
 - **浏览器界面**（better-sidebar「记忆」页签）：概览、待审批（批准/拒绝/编辑后批准/批量批准低风险）、记忆列表（搜索/筛选/编辑/版本历史/回滚/删除）、已删除恢复、被拒历史、git 同步。
-- **提炼。** LLM 生成记忆（每条带 2-5 个关键词，触发注入），流程/偏好/失败提炼成**规则提案**进审批；批准后的规则由 mnemos 注入模型，还能**提升为 DSH SKILL**——一份标准 Markdown 技能文件（frontmatter + 规则文本 + 来源证据），任何 agent 都能通过 DSH 的 `skill` 工具按需加载，让这份知识脱离 mnemos 也能用。只有已批准的规则能提升——草稿/待审的一律不行；幂等。
+- **提炼。** LLM 生成记忆（每条带 2-5 个关键词，触发注入），生成不同类型记忆进审批；批准后的规则由 mnemos 注入模型，还能**提升为 DSH SKILL**，任何 agent 都能通过 DSH 的 `skill` 工具按需加载，让这份知识脱离 mnemos 也能用。
 
 
 ### 给开发者
@@ -76,10 +77,10 @@ dsh-mnemos 不只是给模型和人用——它把记忆库通过总线开放给
 
 ## 效果
 
-### 确定性效果评测（无 LLM）
+### 确定性效果评测
 
 ```sh
-# 在 deepseek-harness 目录运行（把插件路径换成你的）
+# 在 deepseek-harness 目录运行
 node --import tsx/esm /path/to/dsh-mnemos/scripts/eval/run-eval.mts
 ```
 
@@ -91,8 +92,6 @@ node --import tsx/esm /path/to/dsh-mnemos/scripts/eval/run-eval.mts
 | 状态追踪（事实被修订后答当前值） | 通过 |
 | 每会话冻结记忆索引 | 8 行 ≈ 207 token（KV 缓存友好） |
 | 索引覆盖正确记忆 | 100% |
-
-「记忆」页签顶部有**效果卡**（注入次数/命中率/平均 token/已验证记忆数），数据来自 `usage_ledger` 账本。
 
 ### 公开数据集基准（LongMemEval-S / LoCoMo-10）
 
@@ -117,7 +116,7 @@ node --import tsx/esm /path/to/dsh-mnemos/scripts/eval/run-eval.mts
 # npm 通道
 dsh plugin --profile web add dsh-mnemos
 
-# git 通道（最新 main）
+# git 通道
 dsh plugin --profile web add git+https://github.com/Rottenwooood/dsh-mnemos.git
 
 # tarball 通道
@@ -142,26 +141,24 @@ dsh plugin --profile web add ./dsh-mnemos-<version>.tgz
 | `enabled` | 总开关 |
 | `autoApprove` / `autoApproveConfidence` | 自动放行高置信度模型写入 / 阈值 |
 | `injectionEnabled` / `injectLimit` / `injectMaxBytes` | 注入开关、条数与字节预算 |
-| `protocolInjectEnabled` | 注入环境/工具约定（`protocol`）记忆——每次上下文压缩后重新注入 |
+| `protocolInjectEnabled` | 注入环境约定（`protocol`）记忆——每会话首步注入一次，上下文压缩完成后重新注入；**不进记忆索引** |
 | `gitRemoteUrl` / `gitBackend` / `syncEnabled` | 跨机同步：远端 / 后端 / 自动同步 |
 | `distillAuto` / `distillEveryNTurns` | 自动提炼开关与间隔（次用户输入） |
 | `sessionLogDirs` / `backfillEnabled` | 启动时回填历史会话日志 |
-| `negativeMemoryEnabled` / `negativeMemoryTtlMs` | 失败命令拦截与失效时长 |
 
-全部 31 个字段、YAML 片段、使用场景、故障排查：[docs/HANDOVER.md](docs/HANDOVER.md)。
+全部 33 个字段、YAML 片段、使用场景、故障排查：[docs/HANDOVER.md](docs/HANDOVER.md)。
 
 ## 与其他方案对比
 
 ### vs dsh-memento
 
-两条路线。**dsh-memento** 是一个*能力接缝*：类型化的 `ctx.memory` 契约、按轨×层的硬字符预算、dsh-memory-protocol 规范 + adapter 注册表（mem0 / Hermes / CLAUDE.md）+ 只读 MCP server——生态互操作强。**dsh-mnemos** 是完整记忆*产品*：提炼、规则/SKILL、完整生命周期、负面记忆、带数字的检索。
+两条路线。**dsh-memento** 是一个*能力接缝*：类型化的 `ctx.memory` 契约、按轨×层的硬字符预算、dsh-memory-protocol 规范 + adapter 注册表（mem0 / Hermes / CLAUDE.md）+ 只读 MCP server——生态互操作强。**dsh-mnemos** 是完整记忆*产品*：提炼、规则/SKILL、完整生命周期、带数字的检索。
 
 | 维度 | dsh-mnemos | dsh-memento |
 |---|---|---|
 | 检索 | FTS5 阶梯 + 二元组 RRF，**有公开基准数字** | 子串搜索（无 FTS5），无公开数字 |
 | 生命周期 / 热度清理 / pinned | 有 | 无 |
 | 提炼 / 规则 / SKILL | 有（LLM，过门禁） | 无 |
-| 负面记忆 | 有 | 无 |
 | git 版本历史 + 跨机同步 | 有（每条记忆一个 .md） | 无 |
 | 第三方写入 | 总线：身份烙印 + 审批队列 + 拉黑 + 撤销 | adapter 注册表（纯数据转换）+ MCP server |
 | 协议规范 / MCP / adapter | 总线 + ABI + conformance；暂无 MCP | dsh-memory-protocol v1 + MCP + adapters |
@@ -170,7 +167,7 @@ dsh plugin --profile web add ./dsh-mnemos-<version>.tgz
 
 ### vs deja-vu
 
-deja-vu 是 Go 写的记忆引擎，它的公开长期记忆基准我们用同口径复现。LongMemEval-S 我们赢（87.2% vs 85.3%）、LoCoMo 落后（60.9% vs 69.8%），细节见[效果](#效果)。在检索之上，我们还带了 deja-vu 没有的治理/生命周期层（审批门禁、信任分级、冲突替换提案、负面记忆、git）。
+deja-vu 是 Go 写的记忆引擎，它的公开长期记忆基准我们用同口径复现。LongMemEval-S 我们赢（87.2% vs 85.3%）、LoCoMo 落后（60.9% vs 69.8%），细节见[效果](#效果)。在检索之上，我们还带了 deja-vu 没有的治理/生命周期层（审批门禁、信任分级、冲突替换提案、git）。
 
 ## 路线图
 
@@ -193,10 +190,9 @@ deja-vu 是 Go 写的记忆引擎，它的公开长期记忆基准我们用同�
 | 冻结索引注入 + `memory_get` 下钻（检索≠注入） | engram / meow / memory-manager / LongMemEval |
 | 幂律热度排序 + 强化计数 | dsh-evolve 衰减语义 |
 | 有界占用 + 来源标记防投毒 | 2608.21230 / Veracium |
-| 失败命令拦截 + 自失效（负面记忆） | dsh-negative-ledger / deja-vu |
 | 活跃→归档→删除 + pinned（绝不硬删） | dsh-evolve 状态机 |
 | 冲突替换提案（新值取代旧值，矛盾不静默丢弃） | StateMemBench / MELD |
-| protocol 按轮次刷新（防压缩悬崖） | 2608.22752 |
+| 环境约定按会话首步+压缩后重注入（防压缩悬崖） | 2608.22752 |
 | 开放测量 ABI + conformance | memento conformance suite |
 | 效果账本 + 可复跑评测 | memlab / LongMemEval 方法论 |
 | 第三方记忆总线（身份烙印 + 审批 + 拉黑 + 撤销） | memento adapters / tool-memory 共享 |
@@ -207,7 +203,7 @@ deja-vu 是 Go 写的记忆引擎，它的公开长期记忆基准我们用同�
 ```sh
 pnpm install
 pnpm run typecheck
-pnpm test                 # 151 个单测
+pnpm test                 # 156 个单测
 pnpm run build:client     # 改了 src/client/ 后需要
 
 scripts/run-verify.sh     # typecheck+单测 → 确定性评测 → ABI conformance → 真实注册表组合

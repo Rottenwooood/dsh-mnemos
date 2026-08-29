@@ -25,8 +25,6 @@ import { createIsomorphicGitBackend } from './domain/git/isomorphic-git.js';
 import { registerTools } from './dsh/tools.js';
 import { registerCommand, CommandDeps } from './dsh/command.js';
 import { registerHooks, registerInjection, registerProtocolInjection, SignalCollector } from './dsh/hooks.js';
-import { openNegativeMemoryStore } from './domain/negative.js';
-import { registerNegativeMemory } from './dsh/negative-hooks.js';
 import { createMnemosAbi } from './dsh/adapter.js';
 import { registerMnemosSkillProvider } from './dsh/skill-provider.js';
 import { createLlmFromContext } from './dsh/llm-adapter.js';
@@ -300,11 +298,6 @@ export function apply(ctx: Context, raw: Partial<Config> = {}): void {
   registerHooks(ctx, collector);
   registerInjection(ctx, service, getConfig);
   registerProtocolInjection(ctx, service, getConfig);
-  const negativeStore = openNegativeMemoryStore(config.dbPath);
-  registerNegativeMemory(ctx, { store: negativeStore, getConfig });
-  ctx.effect(() => () => {
-    negativeStore.close();
-  });
   registerBackfillJob(ctx, collector, getConfig);
   registerMnemosRoutes(ctx, {
     store,

@@ -136,4 +136,15 @@ describe('layered recall', () => {
     expect(freshLine).toBeGreaterThan(-1);
     expect(staleLine).toBeGreaterThan(freshLine);
   });
+
+  it('excludes protocol memories from the injected index (they ride their own channel)', () => {
+    const store = openMemoryStore(':memory:');
+    const service = createMemoryService(store, createSensitiveDetector());
+    const add = (m: Parameters<typeof service.add>[0]) => service.add(m, 'human');
+    add({ type: 'project_fact', scope: 'workspace', workspace: '/ws', topic: 'pnpm', summary: 'fact', keywords: ['pnpm'], evidence: [], confidence: 1, source: 'manual', writer: 'human' });
+    const proto = add({ type: 'protocol', scope: 'workspace', workspace: '/ws', topic: 'sandbox', summary: 'Every bash call runs in a fresh bwrap sandbox.', keywords: ['bash', 'sandbox'], evidence: [], confidence: 1, source: 'manual', writer: 'human' }).memory!;
+    expect(recallIndex(service, { workspace: '/ws' }).text).not.toContain('sandbox');
+    expect(recallByKeywords(service, 'sandbox bash', { workspace: '/ws' }).text).not.toContain('sandbox');
+    expect(proto.type).toBe('protocol'); // the memory itself is still stored
+  });
 });

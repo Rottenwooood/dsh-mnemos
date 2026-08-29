@@ -111,10 +111,15 @@ export function recallIndex(
   // poison-resistance work (2608.21230) shows has no usable setting.
   const untrustedMax = opts.untrustedMax ?? 3;
   const now = Date.now();
+  // `protocol` memories are standing environment/tool conventions injected on
+  // their own channel (first step + after compaction); they are NOT part of the
+  // searchable memory index.
   const rows = [
     ...service.listActive('global'),
     ...service.listActive('workspace', opts.workspace),
-  ].sort((a, b) => heatOf(b, now) - heatOf(a, now) || b.crossSessionHits - a.crossSessionHits);
+  ]
+    .filter((r) => r.type !== 'protocol')
+    .sort((a, b) => heatOf(b, now) - heatOf(a, now) || b.crossSessionHits - a.crossSessionHits);
   const trusted = rows.filter((r) => r.trust !== 'untrusted').slice(0, limit);
   const untrusted = rows.filter((r) => r.trust === 'untrusted').slice(0, untrustedMax);
   const ranked = [...trusted, ...untrusted];
@@ -168,7 +173,7 @@ export function recallByKeywords(
   const candidates = [
     ...service.listActive('global'),
     ...service.listActive('workspace', opts.workspace),
-  ];
+  ].filter((r) => r.type !== 'protocol');
   const lower = text.toLowerCase();
   const matched: RankedMemory[] = [];
   for (const row of candidates) {

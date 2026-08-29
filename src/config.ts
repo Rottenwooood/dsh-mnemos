@@ -68,10 +68,6 @@ export interface Config {
   syncIntervalMinutes: number;
   /** Git backend: 'system' (system git CLI, reliable for real remote sync) or 'isomorphic' (pure JS). */
   gitBackend: 'isomorphic' | 'system';
-  /** Record disproven commands and block a repeated identical attempt (negative memory). */
-  negativeMemoryEnabled: boolean;
-  /** How long a recorded failure stays active before auto-resolving, in ms. */
-  negativeMemoryTtlMs: number;
   /** Mid-session partial index refresh: min minutes between keyword-triggered re-injections. */
   injectRefreshIntervalMinutes: number;
   /** Max lines in a keyword-triggered partial index injection. */
@@ -114,8 +110,6 @@ export function defaultConfig(): Config {
     syncEnabled: false,
     syncIntervalMinutes: 1440,
     gitBackend: 'system',
-    negativeMemoryEnabled: true,
-    negativeMemoryTtlMs: 300_000,
     injectRefreshIntervalMinutes: 10,
     injectPartialLimit: 5,
     llmProvider: '',

@@ -15,8 +15,7 @@
 │    command.ts        /memory 命令
 │    routes.ts         HTTP 路由（宿主 RPC）
 │    adapter.ts        开放测量 ABI（ctx.mnemosAbi / ctx.mnemosBus / ctx.mnemos）
-│    settings.ts       Schemastery 配置定义（36 项）
-│    negative-hooks.ts 负面记忆的 execute/pre-execute 钩子
+│    settings.ts       Schemastery 配置定义（34 项）
 │    llm-adapter.ts    DSH 配置的 LLM 适配
 │
 ├─ src/domain/         纯领域逻辑（零 DSH 依赖，可单测）
@@ -24,7 +23,6 @@
 │    service.ts        记忆服务：门禁、审批、去重、审计、原地更新
 │    recall.ts         检索：recallIndex / recallByKeywords / heatOf
 │    distill.ts        LLM 蒸馏：DISTILL_SYSTEM_PROMPT、冲突检测
-│    negative.ts       负面记忆存储
 │    gitstore.ts       git 镜像存储（版本化/回滚/跨机同步）
 │    git/              git 后端抽象（isomorphic-git / system-git）
 │    mirror.ts         镜像格式 B（frontmatter summary + 详情/溯源）
@@ -59,8 +57,7 @@ status（active/archived/deleted/superseded）。
   保证主表与索引同步；检索按 `rank`（bm25）排序。
 - 检索多级阶梯：FTS5 全词 AND（精确）→ 空则 FTS5 任词 OR（bm25 排序）→
   空则包含扫描。服务层再与二元组相似度做 RRF 融合（`hybridSearch`）。
-- 辅助表：`rules`、`audit`、`approval`、`usage_ledger`、`bus_blacklist`、
-  `negative_memory`。
+- 辅助表：`rules`、`audit`、`approval`、`usage_ledger`、`bus_blacklist`。
 - 迁移策略：`IF NOT EXISTS` 建表 + 幂等 `ALTER TABLE ADD COLUMN`（逐列探测），
   `user_version` 校验。
 
@@ -102,7 +99,7 @@ per-entry 历史可回滚，支持跨机同步。git 后端可插拔。
 - 注入走 `systemPrompt` 段（协议记忆常驻 + 冻结索引 + 关键词部分刷新），
   一次性且字节稳定。
 - 工具经 `dsh-tools` 注册；`/memory` 命令经 `dsh-commands`；设置经
-  `dsh-settings`（Schemastery，36 项配置）；事件用 rc.2 真实签名。
+  `dsh-settings`（Schemastery，34 项配置）；事件用 rc.2 真实签名。
 - 开放测量 ABI `ctx.mnemosAbi`（recall/get/state/probe，versioned）+ 总线
   get/state 对齐三原语，供客户端与评测统一测量真实实现（一致性套件校验
   非 stub）。
@@ -120,6 +117,6 @@ per-entry 历史可回滚，支持跨机同步。git 后端可插拔。
 ## 关键配置（默认值）
 
 `injectRefreshIntervalMinutes=10`、
-`injectPartialLimit=5`、`negativeMemoryEnabled`、`negativeMemoryTtlMs=300000`、
+`injectPartialLimit=5`、
 `allowModelGlobalWrite=false`、`distillAuto=false`、`distillEveryNTurns=5`。
 完整清单见 `src/dsh/settings.ts`。

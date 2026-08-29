@@ -103,6 +103,14 @@ interface GitCommit {
 }
 
 const MEMORY_TYPES = ['project_fact', 'procedure', 'preference', 'error_fix', 'decision', 'protocol']
+const MEMORY_TYPE_LABELS: Record<string, string> = {
+  project_fact: '项目事实',
+  procedure: '流程',
+  preference: '偏好',
+  error_fix: '错误修复',
+  decision: '决策',
+  protocol: '环境约定',
+}
 
 /** `/mnemos/api/usage` answer: ledger-derived cross-session stats. */
 interface UsageStats {
@@ -407,7 +415,7 @@ export function MnemosTab(): ReactNode {
           />
           <select className="mnemos-input" style={{ flex: '0 0 120px' }} value={typeFilter} onChange={(e) => setTypeFilter(e.target.value)}>
             <option value="">全部类型</option>
-            {MEMORY_TYPES.map((t) => <option key={t} value={t}>{t}</option>)}
+            {MEMORY_TYPES.map((t) => <option key={t} value={t}>{MEMORY_TYPE_LABELS[t] ?? t}</option>)}
           </select>
         </div>
         {visible.length === 0 && (memories.data?.memories.length ?? 0) === 0 ? (
@@ -582,7 +590,7 @@ const FIELDS: MnemosField[] = [
   { key: 'injectLimit', kind: 'number', label: '每轮注入记忆条数上限', group: '注入' },
   { key: 'injectMinHits', kind: 'number', label: '自动注入最低跨会话命中次数', group: '注入' },
   { key: 'injectMaxBytes', kind: 'number', label: '每轮热层注入字节预算', group: '注入' },
-  { key: 'protocolInjectEnabled', kind: 'boolean', label: '每会话注入环境/工具约定', hint: 'protocol 记忆（如沙箱规则）每会话在场', group: '注入' },
+  { key: 'protocolInjectEnabled', kind: 'boolean', label: '每会话注入环境约定', hint: '环境约定（protocol）记忆：每会话首步注入一次，上下文压缩完成后重新注入，不进记忆索引', group: '注入' },
   { key: 'sessionLogDirs', kind: 'stringList', label: '会话日志扫描目录', hint: '逗号分隔', group: '导入' },
   { key: 'backfillEnabled', kind: 'boolean', label: '启动时回填历史会话日志', group: '导入' },
   { key: 'importCaller', kind: 'string', label: '导入写入方', hint: 'human / plugin', group: '导入' },
@@ -594,8 +602,6 @@ const FIELDS: MnemosField[] = [
   { key: 'distillWindow', kind: 'number', label: '单次提炼缓冲消息数', group: '提炼' },
   { key: 'gitVersioning', kind: 'boolean', label: 'git 版本管理', group: 'git' },
   { key: 'gitBackend', kind: 'string', label: 'git 后端', hint: 'isomorphic / system', group: 'git' },
-  { key: 'negativeMemoryEnabled', kind: 'boolean', label: '负面记忆', hint: '失败命令记录并自动拦截重复尝试', group: 'git' },
-  { key: 'negativeMemoryTtlMs', kind: 'number', label: '负面记忆失效时长（毫秒）', group: 'git' },
   { key: 'injectRefreshIntervalMinutes', kind: 'number', label: '关键词部分注入间隔（分钟）', hint: '会话中命中关键词且到间隔时，重注入相关记忆索引', group: 'git' },
   { key: 'injectPartialLimit', kind: 'number', label: '关键词部分注入条数上限', group: 'git' },
   { key: 'gitRemoteName', kind: 'string', label: 'git 远程名', group: 'git' },
@@ -784,7 +790,7 @@ function MnemosImportSection(): ReactNode {
     <div className="mnemos-section">
       <h3 className="mnemos-heading">导入历史会话</h3>
       <p className="mnemos-intro">
-        扫描目录里的会话记录（DSH 历史 / Claude Code / Codex / ChatGPT 自动识别），预览候选后导入。导入走与命令相同的门禁，重复与敏感内容会被跳过或拒绝。各来源默认位置：DSH <code>~/.dsh/sessions</code> · Claude Code <code>~/.claude/projects</code> · Codex <code>~/.codex/sessions</code> · ChatGPT 需先解压导出包（默认在 <code>~/Downloads</code>）。
+        扫描目录里的会话记录（DSH 历史 / Claude Code / Codex / ChatGPT 自动识别），预览候选后导入。
       </p>
       <div style={{ display: 'flex', gap: 8, marginBottom: 8 }}>
         <select

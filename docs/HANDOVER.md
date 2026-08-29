@@ -1,6 +1,6 @@
 # dsh-mnemos 交接文档（HANDOVER）
 
-> 完整的功能清单、实现方案、操作手册、全部 31 个配置字段、使用场景与故障排查、实现亮点与改进方向。
+> 完整的功能清单、实现方案、操作手册、全部 33 个配置字段、使用场景与故障排查、实现亮点与改进方向。
 > 面向维护者与深度使用者；新用户请先看 [README](../README.md)。
 
 ---
@@ -15,7 +15,7 @@
 - 数据全本地：SQLite（`node:sqlite` + FTS5 + WAL）+ git 版本化 Markdown 镜像（历史/回滚/跨机同步/备份）。
 - 无 LLM 依赖的确定性召回：FTS5 BM25 与 bigram-Jaccard 的 **RRF 融合**（dsh-evolve 机制）。
 
-> 状态：M0–M5 全部完成并在真实 `dsh web` profile 装运行，119 个单测 + typecheck 全绿。
+> 状态：M0–M5 全部完成并在真实 `dsh web` profile 装运行，156 个单测 + typecheck 全绿。
 
 ---
 
@@ -81,7 +81,7 @@
 
 ### M5 · 真实 DSH 界面
 
-- **设置页**（浏览器"设置 → dsh-mnemos"，`settings.section` id `mnemos`）：schemastery schema 驱动 31 个配置字段，分 开关/存储/门禁/注入/导入/提炼/git 七组；用户覆盖持久化、变更**实时重应用**（门禁、注入开关、git 远程 URL 即时生效；结构字段需重启）。底部含**导入历史会话**工具（选来源 + 目录 → 扫描预览 → 导入）。
+- **设置页**（浏览器"设置 → dsh-mnemos"，`settings.section` id `mnemos`）：schemastery schema 驱动 33 个配置字段，分 开关/存储/门禁/注入/导入/提炼/git 七组；用户覆盖持久化、变更**实时重应用**（门禁、注入开关、git 远程 URL 即时生效；结构字段需重启）。底部含**导入历史会话**工具（选来源 + 目录 → 扫描预览 → 导入）。
 - **管理页签**（better-sidebar `registerTab`，标题"记忆"）：
   - 概览（条数/待审批/上限）+ 现在提炼 + **清理失效**（长期未用未更新的记忆）+ **导出 JSON** + 刷新
   - **命中热力图**（近 30 天，`usage_ledger` 驱动）+ 累计命中/去重会话数
@@ -101,13 +101,13 @@
 
 ### 2026 计划落地（docs/QUALITY_PLAN_2026.md）
 
-P0 效果账本/评测/仪表、P1 冻结索引+memory_get 下钻+幂律热度、P2 负面记忆/遗忘归档/pinned/知识接替链、P3 防投毒（有界占用+trust）/开放测量 ABI+conformance/压缩防御（protocol 刷新轮次）全部落地。验证入口：
+P0 效果账本/评测/仪表、P1 冻结索引+memory_get 下钻+幂律热度、P2 遗忘归档/pinned/知识接替链、P3 防投毒（有界占用+trust）/开放测量 ABI+conformance/压缩防御（protocol 刷新轮次）全部落地。验证入口：
 
 - 一键：`scripts/run-verify.sh`（typecheck+单测 → 评测 → conformance → 真实组合）
 - 真实组合（harness 目录）：`node --import tsx/esm /home/c6h4o2/dsh-mnemos/scripts/verify-real-composition.mts`
 - conformance（harness 目录）：`node --import tsx/esm /home/c6h4o2/dsh-mnemos/scripts/conformance.mts`
 
-新表：`negative_memory`（失败拦截）、`memories.trust/pinned/supersedes_id/superseded_by_id`、`memories` 增 `observation_count/accessed_at`（幂律热度输入）。开放 ABI 为 `ctx.mnemosAbi`（`recall/get/state/probe`），bus 对齐到 `recall/get/state`。
+新表：`memories.trust/pinned/supersedes_id/superseded_by_id`、`memories` 增 `observation_count/accessed_at`（幂律热度输入）。开放 ABI 为 `ctx.mnemosAbi`（`recall/get/state/probe`），bus 对齐到 `recall/get/state`。
 
 > 注：P2.3"场景+人格整合"曾实现后**移除**（评审结论：人格与源记忆同源信息重复注入、纯冗余；场景无运行时作用且都不可编辑）。`scenes`/`persona` 表、`consolidation` 相关命令/路由/设置/客户端区块已全部删除。
 
@@ -157,7 +157,7 @@ P0 效果账本/评测/仪表、P1 冻结索引+memory_get 下钻+幂律热度�
 
 ## 四、极其详尽的配置指南
 
-### 4.1 全部 31 个字段
+### 4.1 全部 33 个字段
 
 修改方式：浏览器设置页（即时生效项标注）；或 `cordis.patch.yml` 按 id 覆盖插件 config；重启后 `settings.yaml` 分层叠加。
 
@@ -264,7 +264,7 @@ P0 效果账本/评测/仪表、P1 冻结索引+memory_get 下钻+幂律热度�
 2. **证据回链到原文**：记忆/热力图点某条 → 跳到源会话对应消息（DSH 会话日志已解压可定位 `(sessionId, eventRange)`）。
 3. **冲突裁决向导**：并排 diff（旧 vs 新）+ 三键（保留旧/替换/合并），而不是纯文本审批行。
 4. **记忆时间线/热区视图**：热力图点击某天 → 当天命中列表下钻；加"最近未用"置灰。
-5. **设置页分层**：31 个字段拆"基础/进阶/专家"，默认只露基础；开关配"我不知道该开还是关"的合理化建议。
+5. **设置页分层**：33 个字段拆"基础/进阶/专家"，默认只露基础；开关配"我不知道该开还是关"的合理化建议。
 6. **冷启动引导**：首次安装弹引导，扫描历史会话 → 建议导入 → 一键批准低风险。
 7. **批量审批增强**：全选/按来源批量、快捷键（j/k 选择 + a/r 审批）、操作可撤销（软删已支持）。
 8. **移动端/窄屏**：better-sidebar 页签做响应式；热力图可横滑（已有 overflow）。
@@ -305,7 +305,7 @@ P0 效果账本/评测/仪表、P1 冻结索引+memory_get 下钻+幂律热度�
 ```sh
 pnpm install
 pnpm run typecheck
-pnpm test                 # 119 个单测
+pnpm test                 # 156 个单测
 pnpm run build:client     # 产出 lib/client.js（浏览器半，改 client/ 后必跑）
 ```
 
