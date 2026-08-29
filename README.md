@@ -7,8 +7,8 @@ DSH（DeepSeek Harness）的**跨会话记忆插件**。它会记住你在会话
 ## 效果（可复跑，确定性，无 LLM）
 
 ```sh
-# 在 deepseek-harness 目录运行
-node --import tsx/esm /home/c6h4o2/dsh-mnemos/scripts/eval/run-eval.mts
+# 在 deepseek-harness 目录运行（把 /path/to/dsh-mnemos 换成你的插件路径）
+node --import tsx/esm /path/to/dsh-mnemos/scripts/eval/run-eval.mts
 ```
 
 | 指标 | 数值 |
@@ -47,6 +47,39 @@ node --import tsx/esm /home/c6h4o2/dsh-mnemos/scripts/eval/run-eval.mts
 - **可审计**：每一次写入/批准/拒绝都有记录。
 - **数据你的**：全部存本地 SQLite；每条记忆同时是一份 Markdown 文件，走 git 历史（可回滚、可恢复、可跨机同步、可备份）。
 
+### 特色：导入别家对话历史
+
+不只认识 DSH 自己的会话日志，还能直接吃**别家工具的导出**，自动识别格式、提炼成记忆：
+- **ChatGPT** 导出（JSON）
+- **Claude Code** 会话日志（JSONL）
+- **Codex** 会话日志（JSONL）
+- **DSH** 自己的会话日志
+
+导入自动去重（按内容哈希），同一条历史重复导入不会产生重复记忆。
+
+### 特色：开放 Memory Bus（给别的插件用）
+
+除了给模型用，dsh-mnemos 还把自己做成一个**可被其他插件调用的记忆总线**（`ctx.mnemosBus`）：
+- `bus.recall(query)` —— 查询记忆（只读，不会写）
+- `bus.record(input, identity)` —— 写入记忆。**必须声明插件身份**（`plugin:<名字>@<版本>`），且**永远进审批队列**，从不直接写入、从不自动放行，并记审计。
+- `bus.subscribe(listener)` —— 订阅记忆/规则变化事件（新记忆、待审批、被取代、被撤销、规则批准）。
+- **黑名单治理**：运行时可以把某个插件拉黑，它之后的写入全部拒绝并记审计。
+- **可撤销**：第三方写入可以被撤回，只有写入方插件或人类能撤回。
+
+即：别的插件想共享记忆，走的是**审批门禁 + 身份烙印 + 可审计 + 可拉黑**的路径，而不是信任一切。
+
+### 特色：开放测量 ABI（`ctx.mnemosAbi`）
+
+暴露一个**版本化、可一致性验证的测量接口**（`recall / get / state / probe`），供外部工具/评测读取真实效果数据——不是空壳，有 `scripts/conformance.mts` 证明它就是实际实现。`state()` 返回活跃/待审批/未验证/已验证/注入/命中率等账本数字，`probe()` 返回存活指纹。
+
+### 特色：规则 → SKILL 固化
+
+提炼出的"做事规则"（procedure/preference）批准后，可以固化成**标准 SKILL 文件**（Markdown，带 frontmatter），落在 `~/.dsh/mnemos/skills/`。只有**已批准**的规则才能固化，草稿/待审的一律不行；固化是幂等的（重复执行会覆盖）。
+
+### 特色：git 双后端
+
+记忆的 git 版本历史不依赖系统 git：默认用内置的 `isomorphic-git`（纯 JS，无需系统 git），也可以切到系统 `git` 后端。任何环境都能跑。
+
 ## 快速开始
 
 ```sh
@@ -70,7 +103,7 @@ dsh web
   /memory list | stats             查看/统计
   /memory archive <id> | restore <id> | pin <id> | unpin <id>   生命周期管理
   /memory approve <id> | reject <id>   审批待确认项
-  /memory import <来源> <路径>      导入历史会话（进提炼缓冲）
+  /memory import <来源> <路径>      导入历史会话（进提炼缓冲；来源自动识别）
   /memory distill [路径]            提炼（生成记忆/规则候选）
   /memory rules <list|activate|...>   管理规则
   /memory skill <list|promote>     规则 → SKILL
@@ -81,7 +114,7 @@ dsh web
 
 ## 同步到 GitHub
 
-在设置页填 `gitRemoteUrl`（如 `https://github.com/你/dsh-memory.git`）保存，然后点 push 即可。鉴权复用 `~/.git-credentials`（和系统 git 同一套凭据），无需额外配置。
+在设置页填 `gitRemoteUrl`（如 `https://github.com/你/dsh-mnemos.git`）保存，然后点 push 即可。鉴权复用 `~/.git-credentials`（和系统 git 同一套凭据），无需额外配置。
 
 ## 配置
 
@@ -113,6 +146,8 @@ dsh web
 | protocol 按轮次刷新（防压缩悬崖） | 2608.22752 |
 | 开放测量 ABI + conformance | memento conformance suite |
 | 效果账本 + 可复跑评测 | memlab / LongMemEval 方法论 |
+| 第三方记忆总线（身份烙印 + 审批 + 拉黑 + 可撤销） | memento adapters / tool memory 共享 |
+| 多来源历史导入（ChatGPT/Claude Code/Codex/DSH） | 迁移类工具惯例（导入即提炼） |
 
 ## 开发
 
@@ -129,12 +164,12 @@ pnpm run build:client      # 改了浏览器端（src/client/）后需要
 scripts/run-verify.sh      # typecheck+单测 → 确定性评测 → ABI conformance → 真实注册表组合
 ```
 
-单步（在 deepseek-harness 目录）：
+单步（在 deepseek-harness 目录，把 /path/to/dsh-mnemos 换成你的插件路径）：
 ```sh
 # 真实命令注册表分发 /memory 各子命令 + 负面记忆 + 接替链 + 信任
-node --import tsx/esm /home/c6h4o2/dsh-mnemos/scripts/verify-real-composition.mts
+node --import tsx/esm /path/to/dsh-mnemos/scripts/verify-real-composition.mts
 # 开放测量 ABI 一致性（证明不是空壳）
-node --import tsx/esm /home/c6h4o2/dsh-mnemos/scripts/conformance.mts
+node --import tsx/esm /path/to/dsh-mnemos/scripts/conformance.mts
 ```
 
 ## 数据位置
