@@ -1,185 +1,229 @@
 # dsh-mnemos
 
-> **没有效果数据的记忆插件都是玩具。** dsh-mnemos 自带可复跑的效果评测，每次改动都能看到数字变化（见下"效果"）。
+[简体中文](README.zh.md)
 
-DSH（DeepSeek Harness）的**跨会话记忆插件**。它会记住你在会话里告诉模型的重要事实，下次会话自动想起来；所有写入都过一道审批门禁，数据全在本地，还带 git 版本历史和跨机同步。
+**Governed, self-evolving, cross-session memory for DeepSeek Harness.** Everything the model remembers is written through an approval gate, lives in local SQLite, and is versioned in git — with reproducible effect numbers that move every time you change the code.
 
-## 效果（可复跑，确定性，无 LLM）
+![CI](https://img.shields.io/github/actions/workflow/status/Rottenwooood/dsh-mnemos/ci.yml?branch=main&label=CI) ![License](https://img.shields.io/badge/license-MIT-blue) ![Version](https://img.shields.io/github/v/tag/Rottenwooood/dsh-mnemos?label=version) ![Node](https://img.shields.io/badge/node-%3E%3D22.19-brightgreen)
+
+---
+
+## What it is / what it isn't
+
+**What it is.** A DSH plugin that gives the model cross-session memory. Facts you tell it in one session are injected at the start of the next, so you don't re-explain yourself. Every write path — model tools, /memory commands, third-party plugins, the browser panel — goes through a single approval-gated `MemoryService`. Data is fully local: SQLite (WAL + FTS5) with a git-versioned Markdown mirror for history, rollback, backup, and cross-machine sync.
+
+**What it isn't.**
+
+- Not a memory *warehouse* or a vector store — it does not attempt unbounded accumulation.
+- Not a silent rewriter — conflicting facts become *replacement proposals* that wait for a human decision, never auto-overwritten.
+- Not a trust-everything sink — model/import/third-party writes are marked *untrusted*, bounded in number, ranked behind human-confirmed memories at injection time, and the source is visible to the model.
+
+## Why mnemos
+
+1. **Effect numbers that beat the field, reproducibly.** LongMemEval-S hit@1 **87.2%** vs deja-vu's published **85.3%** — same data, same metrics, same query text. Run it yourself (see [Benchmarks](#benchmarks)); it is deterministic and does not use an LLM.
+2. **A real memory lifecycle.** Active → archived → restorable, evicted by heat (coldest first). `pinned` memories never leave. When a fact is superseded, both versions are kept and chained — recall returns the new value with the old one marked *superseded*.
+3. **Remembers failures, not just facts.** Failed commands are recorded; if the exact failure recurs, the model is stopped and told why. A successful retry clears it automatically.
+4. **Memory as code.** One Markdown file per memory, in a git repo. Per-entry history, diff, rollback, recovery of deleted memories, merge-based sync across machines, and standard bundle backup. Pure-JS git backend (`isomorphic-git`) means no system git required.
+5. **Open, measured, governable.** A memory bus (`ctx.mnemosBus`) lets other plugins read/write — writes require a declared identity and always enter the approval queue; a plugin can be blacklisted at runtime. A versioned measurement ABI (`ctx.mnemosAbi`) exposes real effect data, proven by a conformance suite.
+
+## Features
+
+### For users
+
+- **Model tools** (the model uses them in-session):
+  `memory_search` (recall) · `memory_record` (write, with keywords) · `memory_distill` (summarize buffered sessions → memory/rule proposals) · `memory_list` · `memory_stats`.
+- **Cold-start injection, not prompt stuffing.** Once per session, a *frozen memory index* is injected (one line per memory: type · short-id · topic · keywords, byte-stable for KV-cache reuse). The model drills into details with `memory_get`. No heuristic/regular-expression extraction anywhere.
+- **/memory commands** — the complete list, scenarios, and troubleshooting live in [docs/HANDOVER.md](docs/HANDOVER.md); the key ones:
+  ```
+  /memory search <query> | list | stats
+  /memory approve <id> | reject <id>
+  /memory import <source> <path>       auto-detected: chatgpt|claude|codex|dsh
+  /memory distill [path]
+  /memory rules <list|activate|rollback|deprecate>
+  /memory skill <list|promote <ruleId>>
+  /memory git <status|log|rollback|restore|remote|push|pull|backup>
+  /memory bus <blacklist|unblacklist|list|revoke|writers>
+  ```
+- **Browser UI** (better-sidebar "记忆" tab): overview, 30-day hit heatmap, approval queue (approve / reject / edit-then-approve / batch-approve low-risk), memory list with search/filter/edit/version-history/rollback/delete, deleted-memory recovery, rejection history, and git sync.
+- **Distillation.** LLM-generated memories (each with 2–5 keywords that trigger injection), and rules — procedures/preferences/error-fixes become *rule proposals* that enter the approval flow. Approved rules are injected; approved ones can be promoted to **SKILL files** (`~/.dsh/mnemos/skills/`).
+- **Import foreign history.** Auto-detects and ingests ChatGPT exports, Claude Code logs, Codex logs, and DSH's own session logs — content-hashed, so re-importing dedupes.
+- **Cross-machine sync & backup.** git remote (reuses `~/.git-credentials`) with merge-based sync; conflicts are flagged for human resolution, never silently overwritten. Standard `git bundle` export for backup.
+
+### For developers
+
+- **Memory bus — `ctx.mnemosBus`.** Third-party-facing read/write/subscribe:
+  - `recall({query})` — read-only.
+  - `record(input, identity)` — write; a declared `plugin:<name>@<version>` identity is required and the write **always** enters the approval queue (never direct, never auto-approved), audited, and attributable to its writer.
+  - `subscribe(listener)` — watch events (new memory, proposal, replacement, revocation, rule approval).
+  - Governance: runtime blacklist (`bus.blacklistPlugin`), revocation (only the owning plugin or a human).
+- **Measurement ABI — `ctx.mnemosAbi`.** Versioned `recall / get / state / probe` so external tools and evals read real numbers (active/pending/untrusted/verified/injections/usage-rate). `scripts/conformance.mts` proves it is the actual implementation, not a stub.
+- **Import adapters.** `src/domain/imports/` — chatgpt, claude-code, codex, dsh; auto source detection in `detect.ts`.
+
+## Benchmarks
+
+### Deterministic effect eval (no LLM)
 
 ```sh
-# 在 deepseek-harness 目录运行（把 /path/to/dsh-mnemos 换成你的插件路径）
+# from the deepseek-harness directory (adjust the plugin path)
 node --import tsx/esm /path/to/dsh-mnemos/scripts/eval/run-eval.mts
 ```
 
-| 指标 | 数值 |
+| Metric | Value |
 |---|---|
-| 事实召回 hit@1 | 0.94 |
-| 事实召回 MRR | 0.94 |
-| 噪音查询精度（不该召回的不召回） | 1.00 |
-| 状态追踪（事实被修订后答当前值） | 通过 |
-| 每会话冻结记忆索引 | 8 行 ≈ 207 token（一次性，KV 缓存友好） |
-| 索引覆盖正确记忆 | 100% |
+| Fact recall hit@1 | 0.94 |
+| Fact recall MRR | 0.94 |
+| Noise-query precision (don't recall what shouldn't be) | 1.00 |
+| State tracking (current value after revision) | pass |
+| Frozen memory index per session | 8 lines ≈ 207 tokens (KV-cache friendly) |
+| Index covers the correct memory | 100% |
 
-管理页"记忆"页签顶部有**效果卡**（注入次数/命中率/平均 token/已验证记忆数），数据来自 `usage_ledger` 效果账本——每次注入会记录用了多少 token，模型下一条消息若引用了注入内容就记为命中并给该记忆打"已验证"标记。
+The "记忆" tab header shows a live **effect card** (injections / hit-rate / avg tokens / verified memories) fed by the `usage_ledger` — every injection records its token cost, and a model message that references the injected content counts as a hit and marks the memory *verified*.
 
-### 公开数据集基准（LongMemEval-S / LoCoMo-10）
+### Public dataset benchmarks (LongMemEval-S / LoCoMo-10)
 
-与 deja-vu 同口径跑业界公开长期记忆基准。检索已实现多级阶梯
-（全词匹配 → 任词匹配 → 包含扫描）。详见
-[`scripts/bench/BENCHMARKS.md`](scripts/bench/BENCHMARKS.md)。
+Measured on the production retrieval path (FTS5 multi-level ladder: all-words AND → any-word OR → substring, fused with bigram-similarity via RRF) against deja-vu's published numbers. Methodology details: [scripts/bench/BENCHMARKS.md](scripts/bench/BENCHMARKS.md).
 
-| 数据集 | dsh-mnemos 产品路径 | deja-vu 官方 |
+| Dataset | dsh-mnemos (production path) | deja-vu (official) |
 |---|---|---|
-| LongMemEval-S（cleaned, 470 题, hit@1） | **87.2%** | 85.3% |
-| LoCoMo-10（1982 QA, R@1） | 60.9% | 69.6% |
+| LongMemEval-S (cleaned, 470 q, hit@1) | **87.2%** | 85.3% |
+| LoCoMo-10 (1982 QA, R@1) | 60.9% | 69.6% |
 
-阶梯上线前产品路径分别为约 10%（LongMemEval-S）与约 7%（LoCoMo）——
-差距全部来自"全词必须命中"的查询构造，而非底层引擎。
+Honest notes:
 
-## 它能做什么
+- **LongMemEval-S:** we beat deja-vu on every reported metric (hit@1 87.2% vs 85.3%, MRR 0.914 vs 0.896, evidence-recall@1 56.3% vs 55.0%).
+- **LoCoMo-10:** we trail (60.9% vs 69.6%). LoCoMo sessions are longer and the questions lean on cross-session reasoning; deja-vu's stem layer and stronger ranking variants win there. Closing this gap is on the roadmap, not a defect.
+- **Attribution is honest:** deja-vu's numbers are their published values — we cannot rerun the original locally (it requires go1.25; this machine has go1.22 and the toolchain download is unreachable). Same data, same metrics, same query text.
+- Before the retrieval ladder, the production path scored ~10% (LongMemEval-S) and ~7% (LoCoMo); the entire gap came from a query constructor that forced all-words AND, not from the underlying engine.
 
-- **跨会话记忆**：这次会话说的"用 pnpm 装依赖"，下次会话模型自动知道，不用重复教。
-- **有门禁**：敏感内容、重复、越界的写入被自动打回；普通写入直接入库，有风险的进"待审批"等人工确认。
-- **会自我进化**：定时/手动把会话提炼成记忆和规则；规则批准后注入模型；还能固化成 SKILL。
-- **记忆有生命周期**：失效清理按热度（冷的最先归档）走"活跃→归档→可还原"；`固定` 的记忆不参与清理；事实被新事实取代时新旧都保留并接上"接替链"，召回时新值在前、旧值标注"已被取代"。
-- **记得住教训**：失败的命令会被记录，下次一模一样再来直接拦下并告诉模型为什么失败；成功重试后自动解除。
-- **防投毒**：模型/导入产生的记忆标记"未验证"，注入时数量有上限且排在人工确认的记忆后面，来源标记模型可见。
-- **可审计**：每一次写入/批准/拒绝都有记录。
-- **数据你的**：全部存本地 SQLite；每条记忆同时是一份 Markdown 文件，走 git 历史（可回滚、可恢复、可跨机同步、可备份）。
+## Install & quick start
 
-### 特色：导入别家对话历史
-
-不只认识 DSH 自己的会话日志，还能直接吃**别家工具的导出**，自动识别格式、提炼成记忆：
-- **ChatGPT** 导出（JSON）
-- **Claude Code** 会话日志（JSONL）
-- **Codex** 会话日志（JSONL）
-- **DSH** 自己的会话日志
-
-导入自动去重（按内容哈希），同一条历史重复导入不会产生重复记忆。
-
-### 特色：开放 Memory Bus（给别的插件用）
-
-除了给模型用，dsh-mnemos 还把自己做成一个**可被其他插件调用的记忆总线**（`ctx.mnemosBus`）：
-- `bus.recall(query)` —— 查询记忆（只读，不会写）
-- `bus.record(input, identity)` —— 写入记忆。**必须声明插件身份**（`plugin:<名字>@<版本>`），且**永远进审批队列**，从不直接写入、从不自动放行，并记审计。
-- `bus.subscribe(listener)` —— 订阅记忆/规则变化事件（新记忆、待审批、被取代、被撤销、规则批准）。
-- **黑名单治理**：运行时可以把某个插件拉黑，它之后的写入全部拒绝并记审计。
-- **可撤销**：第三方写入可以被撤回，只有写入方插件或人类能撤回。
-
-即：别的插件想共享记忆，走的是**审批门禁 + 身份烙印 + 可审计 + 可拉黑**的路径，而不是信任一切。
-
-### 特色：开放测量 ABI（`ctx.mnemosAbi`）
-
-暴露一个**版本化、可一致性验证的测量接口**（`recall / get / state / probe`），供外部工具/评测读取真实效果数据——不是空壳，有 `scripts/conformance.mts` 证明它就是实际实现。`state()` 返回活跃/待审批/未验证/已验证/注入/命中率等账本数字，`probe()` 返回存活指纹。
-
-### 特色：规则 → SKILL 固化
-
-提炼出的"做事规则"（procedure/preference）批准后，可以固化成**标准 SKILL 文件**（Markdown，带 frontmatter），落在 `~/.dsh/mnemos/skills/`。只有**已批准**的规则才能固化，草稿/待审的一律不行；固化是幂等的（重复执行会覆盖）。
-
-### 特色：git 双后端
-
-记忆的 git 版本历史不依赖系统 git：默认用内置的 `isomorphic-git`（纯 JS，无需系统 git），也可以切到系统 `git` 后端。任何环境都能跑。
-
-## 快速开始
+**Compatibility** (honest): developed and verified on **Linux / Node ≥ 22.19 / DSH web profile**. Windows/macOS are untested (see [Roadmap](#roadmap)). The model for distillation reuses DSH's configured default LLM (`agent-default-model`) — no separate API key needed.
 
 ```sh
-# 安装（web profile）
+# npm channel (once published)
 dsh plugin --profile web add dsh-mnemos
 
-# 重启后浏览器"设置 → dsh-mnemos"可配置；侧边栏出现"记忆"页签
-dsh web
+# git channel (latest main)
+dsh plugin --profile web add git+https://github.com/Rottenwooood/dsh-mnemos.git
+
+# tarball channel
+npm pack   # in this repo
+dsh plugin --profile web add ./dsh-mnemos-<version>.tgz
 ```
 
-记一条记忆：在会话里让模型用 `memory_record` 写（带上 `keywords`，例如 `pnpm`、`deploy to us-east-1`），或到设置页**导入历史会话**（目录默认预填 `~/.dsh/sessions`，导入后点"现在提炼"让 LLM 生成记忆）。
+Restart with `dsh web`; configure under Settings → dsh-mnemos; the "记忆" tab appears in the sidebar. Uninstall: `dsh plugin --profile web remove dsh-mnemos` (the memory database is kept).
 
-## 日常用法
+**3 steps to your first memory:**
 
-- **模型工具**：`memory_search`（搜索）、`memory_get`（取某条记忆全文，下钻）、`memory_record`（写，含 keywords）、`memory_distill`（提炼缓冲会话 → 记忆/规则，写 keywords）、`memory_list`、`memory_stats` —— 模型在会话里自己会用。
-- **记忆注入**：每会话开头注入一次**冻结的记忆索引**（每条一行：类型·短id·主题·关键词，字节稳定、命中 KV 缓存），模型需要细节时用 `memory_get` 下钻——"检索 ≠ 注入"，不把全文塞进请求。无启发式/正则抽取。
-- **提炼**：LLM 生成记忆（每条带 2-5 个关键词，供触发注入）；可手动（`memory_distill` 工具 / "现在提炼"按钮 / `/memory distill`），或开 `distillAuto` 后**每 N 次用户输入自动执行**（`distillEveryNTurns`）。
-- **人类命令** `/memory`：
-  ```
-  /memory search <关键词>          搜索记忆
-  /memory list | stats             查看/统计
-  /memory archive <id> | restore <id> | pin <id> | unpin <id>   生命周期管理
-  /memory approve <id> | reject <id>   审批待确认项
-  /memory import <来源> <路径>      导入历史会话（进提炼缓冲；来源自动识别）
-  /memory distill [路径]            提炼（生成记忆/规则候选）
-  /memory rules <list|activate|...>   管理规则
-  /memory skill <list|promote>     规则 → SKILL
-  /memory git <status|push|pull|rollback|restore|backup|...>  版本/同步
-  /memory bus <blacklist|...>      第三方插件治理
-  ```
-- **浏览器界面**（better-sidebar「记忆」页签）：概览、30 天命中热力图、待审批、记忆列表（活跃/已归档，搜索/筛选/编辑/固定/归档/版本历史/删除）、已删除恢复、被拒历史、git 同步。
+1. In a session, tell the model to remember something (it calls `memory_record`), **or** import history from the settings page (default directory `~/.dsh/sessions`).
+2. Click "现在提炼" (Distill now) — or enable `distillAuto` — so the LLM turns buffered sessions into memories.
+3. Next session, the model starts with the injected memory index and drills down with `memory_get`.
 
-## 同步到 GitHub
+## Configuration
 
-在设置页填 `gitRemoteUrl`（如 `https://github.com/你/dsh-mnemos.git`）保存，然后点 push 即可。鉴权复用 `~/.git-credentials`（和系统 git 同一套凭据），无需额外配置。
+All settings live in Settings → dsh-mnemos and mostly apply live. Highlights:
 
-## 配置
-
-所有配置在浏览器"设置 → dsh-mnemos"页，改完大多即时生效。常用几项：
-
-| 字段 | 作用 |
+| Key | Purpose |
 |---|---|
-| `enabled` | 插件总开关 |
-| `autoApprove` / `autoApproveConfidence` | 是否自动放行高置信度记忆、阈值 |
-| `injectionEnabled` / `injectLimit` / `injectMaxBytes` | 是否注入、注入条数/字节预算 |
-| `protocolRefreshTurns` | 环境约定重新注入间隔（轮次），防上下文压缩把常驻指令吃掉 |
-| `gitRemoteUrl` / `gitBackend` / `syncEnabled` | 跨机同步：远端地址 / 后端 / 自动同步 |
-| `distillAuto` / `distillEveryNTurns` | 自动提炼开关与间隔（次用户输入） |
-| `sessionLogDirs` / `backfillEnabled` | 启动时回填历史会话日志 |
-| `negativeMemoryEnabled` / `negativeMemoryTtlMs` | 失败命令拦截与失效时长 |
+| `enabled` | master switch |
+| `autoApprove` / `autoApproveConfidence` | auto-approve high-confidence model writes / threshold |
+| `injectionEnabled` / `injectLimit` / `injectMaxBytes` | injection on/off, count and byte budgets |
+| `protocolRefreshTurns` | re-inject the environment protocol every N turns (context-compression defense) |
+| `gitRemoteUrl` / `gitBackend` / `syncEnabled` | cross-machine sync: remote / backend / auto-sync |
+| `distillAuto` / `distillEveryNTurns` | auto-distill on/off and interval (user turns) |
+| `sessionLogDirs` / `backfillEnabled` | backfill historical session logs at startup |
+| `negativeMemoryEnabled` / `negativeMemoryTtlMs` | failed-command interception and expiry |
 
-完整字段表、配置示例与使用场景见 **[docs/HANDOVER.md](docs/HANDOVER.md)**。
+The full 31-field table, YAML snippets, usage scenarios, and troubleshooting: [docs/HANDOVER.md](docs/HANDOVER.md).
 
-## 机制对照（2026 生态/研究）
+## How it compares
 
-| dsh-mnemos 机制 | 对齐来源 |
+### vs dsh-memento
+
+Different philosophies. **dsh-memento** is a *capability seam*: a typed `ctx.memory` contract, hard per-track/per-layer character budgets, and a dsh-memory-protocol with an adapter registry (mem0 / Hermes / CLAUDE.md) and a read-only MCP server — strong on ecosystem interoperability. **dsh-mnemos** is a complete memory *product*: distillation, rules/SKILL, a full lifecycle, negative memory, and measured retrieval.
+
+| Dimension | dsh-mnemos | dsh-memento |
+|---|---|---|
+| Retrieval | FTS5 ladder + bigram RRF, **public benchmark numbers** | substring search (no FTS5), no published numbers |
+| Lifecycle / heat eviction / pinned | yes | no (deliberately not a store) |
+| Distillation / rules / SKILL | yes (LLM, approval-gated) | no |
+| Negative memory | yes | no |
+| git version history + cross-machine sync | yes (one .md per memory) | no |
+| Third-party writes | bus: identity-stamped, approval-queue, blacklist, revoke | adapter registry (pure data conversion), MCP server |
+| Protocol spec / MCP / adapters | bus + ABI + conformance; **no protocol spec, no MCP yet** | dsh-memory-protocol v1 + MCP + adapters |
+| npm / releases | not yet published | published, multi-channel install |
+| README | English + 中文 | 5 languages |
+
+### vs deja-vu
+
+deja-vu is a Go memory engine whose public long-memory benchmarks we replicate same-protocol. We win LongMemEval-S (87.2% vs 85.3%) and trail LoCoMo (60.9% vs 69.6%) — details in [Benchmarks](#benchmarks). We bring, on top of retrieval, the governance/lifecycle layer (approval gate, trust tiers, supersession chains, negative memory, git) that deja-vu does not have.
+
+## Roadmap
+
+Honest state of the project — these are the gaps between "functional and measured" and "formally released":
+
+- [ ] **Cross-platform verification** — developed on Linux; test Windows / macOS.
+- [ ] **Schema upgrade-path tests** — user_version 1 migrations are exercised only on dev databases.
+- [ ] **npm publish** — packaging is ready (`npm pack` verified); publish + package-name availability check + post-install verification pending.
+- [ ] **Distill-mode benchmark at scale** — the real-LLM distill pipeline is wired and validated on a single question; a representative sample (10–20 questions across types) is not yet run (provider quota/cost bound).
+- [ ] **Stress tests** — concurrent writes, thousands of memories (index/search performance), long-run behavior (WAL growth, git repo growth).
+- [ ] **MCP server** — align with memento's read-only stdio server for external clients.
+- [ ] Optional: a dsh-memory-protocol spec + adapter registry to match memento's ecosystem surface.
+
+## Security & data
+
+- **Zero network, zero credentials.** Local SQLite (WAL + FTS5), POSIX mode 0600. No engine/agent-loop/apiproxy changes; we only consume DSH's `tools`, `commands`, and session signals.
+- **Every write is audited** (denied writes included). Model-visible sources are stamped (`trusted`/`untrusted`, writer identity).
+- **Fail loud.** Budget exceeded → structured error, never silent truncation. Corrupt DB / newer schema → load fails loudly.
+- Data locations:
+  ```
+  ~/.dsh/mnemos/mnemos.db     SQLite (WAL + FTS5)
+  ~/.dsh/mnemos/repo/         git memory mirror (one .md per memory)
+  ~/.dsh/mnemos/skills/       SKILL files promoted from approved rules
+  ~/.dsh/mnemos/backfill-checkpoint.json · distill-cursor.json   cursors
+  ```
+- Vulnerability reporting: see [SECURITY.md](SECURITY.md).
+
+## Design sources
+
+| dsh-mnemos mechanism | Aligns with |
 |---|---|
-| 冻结索引注入 + `memory_get` 下钻（检索≠注入） | engram / meow / memory-manager / LongMemEval |
-| 幂律热度排序 + 强化计数 | dsh-evolve 衰减语义 |
-| 有界占用 + 来源标记防投毒 | 2608.21230 / Veracium |
-| 失败命令拦截 + 自失效（负面记忆） | dsh-negative-ledger / deja-vu |
-| 活跃→归档→删除 + pinned（绝不硬删） | dsh-evolve 状态机 |
-| 知识接替链（保留双方 + 标注当前值） | StateMemBench / MELD |
-| protocol 按轮次刷新（防压缩悬崖） | 2608.22752 |
-| 开放测量 ABI + conformance | memento conformance suite |
-| 效果账本 + 可复跑评测 | memlab / LongMemEval 方法论 |
-| 第三方记忆总线（身份烙印 + 审批 + 拉黑 + 可撤销） | memento adapters / tool memory 共享 |
-| 多来源历史导入（ChatGPT/Claude Code/Codex/DSH） | 迁移类工具惯例（导入即提炼） |
+| Frozen index injection + `memory_get` drill-down (recall ≠ injection) | engram / meow / memory-manager / LongMemEval |
+| Power-law heat ranking + reinforcement counts | dsh-evolve decay semantics |
+| Bounded occupancy + source-marked anti-poisoning | 2608.21230 / Veracium |
+| Failed-command interception + self-expiry (negative memory) | dsh-negative-ledger / deja-vu |
+| Active → archived → deleted + pinned (never hard-delete) | dsh-evolve state machine |
+| Supersession chains (both versions kept, current flagged) | StateMemBench / MELD |
+| Protocol refresh by turns (compression-cliff defense) | 2608.22752 |
+| Open measurement ABI + conformance | memento conformance suite |
+| Effect ledger + reproducible eval | memlab / LongMemEval methodology |
+| Third-party memory bus (identity + approval + blacklist + revoke) | memento adapters / tool-memory sharing |
+| Multi-source history import (ChatGPT/Claude Code/Codex/DSH) | migration-tool convention (import → distill) |
 
-## 开发
+## Development & verification
 
 ```sh
 pnpm install
 pnpm run typecheck
-pnpm test                  # 单元测试
-pnpm run build:client      # 改了浏览器端（src/client/）后需要
+pnpm test                 # 151 unit tests
+pnpm run build:client     # after touching src/client/
 ```
 
-改完跑完整验证（一键，含真实环境）：
+One-shot full verification (includes real-environment checks):
 
 ```sh
-scripts/run-verify.sh      # typecheck+单测 → 确定性评测 → ABI conformance → 真实注册表组合
+scripts/run-verify.sh     # typecheck+unit → deterministic eval → ABI conformance → real registry composition
 ```
 
-单步（在 deepseek-harness 目录，把 /path/to/dsh-mnemos 换成你的插件路径）：
+Reproduce the public benchmarks ([data download](scripts/bench/BENCHMARKS.md)):
+
 ```sh
-# 真实命令注册表分发 /memory 各子命令 + 负面记忆 + 接替链 + 信任
-node --import tsx/esm /path/to/dsh-mnemos/scripts/verify-real-composition.mts
-# 开放测量 ABI 一致性（证明不是空壳）
-node --import tsx/esm /path/to/dsh-mnemos/scripts/conformance.mts
+BENCH_DATA=/path/to/longmemeval_s_cleaned.json BENCH_SKIP_ABS=1 BENCH_LIMIT=470 \
+  BENCH_OUT=scripts/bench/longmemeval-scorecard.json pnpm run bench:longmemeval
+BENCH_DATA=/path/to/locomo10.json BENCH_OUT=scripts/bench/locomo-scorecard.json \
+  pnpm run bench:locomo
 ```
 
-## 数据位置
-
-```
-~/.dsh/mnemos/mnemos.db     SQLite 数据库
-~/.dsh/mnemos/repo/         git 记忆镜像（每条记忆一个 .md）
-~/.dsh/mnemos/skills/       规则固化的 SKILL
-```
-
-## 许可
+## License
 
 MIT
