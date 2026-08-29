@@ -180,6 +180,8 @@ export interface MemoryService {
   recordHit(id: string, sessionId?: string, injectedTokens?: number): number;
   /** Record a TOOL HIT: the model retrieved this memory via memory_get/memory_search. */
   recordToolUse(id: string, sessionId?: string): number;
+  /** True if this session already has an injection row in the ledger (cross-process dedup). */
+  hasInjectedForSession(sessionKey: string): boolean;
   markLedgerUsed(ledgerId: number): void;
   markMemoryVerified(id: string): void;
   getMemory(id: string): ReturnType<MemoryStore['getMemory']>;
@@ -580,6 +582,9 @@ export function createMemoryService(
     },
     recordToolUse(id, sessionId) {
       return store.recordToolUse(id, sessionId);
+    },
+    hasInjectedForSession(sessionKey) {
+      return store.hasInjectedForSession(sessionKey);
     },
     markLedgerUsed(ledgerId) {
       store.markLedgerUsed(ledgerId);

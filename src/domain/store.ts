@@ -178,6 +178,8 @@ export interface MemoryStore {
   recordInjection(id: string, sessionId?: string, injectedTokens?: number): number;
   /** Record a TOOL HIT: the model retrieved this memory via memory_get/memory_search (used=1 row). */
   recordToolUse(id: string, sessionId?: string): number;
+  /** True if this session already has an injection row in the ledger (cross-process dedup). */
+  hasInjectedForSession(sessionKey: string): boolean;
   markLedgerUsed(ledgerId: number): void;
   markMemoryVerified(id: string): void;
   telemetry(): TelemetryStats;
@@ -393,6 +395,7 @@ export function openMemoryStore(path: string): MemoryStore {
   const usageTotalInjStmt = db.prepare('SELECT COUNT(*) AS c FROM usage_ledger WHERE injected=1');
   const usageTotalHitStmt = db.prepare('SELECT COUNT(*) AS c FROM usage_ledger WHERE used=1');
   const usageSessionsStmt = db.prepare('SELECT COUNT(DISTINCT session_id) AS c FROM usage_ledger WHERE session_id IS NOT NULL');
+  const sessionInjectedStmt = db.prepare('SELECT 1 FROM usage_ledger WHERE session_id = ? AND injected = 1 LIMIT 1');
   const usagePerMemoryStmt = db.prepare(
     `SELECT memory_id, COUNT(CASE WHEN injected=1 THEN 1 END) AS injections, SUM(used) AS hits, COUNT(DISTINCT session_id) AS sessions, MAX(ts) AS last_used
        FROM usage_ledger GROUP BY memory_id ORDER BY hits DESC`,
@@ -566,6 +569,9 @@ export function openMemoryStore(path: string): MemoryStore {
       verifiedStmt.run(now(), id);
       const result = ledgerToolHitStmt.run(now(), id, sessionId ?? null);
       return Number(result.lastInsertRowid);
+    },
+    hasInjectedForSession(sessionKey) {
+      return sessionKey !== '' && sessionInjectedStmt.get(sessionKey) !== undefined;
     },
     markLedgerUsed(ledgerId) {
       if (Number.isInteger(ledgerId) && ledgerId > 0) {

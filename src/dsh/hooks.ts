@@ -176,6 +176,15 @@ export function registerInjection(
     }
     try {
       if (!injectedSessions.has(sessionKey)) {
+        // Fresh in this process. On a process restart the in-memory set is
+        // empty, so a restored session would look "first" again — check the
+        // ledger: if this session already got its full index (previous run),
+        // skip re-injecting and just record that we've seen it.
+        if (service.hasInjectedForSession(sessionKey)) {
+          injectedSessions.add(sessionKey);
+          lastPartial.set(sessionKey, Date.now());
+          return decision;
+        }
         // Session start: inject the FULL frozen index once (byte-stable).
         const index = recallIndex(service, {
           maxBytes: config.injectMaxBytes,
@@ -304,11 +313,24 @@ export function registerProtocolInjection(
       if (!getConfig().enabled || !getConfig().protocolInjectEnabled) {
         return decision;
       }
+      // Cross-process: a restored session already got its protocol block in a
+      // previous run (and it's persisted in the session log), so don't re-inject.
+      if (afterCompaction === false && service.hasInjectedForSession(sessionKey)) {
+        injectedSessions.add(sessionKey);
+        return decision;
+      }
       const protos = service.listActive().filter((m) => m.type === 'protocol').slice(0, 8);
       injectedSessions.add(sessionKey);
       pendingRefresh.delete(sessionKey);
       if (protos.length > 0) {
         const text = `# dsh-mnemos 环境约定\n${protos.map((p) => `- ${p.summary}`).join('\n')}`;
+        for (const p of protos) {
+          try {
+            service.recordHit(p.id, sessionKey, estimateTokens(text));
+          } catch {
+            // best-effort
+          }
+        }
         return { kind: 'enter', messages: [...decision.messages, makeUserMessage(text)] };
       }
     } catch {

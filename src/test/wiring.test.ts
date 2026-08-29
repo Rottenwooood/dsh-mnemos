@@ -331,6 +331,38 @@ describe('pre-step injection', () => {
     expect(partial[0]!.content[0]!.text).toContain('相关记忆');
   });
 
+  it('does not re-inject the full index after a process restart (ledger dedup)', async () => {
+    const dbPath = `/tmp/opencode/mnemos-dedup-${Date.now()}.db`;
+    try {
+      unlinkSync(dbPath);
+    } catch {
+      // fresh path
+    }
+    const mk = () => {
+      const store = openMemoryStore(dbPath);
+      const service = createMemoryService(store, createSensitiveDetector());
+      return { store, service };
+    };
+    // "First process": inject once -> ledger records the session.
+    const firstCtx = fakeContext();
+    const { service } = mk();
+    service.add(memoryWithKeywords(['pnpm']), 'human');
+    registerInjection(firstCtx.ctx, service, () => ({ ...defaultConfig(), injectMaxBytes: 4096 }));
+    const first = await listen(firstCtx.listeners, [userMsg('install with pnpm')]);
+    expect(first[0]!.content[0]!.text).toContain('记忆索引');
+    // "Second process": fresh in-memory dedup set, SAME session id, SAME db.
+    const secondCtx = fakeContext();
+    const { service: service2 } = mk();
+    registerInjection(secondCtx.ctx, service2, () => ({ ...defaultConfig(), injectMaxBytes: 4096 }));
+    const second = await listen(secondCtx.listeners, [userMsg('still pnpm')]);
+    expect(second.length).toBe(0); // ledger says this session was already injected
+    try {
+      unlinkSync(dbPath);
+    } catch {
+      // best-effort cleanup
+    }
+  });
+
   it('skips injection when the injection master switch is off', async () => {
     const { ctx, listeners } = fakeContext();
     const { service } = makeService();
