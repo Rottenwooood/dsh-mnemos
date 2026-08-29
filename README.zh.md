@@ -4,9 +4,7 @@
 
 [English](README.md)
 
-**有治理、会自我进化、带可复跑效果数据的 DSH 跨会话记忆插件。** 
-
-模型记住的每一条，都经过一道审批门禁写入；数据全在本地 SQLite，同时是一份 git 版本化的 Markdown 镜像——每次改动效果数字都会跟着动。
+**有治理、会自我进化、可拓展的 DSH 跨会话记忆插件。** 
 
 ![CI](https://img.shields.io/github/actions/workflow/status/Rottenwooood/dsh-mnemos/ci.yml?branch=main&label=CI) ![License](https://img.shields.io/badge/license-MIT-blue) ![Version](https://img.shields.io/github/v/tag/Rottenwooood/dsh-mnemos?label=version) ![Node](https://img.shields.io/badge/node-%3E%3D22.19-brightgreen)
 ---
@@ -15,17 +13,15 @@
 
 ## 特色
 
-整个设计挂在五条理念上。
+整个设计挂在四条理念上。
 
-1. **效果数字可复跑** LongMemEval-S hit@1 **87.2%**，deja-vu 官方公布 **85.3%**（同数据、同指标、同问题原文），外加确定性无 LLM 评测和实时的 `usage_ledger` 效果卡。大多数记忆插件一个数字都不发。
+1. **所有记忆经过门禁，可审计。** 每一次写入——模型工具、/memory、第三方插件、浏览器——都走同一个审批门禁：敏感/重复/越界的直接打回，有风险的等人工。模型/导入/第三方记忆标记"未验证"并在注入时设上限（防投毒）。失败命令在执行时拦截——下一次一模一样的尝试直接带着证据拦住（负面记忆）。每次写入/批准/拒绝都记审计。
 
-2. **所有记忆经过门禁，可审计。** 每一次写入——模型工具、/memory、第三方插件、浏览器——都走同一个审批门禁：敏感/重复/越界的直接打回，有风险的等人工。模型/导入/第三方记忆标记"未验证"并在注入时设上限（防投毒）。失败命令在执行时拦截——下一次一模一样的尝试直接带着证据拦住（负面记忆）。每次写入/批准/拒绝都记审计。
+2. **会自我进化、会自我修正。** 会话被提炼成记忆**和规则**。规则活在记忆库里、由 mnemos 注入模型；批准后还可以**提升为 DSH SKILL**——一份标准 Markdown 技能文件，任何 agent 都能按需加载，让这份知识脱离 mnemos 也能在 harness 里用。事实就地更新（旧值 git 可回滚）；只有真正的冲突才变成**替换提案**交人裁决。热度清理让存储有界（活跃 → 归档 → 可还原；`固定` 永不离开）。
 
-3. **会自我进化、会自我修正。** 会话被提炼成记忆**和规则**。规则活在记忆库里、由 mnemos 注入模型；批准后还可以**提升为 DSH SKILL**——一份标准 Markdown 技能文件，任何 agent 都能按需加载，让这份知识脱离 mnemos 也能在 harness 里用。事实就地更新（旧值 git 可回滚）；只有真正的冲突才变成**替换提案**交人裁决。热度清理让存储有界（活跃 → 归档 → 可还原；`固定` 永不离开）。
+3. **数据可迁移、可跨设备。** 本地 SQLite（WAL + FTS5）；每条记忆同时是一个 git 仓库里的 Markdown 文件——历史、diff、回滚、恢复、备份、可跨设备（通过push/pull）。可导入 ChatGPT / Claude Code / Codex / DSH 历史。
 
-4. **数据可迁移、可跨设备。** 本地 SQLite（WAL + FTS5）；每条记忆同时是一个 git 仓库里的 Markdown 文件——历史、diff、回滚、恢复、备份、可跨设备（通过push/pull）。可导入 ChatGPT / Claude Code / Codex / DSH 历史。
-
-5. **开放记忆总线。** `ctx.mnemosBus` 是一条开放记忆总线：任何 DSH 插件都能接入， `recall` 记忆、`record` 自己的记忆（盖身份章、永远进人工审批队列）、`subscribe` 记忆变化——外加运行时拉黑和撤销。版本化的 ABI（`ctx.mnemosAbi`）把真实效果数字开放给外部工具，conformance 套件证明不是空壳。详见[给开发者](#给开发者)。
+4. **开放记忆总线。** `ctx.mnemosBus` 是一条开放记忆总线：任何 DSH 插件都能接入， `recall` 记忆、`record` 自己的记忆（盖身份章、永远进人工审批队列）、`subscribe` 记忆变化——外加运行时拉黑和撤销。版本化的 ABI（`ctx.mnemosAbi`）把真实效果数字开放给外部工具，conformance 套件证明不是空壳。详见[给开发者](#给开发者)。
 
 ## 功能
 

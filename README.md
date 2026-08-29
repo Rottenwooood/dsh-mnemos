@@ -4,9 +4,7 @@
 
 [简体中文](README.zh.md)
 
-**A governed, self-evolving DSH plugin for cross-session memory — with reproducible effect numbers.**
-
-Everything the model remembers is written through an approval gate; all data lives in local SQLite, mirrored as git-versioned Markdown — and the effect numbers move every time you change the code.
+**A governed, self-evolving, extensible DSH plugin for cross-session memory.**
 
 ![CI](https://img.shields.io/github/actions/workflow/status/Rottenwooood/dsh-mnemos/ci.yml?branch=main&label=CI) ![License](https://img.shields.io/badge/license-MIT-blue) ![Version](https://img.shields.io/github/v/tag/Rottenwooood/dsh-mnemos?label=version) ![Node](https://img.shields.io/badge/node-%3E%3D22.19-brightgreen)
 
@@ -15,17 +13,15 @@ Everything the model remembers is written through an approval gate; all data liv
 
 ## Why mnemos
 
-The whole thing hangs on five design principles.
+The whole thing hangs on four design principles.
 
-1. **Effect numbers you can reproduce — not a toy.** LongMemEval-S hit@1 **87.2%** vs deja-vu's published **85.3%** (same data, same metrics, same query text), plus a deterministic no-LLM eval and a live `usage_ledger` effect card. Most memory plugins publish no numbers at all.
+1. **Every memory passes a gate — auditable.** Every write — model tools, /memory, third-party plugins, the browser — goes through one approval gate: sensitive / duplicate / out-of-budget writes are rejected, risky ones wait for a human. Model/import/third-party memories are marked *unverified* and bounded at injection (anti-poisoning). Failed commands are intercepted at execution time — the next identical attempt is blocked with evidence (negative memory). Every write / approval / rejection is audited.
 
-2. **Every memory passes a gate — auditable.** Every write — model tools, /memory, third-party plugins, the browser — goes through one approval gate: sensitive / duplicate / out-of-budget writes are rejected, risky ones wait for a human. Model/import/third-party memories are marked *unverified* and bounded at injection (anti-poisoning). Failed commands are intercepted at execution time — the next identical attempt is blocked with evidence (negative memory). Every write / approval / rejection is audited.
+2. **It evolves and corrects itself.** Sessions distill into memories *and* rules. A rule lives in the memory store and is injected by mnemos — or, once approved, **promoted to a DSH SKILL**: a standard Markdown skill file any agent can load on demand, so the knowledge leaves mnemos and works anywhere in the harness. Facts update in place (the old value stays recoverable in git); only genuine conflicts become *replacement proposals* for a human. Heat-based cleanup keeps the store bounded (active → archived → restorable; `pinned` never leaves).
 
-3. **It evolves and corrects itself.** Sessions distill into memories *and* rules. A rule lives in the memory store and is injected by mnemos — or, once approved, **promoted to a DSH SKILL**: a standard Markdown skill file any agent can load on demand, so the knowledge leaves mnemos and works anywhere in the harness. Facts update in place (the old value stays recoverable in git); only genuine conflicts become *replacement proposals* for a human. Heat-based cleanup keeps the store bounded (active → archived → restorable; `pinned` never leaves).
+3. **Your data, portable, cross-device.** Local SQLite (WAL + FTS5); every memory is also a Markdown file in a git repo — history, diff, rollback, restore, backup, and cross-device sync (via push/pull). Imports ChatGPT / Claude Code / Codex / DSH history.
 
-4. **Your data, portable, cross-device.** Local SQLite (WAL + FTS5); every memory is also a Markdown file in a git repo — history, diff, rollback, restore, backup, and cross-device sync (via push/pull). Imports ChatGPT / Claude Code / Codex / DSH history.
-
-5. **An open memory bus.** `ctx.mnemosBus` is an open memory bus: any DSH plugin can `recall` memories, `record` its own (stamped with a declared identity, always routed to the human approval queue), and `subscribe` to memory changes — plus runtime blacklist and revocation. A versioned ABI (`ctx.mnemosAbi`) exposes real effect numbers to external tools, proven by a conformance suite. Details in the [For developers](#for-developers) section.
+4. **An open memory bus.** `ctx.mnemosBus` is an open memory bus: any DSH plugin can `recall` memories, `record` its own (stamped with a declared identity, always routed to the human approval queue), and `subscribe` to memory changes — plus runtime blacklist and revocation. A versioned ABI (`ctx.mnemosAbi`) exposes real effect numbers to external tools, proven by a conformance suite. Details in the [For developers](#for-developers) section.
 
 ## Features
 
