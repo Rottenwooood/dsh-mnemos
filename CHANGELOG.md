@@ -3,7 +3,17 @@
 本项目遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，
 版本号遵循 [Semantic Versioning](https://semver.org/lang/zh-CN/)。
 
-## [Unreleased]
+## [0.1.1] - 2026-08-30
+
+### Changed
+- `protocol`（环境约定）走独立通道：每会话首步注入 + 压缩后重注入，
+  **不进记忆索引**；README（中英）、面板标签、设置项措辞统一为"环境约定"。
+- `cleanupDays` 新配置：清理失效天数（默认 90），`/mnemos/api/cleanup`
+  无 `?days=` 时读配置，面板"清理失效"按钮与确认文案同步。
+
+### Removed
+- 负面记忆（失败命令拦截）：删除 `negative_memory` 表、`tools/pre-execute`
+  拦截与相关配置/面板项，让模型自由执行。P2 历史段中的对应条目保留作记录。
 
 ### Added
 - 公开数据集基准（LongMemEval-S / LoCoMo-10）：`scripts/bench/`，与 deja-vu
@@ -17,10 +27,6 @@
   LongMemEval-S hit@1 约 10%、LoCoMo R@1 约 7%。
 - 发布外壳：`files`/`keywords`/`publishConfig` 发布面、CHANGELOG、
   SECURITY、架构文档、GitHub Actions CI（`.github/workflows/ci.yml`）。
-
-### Removed
-- 负面记忆（失败命令拦截）：删除 `negative_memory` 表、`tools/pre-execute`
-  拦截与相关配置/面板项，让模型自由执行。P2 历史段中的对应条目保留作记录。
 
 ## [0.1.0] - 2026-08-29
 
