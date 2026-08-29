@@ -7,7 +7,7 @@ import { createMemoryService } from '../domain/service.js';
 import { createMemoryBus } from '../domain/bus.js';
 import { registerTools, ToolDeps } from '../dsh/tools.js';
 import { registerCommand, CommandDeps } from '../dsh/command.js';
-import { registerHooks, registerInjection, registerProtocolInjection, SignalCollector, UsageTracker } from '../dsh/hooks.js';
+import { registerHooks, registerInjection, registerProtocolInjection, SignalCollector } from '../dsh/hooks.js';
 import { registerNegativeMemory } from '../dsh/negative-hooks.js';
 import { openNegativeMemoryStore, negativeFingerprint } from '../domain/negative.js';
 import { gateFrom, apply } from '../index.js';
@@ -274,7 +274,7 @@ describe('pre-step injection', () => {
     const { ctx, listeners } = fakeContext();
     const { service } = makeService();
     service.add(memoryWithKeywords(['pnpm']), 'human');
-    registerInjection(ctx, service, () => ({ ...defaultConfig(), injectMaxBytes: 4096 }), new UsageTracker());
+    registerInjection(ctx, service, () => ({ ...defaultConfig(), injectMaxBytes: 4096 }));
     const messages = await listen(listeners, [userMsg('how do I install with pnpm?')]);
     const texts = messages.flatMap((m) => m.content.map((c) => c.text));
     // The index contains the topic, not the full summary.
@@ -288,7 +288,7 @@ describe('pre-step injection', () => {
     const { service } = makeService();
     service.add(memoryWithKeywords(['pnpm']), 'human');
     // Interval set so high that the second call within the same instant is gated.
-    registerInjection(ctx, service, () => ({ ...defaultConfig(), injectMaxBytes: 4096, injectRefreshIntervalMinutes: 60 }), new UsageTracker());
+    registerInjection(ctx, service, () => ({ ...defaultConfig(), injectMaxBytes: 4096, injectRefreshIntervalMinutes: 60 }));
     const first = await listen(listeners, [userMsg('install with pnpm')]);
     expect(first.length).toBe(1);
     expect(first[0]!.content[0]!.text).toContain('记忆索引'); // full frozen index
@@ -301,7 +301,7 @@ describe('pre-step injection', () => {
     const { ctx, listeners } = fakeContext();
     const { service } = makeService();
     service.add(memoryWithKeywords(['pnpm']), 'human');
-    registerInjection(ctx, service, () => ({ ...defaultConfig(), injectMaxBytes: 4096, injectRefreshIntervalMinutes: 0 }), new UsageTracker());
+    registerInjection(ctx, service, () => ({ ...defaultConfig(), injectMaxBytes: 4096, injectRefreshIntervalMinutes: 0 }));
     const first = await listen(listeners, [userMsg('install with pnpm')]);
     expect(first[0]!.content[0]!.text).toContain('记忆索引');
     // Keyword + interval elapsed -> partial refresh (related-memories index).
@@ -314,7 +314,7 @@ describe('pre-step injection', () => {
     const { ctx, listeners } = fakeContext();
     const { service } = makeService();
     service.add(memoryWithKeywords(['pnpm']), 'human');
-    registerInjection(ctx, service, () => ({ ...defaultConfig(), injectMaxBytes: 4096, injectionEnabled: false }), new UsageTracker());
+    registerInjection(ctx, service, () => ({ ...defaultConfig(), injectMaxBytes: 4096, injectionEnabled: false }));
     const messages = await listen(listeners, [userMsg('install with pnpm please')]);
     expect(messages.length).toBe(0);
   });
@@ -332,71 +332,47 @@ describe('pre-step injection', () => {
     expect(out.summary).toContain('Use pnpm for builds.');
   });
 
-  it('marks an injected memory as used when the model retrieves it via a tool', async () => {
-    const { ctx, tools, listeners } = fakeContext();
+  it('credits a hit (used=1) when the model calls memory_search and gets results', async () => {
+    const { ctx, tools } = fakeContext();
     const { service } = makeService();
     service.add(memoryWithKeywords(['pnpm']), 'human');
-    const usage = new UsageTracker();
-    registerTools(ctx, { ...toolDeps(service), usage });
-    registerInjection(ctx, service, () => ({ ...defaultConfig(), injectMaxBytes: 4096 }), usage);
-    await listen(listeners, [userMsg('install with pnpm')]);
-    expect(service.telemetry().injections).toBe(1);
+    registerTools(ctx, toolDeps(service));
     expect(service.telemetry().used).toBe(0);
-    // The model actively retrieves the injected memory through memory_search.
     const searchTool = tools.find((t) => t.name === 'memory_search')!;
     const out = (await (searchTool as unknown as {
       execute(args: unknown, e: unknown): Promise<{ hits: unknown[] }>;
-    }).execute({ query: 'pnpm' }, { agent: { id: 's1' } })) as { hits: unknown[] };
+    }).execute({ query: 'pnpm' }, { agent: { id: 's1', session: { id: 's1' } } })) as { hits: unknown[] };
     expect(out.hits.length).toBeGreaterThan(0);
-    expect(service.telemetry().used).toBe(1);
-    expect(service.telemetry().verifiedMemories).toBe(1);
+    // A tool call is a hit with NO injection prerequisite.
+    expect(service.telemetry().used).toBeGreaterThan(0);
+    expect(service.telemetry().verifiedMemories).toBeGreaterThan(0);
   });
 
-  it('credits a hit when the model drills into a memory with memory_get', async () => {
-    const { ctx, tools, listeners } = fakeContext();
+  it('credits a hit (used=1) when the model drills into a memory with memory_get', async () => {
+    const { ctx, tools } = fakeContext();
     const { service } = makeService();
     service.add(memoryWithKeywords(['pnpm']), 'human');
-    const usage = new UsageTracker();
-    registerTools(ctx, { ...toolDeps(service), usage });
-    registerInjection(ctx, service, () => ({ ...defaultConfig(), injectMaxBytes: 4096 }), usage);
-    await listen(listeners, [userMsg('install with pnpm')]);
+    registerTools(ctx, toolDeps(service));
+    expect(service.telemetry().used).toBe(0);
     const getTool = tools.find((t) => t.name === 'memory_get')!;
     const out = (await (getTool as unknown as {
       execute(args: unknown, e: unknown): Promise<{ found: boolean }>;
-    }).execute({ query: 'pnpm' }, { agent: { id: 's1' } })) as { found: boolean };
+    }).execute({ query: 'pnpm' }, { agent: { id: 's1', session: { id: 's1' } } })) as { found: boolean };
     expect(out.found).toBe(true);
-    expect(service.telemetry().used).toBe(1);
-  });
-
-  it('credits a hit when the agent carries a real (id + session.id) shape', async () => {
-    const { ctx, tools, listeners } = fakeContext();
-    const { service } = makeService();
-    service.add(memoryWithKeywords(['pnpm']), 'human');
-    const usage = new UsageTracker();
-    registerTools(ctx, { ...toolDeps(service), usage });
-    registerInjection(ctx, service, () => ({ ...defaultConfig(), injectMaxBytes: 4096 }), usage);
-    await listen(listeners, [userMsg('install with pnpm')]);
-    const getTool = tools.find((t) => t.name === 'memory_get')!;
-    // DSH Agent: id === session.id (the harness enforces this). sessionIdOf must
-    // prefer session.id so it matches the injection-time key.
-    const out = (await (getTool as unknown as {
-      execute(args: unknown, e: unknown): Promise<{ found: boolean }>;
-    }).execute({ query: 'pnpm' }, { agent: { id: 'a1', session: { id: 's1' } } })) as { found: boolean };
-    expect(out.found).toBe(true);
-    expect(service.telemetry().used).toBe(1);
+    expect(service.telemetry().used).toBeGreaterThan(0);
   });
 
   it('does not credit a hit from reply text — only a retrieval tool call counts', async () => {
     const { ctx, listeners } = fakeContext();
     const { service } = makeService();
     service.add(memoryWithKeywords(['pnpm']), 'human');
-    const usage = new UsageTracker();
-    registerInjection(ctx, service, () => ({ ...defaultConfig(), injectMaxBytes: 4096 }), usage);
-    registerHooks(ctx, new SignalCollector(() => {}), usage);
+    registerInjection(ctx, service, () => ({ ...defaultConfig(), injectMaxBytes: 4096 }));
+    registerHooks(ctx, new SignalCollector(() => {}));
     await listen(listeners, [userMsg('install with pnpm')]);
     expect(service.telemetry().injections).toBe(1);
-    // The assistant echoes "pnpm" in its reply — this is NOT a hit. Only a
-    // memory_get / memory_search call is evidence the memory was actually used.
+    expect(service.telemetry().used).toBe(0);
+    // The assistant echoes "pnpm" in its reply — NOT a hit. Only a
+    // memory_get / memory_search call is evidence the memory was used.
     const sessionHook = listeners.find((l) => l.name === 'session/event')!;
     const emit = sessionHook.listener as (session: unknown, event: unknown) => void;
     emit(

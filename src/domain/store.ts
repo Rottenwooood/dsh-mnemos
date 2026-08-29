@@ -176,6 +176,8 @@ export interface MemoryStore {
   setSuperseded(id: string, supersededById: string): void;
   /** Record an INJECTION of a memory (usage_ledger row, used=0 until markLedgerUsed). */
   recordInjection(id: string, sessionId?: string, injectedTokens?: number): number;
+  /** Record a TOOL HIT: the model retrieved this memory via memory_get/memory_search (used=1 row). */
+  recordToolUse(id: string, sessionId?: string): number;
   markLedgerUsed(ledgerId: number): void;
   markMemoryVerified(id: string): void;
   telemetry(): TelemetryStats;
@@ -376,20 +378,23 @@ export function openMemoryStore(path: string): MemoryStore {
   const ledgerStmt = db.prepare(
     'INSERT INTO usage_ledger (ts, memory_id, session_id, injected, injected_tokens, used, task_ok) VALUES (?, ?, ?, 1, ?, 0, NULL) RETURNING id',
   );
+  const ledgerToolHitStmt = db.prepare(
+    'INSERT INTO usage_ledger (ts, memory_id, session_id, injected, injected_tokens, used, task_ok) VALUES (?, ?, ?, 0, 0, 1, NULL) RETURNING id',
+  );
   const ledgerUsedStmt = db.prepare('UPDATE usage_ledger SET used=1 WHERE id=? AND used=0');
   const verifiedStmt = db.prepare('UPDATE memories SET verified=1, updated_at=? WHERE id=?');
-  const teleInjectionsStmt = db.prepare('SELECT COUNT(*) AS c FROM usage_ledger');
+  const teleInjectionsStmt = db.prepare('SELECT COUNT(*) AS c FROM usage_ledger WHERE injected=1');
   const teleUsedStmt = db.prepare('SELECT COUNT(*) AS c FROM usage_ledger WHERE used=1');
   const teleAvgTokensStmt = db.prepare('SELECT AVG(injected_tokens) AS avg FROM usage_ledger');
   const teleVerifiedStmt = db.prepare("SELECT COUNT(*) AS c FROM memories WHERE verified=1 AND status='active'");
   const teleDailyStmt = db.prepare(
     `SELECT substr(ts, 1, 10) AS day, COUNT(*) AS c, SUM(used) AS u FROM usage_ledger WHERE ts >= ? GROUP BY day ORDER BY day`,
   );
-  const usageTotalInjStmt = db.prepare('SELECT COUNT(*) AS c FROM usage_ledger');
+  const usageTotalInjStmt = db.prepare('SELECT COUNT(*) AS c FROM usage_ledger WHERE injected=1');
   const usageTotalHitStmt = db.prepare('SELECT COUNT(*) AS c FROM usage_ledger WHERE used=1');
   const usageSessionsStmt = db.prepare('SELECT COUNT(DISTINCT session_id) AS c FROM usage_ledger WHERE session_id IS NOT NULL');
   const usagePerMemoryStmt = db.prepare(
-    `SELECT memory_id, COUNT(*) AS injections, SUM(used) AS hits, COUNT(DISTINCT session_id) AS sessions, MAX(ts) AS last_used
+    `SELECT memory_id, COUNT(CASE WHEN injected=1 THEN 1 END) AS injections, SUM(used) AS hits, COUNT(DISTINCT session_id) AS sessions, MAX(ts) AS last_used
        FROM usage_ledger GROUP BY memory_id ORDER BY hits DESC`,
   );
   const listTopicsStmt = db.prepare(
@@ -554,6 +559,12 @@ export function openMemoryStore(path: string): MemoryStore {
     recordInjection(id, sessionId, injectedTokens) {
       hitStmt.run(now(), now(), id);
       const result = ledgerStmt.run(now(), id, sessionId ?? null, injectedTokens ?? 0);
+      return Number(result.lastInsertRowid);
+    },
+    recordToolUse(id, sessionId) {
+      hitStmt.run(now(), now(), id);
+      verifiedStmt.run(now(), id);
+      const result = ledgerToolHitStmt.run(now(), id, sessionId ?? null);
       return Number(result.lastInsertRowid);
     },
     markLedgerUsed(ledgerId) {

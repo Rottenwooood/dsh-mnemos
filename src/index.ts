@@ -24,7 +24,7 @@ import { createSystemGitBackend } from './domain/git/system-git.js';
 import { createIsomorphicGitBackend } from './domain/git/isomorphic-git.js';
 import { registerTools } from './dsh/tools.js';
 import { registerCommand, CommandDeps } from './dsh/command.js';
-import { registerHooks, registerInjection, registerProtocolInjection, SignalCollector, UsageTracker } from './dsh/hooks.js';
+import { registerHooks, registerInjection, registerProtocolInjection, SignalCollector } from './dsh/hooks.js';
 import { openNegativeMemoryStore } from './domain/negative.js';
 import { registerNegativeMemory } from './dsh/negative-hooks.js';
 import { createMnemosAbi } from './dsh/adapter.js';
@@ -295,12 +295,10 @@ export function apply(ctx: Context, raw: Partial<Config> = {}): void {
     },
   };
 
-  const usage = new UsageTracker();
-
-  registerTools(ctx, { service, llm, collector, usage, cursor: distillCursor, persistCursor: (c) => cursorStore.write(c) });
+  registerTools(ctx, { service, llm, collector, cursor: distillCursor, persistCursor: (c) => cursorStore.write(c) });
   registerCommand(ctx, commandDeps);
-  registerHooks(ctx, collector, usage);
-  registerInjection(ctx, service, getConfig, usage);
+  registerHooks(ctx, collector);
+  registerInjection(ctx, service, getConfig);
   registerProtocolInjection(ctx, service, getConfig);
   const negativeStore = openNegativeMemoryStore(config.dbPath);
   registerNegativeMemory(ctx, { store: negativeStore, getConfig });

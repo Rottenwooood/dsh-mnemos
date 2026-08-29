@@ -120,20 +120,22 @@ export function rrfFuse(lists: Array<Array<{ id: string }>>, k = 60): Map<string
 /**
  * Deterministic hybrid search (no LLM, no embeddings): reciprocal rank fusion of
  * the store's FTS5 BM25 (or LIKE fallback) ranking with a bigram-Jaccard ranking
- * over the active memories. Every search path (memory_search tool, /api/search)
- * goes through this, so the whole recall layer matches dsh-evolve's mechanism.
+ * OVER THE FTS RESULTS. The bigram pass is a re-ranker, not a second recall
+ * source: a memory the lexical tier never matched must not be pulled in just
+ * because it shares a stray bigram with the query (that produced noisy hits for
+ * short/technical queries like "minirvEMU"). Every search path (memory_search
+ * tool, /api/search) goes through this.
  */
 function hybridSearch(store: MemoryStore, query: string, limit: number): SummaryRow[] {
   const pool = Math.max(limit, 20);
   const fts = store.searchMemories(query, pool);
-  const active = store.listSummaries(undefined, undefined, 'active');
-  const bigram = active
+  // Re-rank only the lexical matches by bigram similarity; never expand the pool.
+  const bigram = fts
     .map((r) => ({ id: r.id, rel: similarity(`${r.topic} ${r.summary}`, query) }))
     .filter((r) => r.rel > 0)
-    .sort((a, b) => b.rel - a.rel)
-    .slice(0, pool);
+    .sort((a, b) => b.rel - a.rel);
   const scores = rrfFuse([fts, bigram]);
-  const byId = new Map([...active, ...fts].map((r) => [r.id, r]));
+  const byId = new Map(fts.map((r) => [r.id, r]));
   const out: SummaryRow[] = [];
   for (const [id, score] of scores) {
     const row = byId.get(id);
@@ -176,6 +178,8 @@ export interface MemoryService {
   setRuleState(id: string, state: RuleState): RuleStateResult;
   /** Record an INJECTION of a memory into a session (ledger row; used=0 until the model references it). */
   recordHit(id: string, sessionId?: string, injectedTokens?: number): number;
+  /** Record a TOOL HIT: the model retrieved this memory via memory_get/memory_search. */
+  recordToolUse(id: string, sessionId?: string): number;
   markLedgerUsed(ledgerId: number): void;
   markMemoryVerified(id: string): void;
   getMemory(id: string): ReturnType<MemoryStore['getMemory']>;
@@ -573,6 +577,9 @@ export function createMemoryService(
 
     recordHit(id, sessionId, injectedTokens) {
       return store.recordInjection(id, sessionId, injectedTokens);
+    },
+    recordToolUse(id, sessionId) {
+      return store.recordToolUse(id, sessionId);
     },
     markLedgerUsed(ledgerId) {
       store.markLedgerUsed(ledgerId);

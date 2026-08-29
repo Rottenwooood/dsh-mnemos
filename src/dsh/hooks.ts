@@ -130,69 +130,14 @@ export class SignalCollector {
   }
 }
 
-/**
- * Effect telemetry (P0): does an injected memory actually get used?
- *
- * A memory counts as USED only when the model actively retrieves it through a
- * tool (`memory_get` / `memory_search`) in the same session. Text matching on
- * the model's reply is NOT a signal — an LLM inevitably echoes words from the
- * user's own message, so a keyword in the output proves nothing. A tool call
- * is the one signal the model initiates on its own, so it is the only honest
- * "the model went and got this memory" evidence.
- *
- * We remember which memories were injected per session (memoryId + its ledger
- * row). When a retrieval tool returns that memory, markToolUsed credits it:
- * the ledger row flips to used=1 and the memory is verified. Pending credits
- * are dropped at the next user message (a new turn).
- */
-export class UsageTracker {
-  private pending = new Map<string, Array<{ memoryId: string; ledgerId: number }>>();
-
-  record(sessionId: string, items: Array<{ memoryId: string; ledgerId: number }>): void {
-    if (!sessionId) return;
-    const existing = this.pending.get(sessionId) ?? [];
-    this.pending.set(sessionId, existing.concat(items).slice(-100));
-  }
-
-  /** New user message: the previous turn is over, drop its pending credits. */
-  onUserMessage(sessionId: string): void {
-    if (sessionId) this.pending.delete(sessionId);
-  }
-
-  /** The model retrieved a memory through a tool in this session: credit it. */
-  markToolUsed(sessionId: string, memoryId: string, service: MemoryService): void {
-    if (!sessionId || !memoryId) return;
-    const items = this.pending.get(sessionId);
-    if (!items || items.length === 0) return;
-    const still: Array<{ memoryId: string; ledgerId: number }> = [];
-    for (const item of items) {
-      if (item.memoryId === memoryId) {
-        service.markLedgerUsed(item.ledgerId);
-        service.markMemoryVerified(item.memoryId);
-      } else {
-        still.push(item);
-      }
-    }
-    this.pending.set(sessionId, still);
-  }
-}
-
 /** Rough UTF-8 token estimate for an injected block (CJK ≈ 1 token/char, latin ≈ 4 chars). */
 export function estimateTokens(text: string): number {
   return Math.max(1, Math.ceil(Buffer.byteLength(text, 'utf8') / 3));
 }
 
-export function registerHooks(ctx: Context, collector: SignalCollector, usage: UsageTracker): void {
+export function registerHooks(ctx: Context, collector: SignalCollector): void {
   ctx.on('session/event', (session, event) => {
     collector.onEvent(session, event);
-    const sessionId = (session as { id?: unknown })?.id;
-    if (typeof sessionId !== 'string') return;
-    // Usage is credited ONLY when the model retrieves a memory through a tool
-    // (markToolUsed), never from reply-text matching. A user message still ends
-    // the pending window.
-    if (event.type === 'user/message') {
-      usage.onUserMessage(sessionId);
-    }
   });
 }
 
@@ -206,7 +151,6 @@ export function registerInjection(
   ctx: Context,
   service: MemoryService,
   getConfig: () => Config,
-  usage: UsageTracker,
 ): void {
   const injectedSessions = new Set<string>();
   const lastPartial = new Map<string, number>();
@@ -236,16 +180,13 @@ export function registerInjection(
         }
         if (index.injectedCount > 0) {
           const tokens = estimateTokens(index.text);
-          const tracked: Array<{ memoryId: string; ledgerId: number }> = [];
           for (const id of index.injectedIds) {
             try {
-              const ledgerId = service.recordHit(id, sessionId, tokens);
-              tracked.push({ memoryId: id, ledgerId });
+              service.recordHit(id, sessionId, tokens);
             } catch {
-              // hit tracking is best-effort
+              // injection accounting is best-effort
             }
           }
-          usage.record(sessionId ?? '', tracked);
           return { kind: 'enter', messages: [...decision.messages, makeUserMessage(index.text)] };
         }
         return decision;
@@ -272,16 +213,13 @@ export function registerInjection(
       }
       if (sessionId !== undefined) lastPartial.set(sessionId, Date.now());
       const tokens = estimateTokens(partial.text);
-      const tracked: Array<{ memoryId: string; ledgerId: number }> = [];
       for (const id of partial.injectedIds) {
         try {
-          const ledgerId = service.recordHit(id, sessionId, tokens);
-          tracked.push({ memoryId: id, ledgerId });
+          service.recordHit(id, sessionId, tokens);
         } catch {
           // best-effort
         }
       }
-      usage.record(sessionId ?? '', tracked);
       return { kind: 'enter', messages: [...decision.messages, makeUserMessage(partial.text)] };
     } catch {
       // injection is best-effort; never fail a step because of memory recall
