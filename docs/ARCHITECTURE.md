@@ -119,7 +119,7 @@ per-entry 历史可回滚，支持跨机同步。git 后端可插拔。
 
 ## 关键配置（默认值）
 
-`protocolRefreshTurns=3`、`injectRefreshIntervalMinutes=10`、
+`injectRefreshIntervalMinutes=10`、
 `injectPartialLimit=5`、`negativeMemoryEnabled`、`negativeMemoryTtlMs=300000`、
 `allowModelGlobalWrite=false`、`distillAuto=false`、`distillEveryNTurns=5`。
 完整清单见 `src/dsh/settings.ts`。

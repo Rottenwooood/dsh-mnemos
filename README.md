@@ -132,7 +132,7 @@ All settings live in Settings → dsh-mnemos and mostly apply live. Highlights:
 | `enabled` | master switch |
 | `autoApprove` / `autoApproveConfidence` | auto-approve high-confidence model writes / threshold |
 | `injectionEnabled` / `injectLimit` / `injectMaxBytes` | injection on/off, count and byte budgets |
-| `protocolRefreshTurns` | re-inject the environment protocol every N turns (context-compression defense) |
+| `protocolInjectEnabled` | inject environment/tool-convention (`protocol`) memories — re-attached after each context compaction |
 | `gitRemoteUrl` / `gitBackend` / `syncEnabled` | cross-machine sync: remote / backend / auto-sync |
 | `distillAuto` / `distillEveryNTurns` | auto-distill on/off and interval (user turns) |
 | `sessionLogDirs` / `backfillEnabled` | backfill historical session logs at startup |

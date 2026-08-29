@@ -132,7 +132,7 @@ dsh plugin --profile web add ./dsh-mnemos-<version>.tgz
 | `enabled` | 总开关 |
 | `autoApprove` / `autoApproveConfidence` | 自动放行高置信度模型写入 / 阈值 |
 | `injectionEnabled` / `injectLimit` / `injectMaxBytes` | 注入开关、条数与字节预算 |
-| `protocolRefreshTurns` | 环境约定每隔 N 轮重注入（防上下文压缩） |
+| `protocolInjectEnabled` | 注入环境/工具约定（`protocol`）记忆——每次上下文压缩后重新注入 |
 | `gitRemoteUrl` / `gitBackend` / `syncEnabled` | 跨机同步：远端 / 后端 / 自动同步 |
 | `distillAuto` / `distillEveryNTurns` | 自动提炼开关与间隔（次用户输入） |
 | `sessionLogDirs` / `backfillEnabled` | 启动时回填历史会话日志 |

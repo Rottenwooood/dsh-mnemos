@@ -353,7 +353,7 @@ describe('pre-step injection', () => {
 });
 
 describe('protocol injection (agent/pre-step)', () => {
-  it('injects active protocol memories before any tool call and refreshes on cadence', async () => {
+  it('injects active protocol memories before any tool call and refreshes after compaction', async () => {
     const { ctx, listeners } = fakeContext();
     const { service } = makeService();
     service.add(
@@ -373,20 +373,29 @@ describe('protocol injection (agent/pre-step)', () => {
     );
     registerProtocolInjection(ctx, service, () => defaultConfig());
     const hook = listeners.find((l) => l.name === 'agent/pre-step')!;
+    const sessionHook = listeners.find((l) => l.name === 'session/event')!;
     const listener = hook.listener as (
       payload: unknown,
       next: () => Promise<{ kind: string; messages: unknown[] }>,
     ) => Promise<{ kind: string; messages: Array<{ content: Array<{ text: string }> }> }>;
+    const emitSession = sessionHook.listener as (session: unknown, event: unknown) => void;
     const payload = { agent: { id: 'a1', session: { id: 's1' } }, messages: [], turn: 0, step: 0, signal: new AbortController().signal };
     const first = await listener(payload, async () => ({ kind: 'enter', messages: [] }));
     const texts = first.messages.flatMap((m) => m.content.map((c) => c.text));
     expect(texts.join('\n')).toContain('bwrap sandbox');
-    // Within the refresh cadence (default 3 turns): no re-injection.
-    const withinCadence = await listener({ ...payload, turn: 2, step: 0 }, async () => ({ kind: 'enter', messages: [] }));
-    expect(withinCadence.messages.length).toBe(0);
-    // Past the cadence: the standing instruction is re-attached (compaction defense).
-    const refreshed = await listener({ ...payload, turn: 5, step: 0 }, async () => ({ kind: 'enter', messages: [] }));
+    // No compaction: the standing instruction is not re-attached on later turns.
+    const noCompaction = await listener({ ...payload, turn: 5, step: 0 }, async () => ({ kind: 'enter', messages: [] }));
+    expect(noCompaction.messages.length).toBe(0);
+    // A compaction completes (harness emits `compaction/end`): re-attach next turn.
+    emitSession({ id: 's1' }, { type: 'compaction/end', seq: 10, data: {} });
+    const refreshed = await listener({ ...payload, turn: 6, step: 0 }, async () => ({ kind: 'enter', messages: [] }));
     expect(refreshed.messages.length).toBe(1);
+    // A failed compaction (`error` present) does not trigger a refresh.
+    const afterFailed = await listener({ ...payload, turn: 7, step: 0 }, async () => ({ kind: 'enter', messages: [] }));
+    expect(afterFailed.messages.length).toBe(0);
+    emitSession({ id: 's1' }, { type: 'compaction/end', seq: 11, data: { error: 'summary failed' } });
+    const afterError = await listener({ ...payload, turn: 8, step: 0 }, async () => ({ kind: 'enter', messages: [] }));
+    expect(afterError.messages.length).toBe(0);
   });
 });
 

@@ -302,30 +302,43 @@ function userTextOf(messages: unknown[]): string {
 /**
  * Protocol effect: inject active `protocol` memories (environment / tool-
  * calling conventions, e.g. sandbox rules, background-job usage) once per
- * session at the first pre-step. Protocol memories are real memories — visible
- * in the console, counted in stats — and this channel makes them always present
- * before the agent acts. Rules are NOT injected; they are the skill-promotion
- * pipeline only.
+ * session at the first pre-step, then re-inject right after a context
+ * compaction completes. Protocol memories are real memories — visible in the
+ * console, counted in stats — and this channel makes them always present before
+ * the agent acts. Rules are NOT injected; they are the skill-promotion pipeline
+ * only.
+ *
+ * Compaction drops standing instructions (2608.22752: standing rules survive
+ * ~10% after 5 summary rounds), so instead of guessing with a turn counter we
+ * listen for the harness's own `compaction/end` session event and re-attach the
+ * protocol block at the next pre-step after it. The memory INDEX stays frozen
+ * (progressive disclosure); only the standing-instruction block is refreshed.
  */
 export function registerProtocolInjection(
   ctx: Context,
   service: MemoryService,
   getConfig: () => Config,
 ): void {
-  // Refresh cadence defeats context compaction (2608.22752: standing rules
-  // survive only ~10% after 5 rounds of summarization): protocol is the
-  // standing-instruction channel, so it is re-attached every N turns instead of
-  // once per session. The memory INDEX stays frozen (progressive disclosure).
-  const lastInjectedTurn = new Map<string, number>();
+  const injectedSessions = new Set<string>();
+  const pendingRefresh = new Set<string>();
+
+  ctx.on('session/event', (session, event) => {
+    const sessionId = (session as { id?: unknown })?.id;
+    if (typeof sessionId !== 'string') return;
+    const data = event.data as { error?: unknown } | undefined;
+    if (event.type === 'compaction/end' && !data?.error) {
+      pendingRefresh.add(sessionId);
+    }
+  });
+
   ctx.on('agent/pre-step', async (payload: PreStepPayload, next) => {
     const decision = (await next()) as PreStepDecision;
     if (decision.kind === 'reject') return decision;
     payload.signal.throwIfAborted();
     const sessionId = (payload.agent as { session?: { id?: string } })?.session?.id;
-    const refresh = getConfig().protocolRefreshTurns;
-    const last = sessionId === undefined ? undefined : lastInjectedTurn.get(sessionId);
-    const due = last === undefined || payload.turn - last >= Math.max(1, refresh);
-    if (!due) {
+    const first = sessionId === undefined || !injectedSessions.has(sessionId);
+    const afterCompaction = sessionId !== undefined && pendingRefresh.has(sessionId);
+    if (!first && !afterCompaction) {
       return decision;
     }
     try {
@@ -333,7 +346,10 @@ export function registerProtocolInjection(
         return decision;
       }
       const protos = service.listActive().filter((m) => m.type === 'protocol').slice(0, 8);
-      if (sessionId !== undefined) lastInjectedTurn.set(sessionId, payload.turn);
+      if (sessionId !== undefined) {
+        injectedSessions.add(sessionId);
+        pendingRefresh.delete(sessionId);
+      }
       if (protos.length > 0) {
         const text = `# dsh-mnemos 环境约定\n${protos.map((p) => `- ${p.summary}`).join('\n')}`;
         return { kind: 'enter', messages: [...decision.messages, makeUserMessage(text)] };

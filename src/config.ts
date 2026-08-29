@@ -72,8 +72,6 @@ export interface Config {
   negativeMemoryEnabled: boolean;
   /** How long a recorded failure stays active before auto-resolving, in ms. */
   negativeMemoryTtlMs: number;
-  /** Re-inject the protocol standing-instruction block every N turns (compaction defense). */
-  protocolRefreshTurns: number;
   /** Mid-session partial index refresh: min minutes between keyword-triggered re-injections. */
   injectRefreshIntervalMinutes: number;
   /** Max lines in a keyword-triggered partial index injection. */
@@ -118,7 +116,6 @@ export function defaultConfig(): Config {
     gitBackend: 'system',
     negativeMemoryEnabled: true,
     negativeMemoryTtlMs: 300_000,
-    protocolRefreshTurns: 3,
     injectRefreshIntervalMinutes: 10,
     injectPartialLimit: 5,
     llmProvider: '',
