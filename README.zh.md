@@ -1,16 +1,20 @@
+<div align="center">
+
 # dsh-mnemos
 
 [English](README.md)
 
-**有治理、会自我进化、带可复跑效果数据的 DSH 跨会话记忆插件。** 模型记住的每一条，都经过一道审批门禁写入；数据全在本地 SQLite，同时是一份 git 版本化的 Markdown 镜像——每次改动效果数字都会跟着动。
+**有治理、会自我进化、带可复跑效果数据的 DSH 跨会话记忆插件。** 
+
+模型记住的每一条，都经过一道审批门禁写入；数据全在本地 SQLite，同时是一份 git 版本化的 Markdown 镜像——每次改动效果数字都会跟着动。
 
 ![CI](https://img.shields.io/github/actions/workflow/status/Rottenwooood/dsh-mnemos/ci.yml?branch=main&label=CI) ![License](https://img.shields.io/badge/license-MIT-blue) ![Version](https://img.shields.io/github/v/tag/Rottenwooood/dsh-mnemos?label=version) ![Node](https://img.shields.io/badge/node-%3E%3D22.19-brightgreen)
-
 ---
+</div>
 
 ## 它是什么 / 不是什么
 
-**它是什么。** 一个 DSH 插件，给模型跨会话记忆。你在一个会话里告诉它的重要事实，下个会话开头自动注入，不用重复教。所有写入路径——模型工具、/memory 命令、第三方插件、浏览器界面——都走同一个带审批门禁的 `MemoryService`。数据全在本地：SQLite（WAL + FTS5）+ git 版本化的 Markdown 镜像（历史、回滚、备份、跨机同步）。
+**它是什么。** 一个 DSH 插件，给模型跨会话，跨设备的记忆。你在一个会话里告诉它的重要事实，下个会话开头自动注入，不用重复教。所有写入路径——模型工具、/memory 命令、第三方插件、浏览器界面——都走同一个带审批门禁的 `MemoryService`。数据全在本地：SQLite（WAL + FTS5）+ git 版本化的 Markdown 镜像（历史、回滚、备份、跨机同步）。
 
 **它不是什么。**
 
@@ -22,22 +26,22 @@
 
 整个设计挂在五条理念上。
 
-1. **效果数字可复跑——不是玩具。** LongMemEval-S hit@1 **87.2%**，deja-vu 官方公布 **85.3%**（同数据、同指标、同问题原文），外加确定性无 LLM 评测和实时的 `usage_ledger` 效果卡。大多数记忆插件一个数字都不发。
+1. **效果数字可复跑** LongMemEval-S hit@1 **87.2%**，deja-vu 官方公布 **85.3%**（同数据、同指标、同问题原文），外加确定性无 LLM 评测和实时的 `usage_ledger` 效果卡。大多数记忆插件一个数字都不发。
 
-2. **从不盲信模型。** 每一次写入——模型工具、/memory、第三方插件、浏览器——都走同一个审批门禁：敏感/重复/越界的直接打回，有风险的等人工。模型/导入/第三方记忆标记"未验证"并在注入时设上限（防投毒）。失败命令在执行时拦截——下一次一模一样的尝试直接带着证据拦住（负面记忆）。每次写入/批准/拒绝都记审计。
+2. **所有记忆经过门禁，可审计。** 每一次写入——模型工具、/memory、第三方插件、浏览器——都走同一个审批门禁：敏感/重复/越界的直接打回，有风险的等人工。模型/导入/第三方记忆标记"未验证"并在注入时设上限（防投毒）。失败命令在执行时拦截——下一次一模一样的尝试直接带着证据拦住（负面记忆）。每次写入/批准/拒绝都记审计。
 
 3. **会自我进化、会自我修正。** 会话被提炼成记忆**和规则**；批准后的规则注入模型、还能固化成 **SKILL 文件**。事实就地更新（旧值 git 可回滚）；只有真正的冲突才变成**替换提案**交人裁决。热度清理让存储有界（活跃 → 归档 → 可还原；`固定` 永不离开）。
 
-4. **数据你的、可迁移、可跨设备。** 本地 SQLite（WAL + FTS5）；每条记忆同时是一个 git 仓库里的 Markdown 文件——历史、diff、回滚、恢复、备份、合并式同步（冲突标记，绝不静默覆盖）。两种 git 后端：`system`（你的 git CLI，更稳）或 `isomorphic`（纯 JS npm 包，默认——慢网络下可能超时）。可导入 ChatGPT / Claude Code / Codex / DSH 历史。
+4. **数据可迁移、可跨设备。** 本地 SQLite（WAL + FTS5）；每条记忆同时是一个 git 仓库里的 Markdown 文件——历史、diff、回滚、恢复、备份、合并式同步（冲突标记，绝不静默覆盖）。可导入 ChatGPT / Claude Code / Codex / DSH 历史。
 
-5. **开放、可测。** `ctx.mnemosBus` 给其他插件用（身份烙印写入 → 审批队列、拉黑、撤销）；`ctx.mnemosAbi`（`recall / get / state / probe`）+ conformance 套件供外部测量。
+5. **别的插件能共享记忆——有权限，不是默认开放。** `ctx.mnemosBus` 是一条开放记忆总线：任何 DSH 插件都能 `recall` 记忆、`record` 自己的记忆（盖身份章、永远进人工审批队列）、`subscribe` 记忆变化——外加运行时拉黑和撤销。版本化的 ABI（`ctx.mnemosAbi`）把真实效果数字开放给外部工具，conformance 套件证明不是空壳。详见[给开发者](#给开发者)。
 
 ## 功能
 
 ### 给使用者
 
 - **模型工具**（模型在会话里自己用）：
-  `memory_search`（检索）· `memory_record`（写入，带关键词）· `memory_distill`（把缓冲会话提炼成记忆/规则提案）· `memory_list` · `memory_stats`。
+  `memory_search`（主动检索）· `memory_record`（写入，带关键词）· `memory_distill`（把缓冲会话提炼成记忆/规则提案）· `memory_list` · `memory_stats`。
 - **冷启动注入，不是塞全文。** 每个会话开头注入一次**冻结的记忆索引**（每条一行：类型·短id·主题·关键词，字节稳定、命中 KV 缓存）；模型要细节用 `memory_get` 下钻。全程没有任何启发式/正则抽取。
 - **/memory 命令**——完整清单、使用场景、故障排查在 [docs/HANDOVER.md](docs/HANDOVER.md)；关键几条：
   ```
@@ -55,13 +59,31 @@
 
 ### 给开发者
 
-- **记忆总线 —— `ctx.mnemosBus`**。给第三方插件的读/写/订阅接口：
-  - `recall({query})` —— 只读。
-  - `record(input, identity)` —— 写入；必须声明 `plugin:<名字>@<版本>` 身份，且写入**永远进审批队列**（绝不直接落库、绝不自动放行）、记审计、归属到写入者。
-  - `subscribe(listener)` —— 订阅事件（新记忆、提案、被取代、被撤销、规则批准）。
-  - 治理：运行时拉黑（`bus.blacklistPlugin`）、撤销（只有写入者插件或人类）。
-- **测量 ABI —— `ctx.mnemosAbi`**。版本化的 `recall / get / state / probe`，让外部工具和评测读到真实数字（活跃/待审批/未验证/已验证/注入/命中率）。`scripts/conformance.mts` 证明它就是实际实现。
-- **导入适配器。** `src/domain/imports/` —— chatgpt、claude-code、codex、dsh，自动格式检测在 `detect.ts`。
+#### 开放记忆总线 —— `ctx.mnemosBus`
+
+dsh-mnemos 不只是给模型和人用——它把记忆库通过总线开放给**任何其他 DSH 插件**。插件用 `ctx.inject(['mnemosBus'])` 挂上，拿到三个原语：
+
+| 原语 | 干什么 | 护栏 |
+|---|---|---|
+| `bus.recall({ query, limit })` | 搜索记忆（或按作用域/工作区列出）。只读——绝不写入、绝不计入效果账本。 | — |
+| `bus.record(input, identity)` | 申请写入一条记忆。 | **必须声明身份**（`{ name, version }` → 盖 `plugin:<名字>@<版本>` 章、`source: third_party`）。写入**永远进人工审批队列**——不管置信度多高，绝不直接落库、绝不自动放行。记审计。 |
+| `bus.subscribe(listener)` | 订阅存储变化：新记忆落库 / 提案待审 / 记忆被替换 / 记忆被撤销 / 规则被批准。 | 订阅方报错也不会弄坏总线。 |
+
+对每一次第三方写入都生效的治理：
+
+- **运行时拉黑** —— `bus.blacklistPlugin('名字', 原因)`（或 `/memory bus blacklist`）：从那一刻起该插件的写入全部拒绝并记审计。`unblacklistPlugin` / `listBlacklist` 管理。
+- **可撤销** —— `bus.revoke(memoryId, identity)`：第三方写入可以被删除，但只有**写入方插件**或**人类**能撤。
+- **按写入者归属** —— `bus.state()` / `bus.listByWriter(name)`，让审批面板能按"哪个插件提的"分组。
+
+所以另一个插件得到的待遇和模型**完全一样**：身份烙印、审批门禁、审计轨迹、紧急关停。**总线默认不信任任何东西**——跟 mnemos 共享记忆是有权限的，不是默认开放的。
+
+#### 测量 ABI —— `ctx.mnemosAbi`
+
+版本化的 `recall / get / state / probe`，让外部工具和评测读到真实数字（活跃/待审批/未验证/已验证/注入/命中率）。`scripts/conformance.mts` 证明它就是实际实现，不是空壳。
+
+#### 导入适配器
+
+`src/domain/imports/` —— chatgpt、claude-code、codex、dsh，自动格式检测在 `detect.ts`。
 
 ## 效果
 

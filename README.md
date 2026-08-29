@@ -30,7 +30,7 @@ The whole thing hangs on five design principles.
 
 4. **Your data, portable, cross-device.** Local SQLite (WAL + FTS5); every memory is also a Markdown file in a git repo — history, diff, rollback, restore, backup, and merge-based sync (conflicts flagged, never silently overwritten). Two git backends: `system` (your git CLI — reliable) or `isomorphic` (pure-JS npm package, the default — can time out on slow connections). Imports ChatGPT / Claude Code / Codex / DSH history.
 
-5. **Open and measured.** `ctx.mnemosBus` for other plugins (identity-stamped writes → approval queue, blacklist, revoke); `ctx.mnemosAbi` (`recall / get / state / probe`) + a conformance suite for external measurement.
+5. **Other plugins can share memory — permissioned, not assumed.** `ctx.mnemosBus` is an open memory bus: any DSH plugin can `recall` memories, `record` its own (stamped with a declared identity, always routed to the human approval queue), and `subscribe` to memory changes — plus runtime blacklist and revocation. A versioned ABI (`ctx.mnemosAbi`) exposes real effect numbers to external tools, proven by a conformance suite. Details in the [For developers](#for-developers) section.
 
 ## Features
 
@@ -55,13 +55,31 @@ The whole thing hangs on five design principles.
 
 ### For developers
 
-- **Memory bus — `ctx.mnemosBus`.** Third-party-facing read/write/subscribe:
-  - `recall({query})` — read-only.
-  - `record(input, identity)` — write; a declared `plugin:<name>@<version>` identity is required and the write **always** enters the approval queue (never direct, never auto-approved), audited, and attributable to its writer.
-  - `subscribe(listener)` — watch events (new memory, proposal, replacement, revocation, rule approval).
-  - Governance: runtime blacklist (`bus.blacklistPlugin`), revocation (only the owning plugin or a human).
-- **Measurement ABI — `ctx.mnemosAbi`.** Versioned `recall / get / state / probe` so external tools and evals read real numbers (active/pending/untrusted/verified/injections/usage-rate). `scripts/conformance.mts` proves it is the actual implementation, not a stub.
-- **Import adapters.** `src/domain/imports/` — chatgpt, claude-code, codex, dsh; auto source detection in `detect.ts`.
+#### The open memory bus — `ctx.mnemosBus`
+
+dsh-mnemos isn't just for the model and the human — it exposes its memory store to **any other DSH plugin** through a bus. A plugin mounts it with `ctx.inject(['mnemosBus'])` and gets three primitives:
+
+| Primitive | What it does | Guardrails |
+|---|---|---|
+| `bus.recall({ query, limit })` | Search memories (or list by scope/workspace). Read-only — never writes, never bumps the usage ledger. | — |
+| `bus.record(input, identity)` | Request a memory write. | **Must declare who it is** (`{ name, version }` → stamped `plugin:<name>@<version>`, `source: third_party`). The write **always enters the human approval queue** — never direct, never auto-approved, regardless of confidence. Audited. |
+| `bus.subscribe(listener)` | Watch store changes: memory committed / proposal pending / memory replaced / memory revoked / rule approved. | Subscriber errors never break the bus. |
+
+Governance that applies to every third-party write:
+
+- **Runtime blacklist** — `bus.blacklistPlugin('name', reason)` (or `/memory bus blacklist`): from then on that plugin's writes are denied with an audit entry. `unblacklistPlugin` / `listBlacklist` to manage.
+- **Revocation** — `bus.revoke(memoryId, identity)`: a third-party write can be deleted, but only the **owning plugin** or a **human** may revoke it.
+- **Per-writer attribution** — `bus.state()` / `bus.listByWriter(name)` let the approval panel group pending items by which plugin proposed them.
+
+So another plugin gets the *same* treatment as the model: an identity stamp, the approval gate, an audit trail, and a kill switch. **The bus does not trust anything by default** — sharing memory with mnemos is permissioned, not assumed.
+
+#### Measurement ABI — `ctx.mnemosAbi`
+
+Versioned `recall / get / state / probe` for external tools and evals to read real numbers (active / pending / untrusted / verified / injections / usage-rate). `scripts/conformance.mts` proves it is the actual implementation, not a stub.
+
+#### Import adapters
+
+`src/domain/imports/` — chatgpt, claude-code, codex, dsh; auto source detection in `detect.ts`.
 
 ## Benchmarks
 
