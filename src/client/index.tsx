@@ -107,8 +107,9 @@ const MEMORY_TYPES = ['project_fact', 'procedure', 'preference', 'error_fix', 'd
 /** `/mnemos/api/usage` answer: ledger-derived cross-session stats. */
 interface UsageStats {
   totalHits: number
+  totalInjections: number
   distinctSessions: number
-  perMemory: Array<{ memoryId: string; hits: number; sessions: number; lastUsed: string | null }>
+  perMemory: Array<{ memoryId: string; hits: number; injections: number; sessions: number; lastUsed: string | null }>
   daily: Array<{ day: string; count: number }>
 }
 
@@ -412,7 +413,7 @@ export function MnemosTab(): ReactNode {
         {usage.data ? (
           <>
             <div className="mnemos-intro" style={{ margin: '4px 0 0' }}>
-              累计 {usage.data.totalHits} 次命中 · {usage.data.distinctSessions} 个会话
+              累计 {usage.data.totalHits} 次命中 · {usage.data.totalInjections} 次注入 · {usage.data.distinctSessions} 个会话
             </div>
             <Heatmap daily={usage.data.daily} />
           </>
@@ -767,11 +768,17 @@ function FieldControl({
 }
 
 /** The import-history area inside the settings page. */
-const DEFAULT_SESSION_DIR = '~/.dsh/sessions'
+const DEFAULT_DIRS: Record<string, string> = {
+  dsh: '~/.dsh/sessions',
+  'claude-code': '~/.claude/projects',
+  codex: '~/.codex/sessions',
+  chatgpt: '~/Downloads',
+  auto: '',
+}
 
 function MnemosImportSection(): ReactNode {
   const [source, setSource] = useState('dsh')
-  const [dir, setDir] = useState(DEFAULT_SESSION_DIR)
+  const [dir, setDir] = useState(DEFAULT_DIRS.dsh ?? '')
   const [preview, setPreview] = useState<ImportPreview | null>(null)
   const [run, setRun] = useState<ImportRunStats | null>(null)
   const [error, setError] = useState<string | null>(null)
@@ -818,10 +825,24 @@ function MnemosImportSection(): ReactNode {
     <div className="mnemos-section">
       <h3 className="mnemos-heading">导入历史会话</h3>
       <p className="mnemos-intro">
-        扫描目录里的会话记录（DSH 历史 / Claude Code / Codex / ChatGPT 自动识别），预览候选后导入。导入走与命令相同的门禁，重复与敏感内容会被跳过或拒绝。
+        扫描目录里的会话记录（DSH 历史 / Claude Code / Codex / ChatGPT 自动识别），预览候选后导入。导入走与命令相同的门禁，重复与敏感内容会被跳过或拒绝。各来源默认位置：DSH <code>~/.dsh/sessions</code> · Claude Code <code>~/.claude/projects</code> · Codex <code>~/.codex/sessions</code> · ChatGPT 需先解压导出包（默认在 <code>~/Downloads</code>）。
       </p>
       <div style={{ display: 'flex', gap: 8, marginBottom: 8 }}>
-        <select className="mnemos-input" style={{ flex: '0 0 150px' }} value={source} onChange={(e) => setSource(e.target.value)}>
+        <select
+          className="mnemos-input"
+          style={{ flex: '0 0 150px' }}
+          value={source}
+          onChange={(e) => {
+            const next = e.target.value
+            setSource(next)
+            const dflt = DEFAULT_DIRS[next] ?? ''
+            if (dflt && (dir.length === 0 || dir === (DEFAULT_DIRS[source] ?? ''))) {
+              setDir(dflt)
+            }
+            setPreview(null)
+            setRun(null)
+          }}
+        >
           <option value="dsh">DSH 历史</option>
           <option value="claude-code">Claude Code</option>
           <option value="codex">Codex</option>
@@ -831,7 +852,7 @@ function MnemosImportSection(): ReactNode {
         <input
           className="mnemos-input"
           style={{ flex: 1 }}
-          placeholder={source === 'dsh' ? '~/.dsh/sessions' : '输入会话日志目录路径'}
+          placeholder={(DEFAULT_DIRS[source] ?? '') || '输入会话日志目录路径'}
           value={dir}
           onChange={(e) => setDir(e.target.value)}
         />
@@ -845,9 +866,9 @@ function MnemosImportSection(): ReactNode {
         </button>
         <button
           className="mnemos-button"
-          disabled={dir === DEFAULT_SESSION_DIR}
-          title="填回 DSH 默认会话日志目录"
-          onClick={() => { setDir(DEFAULT_SESSION_DIR); setPreview(null); setRun(null) }}
+          disabled={!DEFAULT_DIRS[source] || dir === DEFAULT_DIRS[source]}
+          title="填回当前来源的默认会话日志目录"
+          onClick={() => { setDir(DEFAULT_DIRS[source] ?? ''); setPreview(null); setRun(null) }}
         >
           用默认
         </button>

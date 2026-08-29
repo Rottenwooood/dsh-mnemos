@@ -26,7 +26,7 @@ The whole thing hangs on five design principles.
 
 2. **The model is never trusted blindly.** Every write — model tools, /memory, third-party plugins, the browser — goes through one approval gate: sensitive / duplicate / out-of-budget writes are rejected, risky ones wait for a human. Model/import/third-party memories are marked *untrusted* and bounded at injection (anti-poisoning). Failed commands are intercepted at execution time — the next identical attempt is blocked with evidence (negative memory). Every write / approval / rejection is audited.
 
-3. **It evolves and corrects itself.** Sessions distill into memories *and* rules; approved rules inject into the model and can promote to **SKILL files**. Facts update in place (the old value stays recoverable in git); only genuine conflicts become *replacement proposals* for a human. Heat-based cleanup keeps the store bounded (active → archived → restorable; `pinned` never leaves).
+3. **It evolves and corrects itself.** Sessions distill into memories *and* rules. A rule lives in the memory store and is injected by mnemos — or, once approved, **promoted to a DSH SKILL**: a standard Markdown skill file any agent can load on demand, so the knowledge leaves mnemos and works anywhere in the harness. Facts update in place (the old value stays recoverable in git); only genuine conflicts become *replacement proposals* for a human. Heat-based cleanup keeps the store bounded (active → archived → restorable; `pinned` never leaves).
 
 4. **Your data, portable, cross-device.** Local SQLite (WAL + FTS5); every memory is also a Markdown file in a git repo — history, diff, rollback, restore, backup, and merge-based sync (conflicts flagged, never silently overwritten). Two git backends: `system` (your git CLI — reliable) or `isomorphic` (pure-JS npm package, the default — can time out on slow connections). Imports ChatGPT / Claude Code / Codex / DSH history.
 
@@ -51,7 +51,7 @@ The whole thing hangs on five design principles.
   /memory bus <blacklist|unblacklist|list|revoke|writers>
   ```
 - **Browser UI** (better-sidebar "记忆" tab): overview, 30-day hit heatmap, approval queue (approve / reject / edit-then-approve / batch-approve low-risk), memory list with search/filter/edit/version-history/rollback/delete, deleted-memory recovery, rejection history, and git sync.
-- **Distillation.** LLM-generated memories (each with 2–5 keywords that trigger injection), and rules — procedures/preferences/error-fixes become *rule proposals* that enter the approval flow. Approved rules are injected; approved ones can be promoted to **SKILL files** (only *approved* rules — never drafts; idempotent).
+- **Distillation.** LLM-generated memories (each with 2–5 keywords that trigger injection), and rules — procedures/preferences/error-fixes become *rule proposals* that enter the approval flow. Approved rules are injected by mnemos; an approved rule can additionally be **promoted to a DSH SKILL** — a standard Markdown skill file (frontmatter + the rule text + source evidence) that any agent can load on demand through DSH's `skill` tool, making the knowledge usable outside mnemos. Only *approved* rules are promotable — never drafts — and promotion is idempotent.
 
 ### For developers
 

@@ -71,21 +71,32 @@ describe('memory store', () => {
     const store = openMemoryStore(':memory:');
     store.addMemory(mem({ id: 'a1' }));
     store.addMemory(mem({ id: 'a2' }));
-    store.recordHit('a1', 'sess-1');
-    store.recordHit('a1', 'sess-2');
-    store.recordHit('a2', 'sess-2');
+    const l1 = store.recordHit('a1', 'sess-1');
+    const l2 = store.recordHit('a1', 'sess-2');
+    const l3 = store.recordHit('a2', 'sess-2');
     const stats = store.usageStats(7);
-    expect(stats.totalHits).toBe(3);
+    // recordHit records an INJECTION; used=0 until markLedgerUsed fires.
+    expect(stats.totalInjections).toBe(3);
+    expect(stats.totalHits).toBe(0);
     expect(stats.distinctSessions).toBe(2);
     const a1 = stats.perMemory.find((u) => u.memoryId === 'a1');
     const a2 = stats.perMemory.find((u) => u.memoryId === 'a2');
-    expect(a1?.hits).toBe(2);
+    expect(a1?.injections).toBe(2);
+    expect(a1?.hits).toBe(0);
     expect(a1?.sessions).toBe(2);
-    expect(a2?.hits).toBe(1);
+    expect(a2?.injections).toBe(1);
     expect(a2?.sessions).toBe(1);
     expect(a1?.lastUsed).toBeTruthy();
     expect(stats.daily).toHaveLength(7);
-    expect(stats.daily.at(-1)?.count).toBe(3);
+    expect(stats.daily.at(-1)?.count).toBe(0);
+    // Mark two injections as actually referenced (hits).
+    store.markLedgerUsed(l1);
+    store.markLedgerUsed(l2);
+    const stats2 = store.usageStats(7);
+    expect(stats2.totalHits).toBe(2);
+    expect(stats2.totalInjections).toBe(3);
+    expect(stats2.perMemory.find((u) => u.memoryId === 'a1')?.hits).toBe(2);
+    expect(stats2.daily.at(-1)?.count).toBe(2);
     store.close();
   });
 
