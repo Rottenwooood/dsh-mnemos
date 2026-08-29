@@ -332,70 +332,55 @@ describe('pre-step injection', () => {
     expect(out.summary).toContain('Use pnpm for builds.');
   });
 
-  it('marks an injected memory as used when the assistant references it next', async () => {
-    const { ctx, listeners } = fakeContext();
+  it('marks an injected memory as used when the model retrieves it via a tool', async () => {
+    const { ctx, tools, listeners } = fakeContext();
     const { service } = makeService();
     service.add(memoryWithKeywords(['pnpm']), 'human');
     const usage = new UsageTracker();
+    registerTools(ctx, { ...toolDeps(service), usage });
     registerInjection(ctx, service, () => ({ ...defaultConfig(), injectMaxBytes: 4096 }), usage);
     await listen(listeners, [userMsg('install with pnpm')]);
     expect(service.telemetry().injections).toBe(1);
     expect(service.telemetry().used).toBe(0);
-    // The model's next message references the injected memory.
-    usage.onAssistantText('s1', 'Sure, I will use pnpm for the install.', service);
-    const after = service.telemetry();
-    expect(after.used).toBe(1);
-    expect(after.verifiedMemories).toBe(1);
-    // A new user message clears the pending credit for that session.
-    usage.onUserMessage('s1');
-    expect(service.telemetry().used).toBe(1);
-  });
-
-  it('detects a hit only from the final output text (message.content), not reasoning', async () => {
-    const { ctx, listeners } = fakeContext();
-    const { service } = makeService();
-    service.add(memoryWithKeywords(['pnpm']), 'human');
-    const usage = new UsageTracker();
-    registerInjection(ctx, service, () => ({ ...defaultConfig(), injectMaxBytes: 4096 }), usage);
-    registerHooks(ctx, new SignalCollector(() => {}), usage, service);
-    await listen(listeners, [userMsg('install with pnpm')]);
-    expect(service.telemetry().injections).toBe(1);
-    // The reasoning (thinking) block mentions pnpm but must NOT count as a hit.
-    const sessionHook = listeners.find((l) => l.name === 'session/event')!;
-    const emit = sessionHook.listener as (session: unknown, event: unknown) => void;
-    emit(
-      { id: 's1' },
-      {
-        type: 'assistant/message',
-        seq: 3,
-        data: {
-          turn: 1,
-          step: 1,
-          message: {
-            role: 'assistant',
-            content: [
-              { type: 'reasoning', text: 'The user mentioned pnpm so I should check that memory.' },
-              { type: 'text', text: 'Sure, I will use pnpm for the install.' },
-            ],
-          },
-        },
-      },
-    );
+    // The model actively retrieves the injected memory through memory_search.
+    const searchTool = tools.find((t) => t.name === 'memory_search')!;
+    const out = (await (searchTool as unknown as {
+      execute(args: unknown, e: unknown): Promise<{ hits: unknown[] }>;
+    }).execute({ query: 'pnpm' }, { agent: { id: 's1' } })) as { hits: unknown[] };
+    expect(out.hits.length).toBeGreaterThan(0);
     expect(service.telemetry().used).toBe(1);
     expect(service.telemetry().verifiedMemories).toBe(1);
   });
 
-  it('does not credit a hit when only the reasoning mentions the keyword', async () => {
+  it('credits a hit when the model drills into a memory with memory_get', async () => {
+    const { ctx, tools, listeners } = fakeContext();
+    const { service } = makeService();
+    service.add(memoryWithKeywords(['pnpm']), 'human');
+    const usage = new UsageTracker();
+    registerTools(ctx, { ...toolDeps(service), usage });
+    registerInjection(ctx, service, () => ({ ...defaultConfig(), injectMaxBytes: 4096 }), usage);
+    await listen(listeners, [userMsg('install with pnpm')]);
+    const getTool = tools.find((t) => t.name === 'memory_get')!;
+    const out = (await (getTool as unknown as {
+      execute(args: unknown, e: unknown): Promise<{ found: boolean }>;
+    }).execute({ query: 'pnpm' }, { agent: { id: 's1' } })) as { found: boolean };
+    expect(out.found).toBe(true);
+    expect(service.telemetry().used).toBe(1);
+  });
+
+  it('does not credit a hit from reply text — only a retrieval tool call counts', async () => {
     const { ctx, listeners } = fakeContext();
     const { service } = makeService();
     service.add(memoryWithKeywords(['pnpm']), 'human');
     const usage = new UsageTracker();
     registerInjection(ctx, service, () => ({ ...defaultConfig(), injectMaxBytes: 4096 }), usage);
-    registerHooks(ctx, new SignalCollector(() => {}), usage, service);
+    registerHooks(ctx, new SignalCollector(() => {}), usage);
     await listen(listeners, [userMsg('install with pnpm')]);
+    expect(service.telemetry().injections).toBe(1);
+    // The assistant echoes "pnpm" in its reply — this is NOT a hit. Only a
+    // memory_get / memory_search call is evidence the memory was actually used.
     const sessionHook = listeners.find((l) => l.name === 'session/event')!;
     const emit = sessionHook.listener as (session: unknown, event: unknown) => void;
-    // Only a reasoning block mentions pnpm; the visible output does not.
     emit(
       { id: 's1' },
       {
@@ -408,7 +393,7 @@ describe('pre-step injection', () => {
             role: 'assistant',
             content: [
               { type: 'reasoning', text: 'The user mentioned pnpm, let me recall that memory.' },
-              { type: 'text', text: 'Ok, let me run the install command.' },
+              { type: 'text', text: 'Sure, I will use pnpm for the install.' },
             ],
           },
         },

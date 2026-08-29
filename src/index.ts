@@ -295,10 +295,11 @@ export function apply(ctx: Context, raw: Partial<Config> = {}): void {
     },
   };
 
-  registerTools(ctx, { service, llm, collector, cursor: distillCursor, persistCursor: (c) => cursorStore.write(c) });
-  registerCommand(ctx, commandDeps);
   const usage = new UsageTracker();
-  registerHooks(ctx, collector, usage, service);
+
+  registerTools(ctx, { service, llm, collector, usage, cursor: distillCursor, persistCursor: (c) => cursorStore.write(c) });
+  registerCommand(ctx, commandDeps);
+  registerHooks(ctx, collector, usage);
   registerInjection(ctx, service, getConfig, usage);
   registerProtocolInjection(ctx, service, getConfig);
   const negativeStore = openNegativeMemoryStore(config.dbPath);

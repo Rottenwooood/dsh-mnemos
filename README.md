@@ -99,7 +99,7 @@ node --import tsx/esm /path/to/dsh-mnemos/scripts/eval/run-eval.mts
 | Frozen memory index per session | 8 lines ≈ 207 tokens (KV-cache friendly) |
 | Index covers the correct memory | 100% |
 
-The "记忆" tab header shows a live **effect card** (injections / hit-rate / avg tokens / verified memories) fed by the `usage_ledger` — every injection records its token cost, and a model message that references the injected content counts as a hit and marks the memory *verified*.
+The "记忆" tab header shows a live **effect card** (injections / hit-rate / avg tokens / verified memories) fed by the `usage_ledger`. A memory counts as a **hit** only when the model actively retrieves it through a tool (`memory_get` / `memory_search`) in the session where it was injected — reply-text matching would be meaningless, because an LLM inevitably echoes words from the user's own message. A hit marks the memory *verified*.
 
 ### Public dataset benchmarks (LongMemEval-S / LoCoMo-10)
 

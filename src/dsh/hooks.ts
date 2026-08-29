@@ -133,17 +133,22 @@ export class SignalCollector {
 /**
  * Effect telemetry (P0): does an injected memory actually get used?
  *
- * After an injection we remember which memories were placed into the request
- * for a session. When the model's next assistant message references one of
- * those memories (its keywords / topic appear in the text), we mark the
- * ledger row used=1 and the memory verified=1. The pending set is dropped at
- * the next user message (a new turn), so we only credit usage in the turn
- * right after the injection — a cheap proxy for "the model actually used it".
+ * A memory counts as USED only when the model actively retrieves it through a
+ * tool (`memory_get` / `memory_search`) in the same session. Text matching on
+ * the model's reply is NOT a signal — an LLM inevitably echoes words from the
+ * user's own message, so a keyword in the output proves nothing. A tool call
+ * is the one signal the model initiates on its own, so it is the only honest
+ * "the model went and got this memory" evidence.
+ *
+ * We remember which memories were injected per session (memoryId + its ledger
+ * row). When a retrieval tool returns that memory, markToolUsed credits it:
+ * the ledger row flips to used=1 and the memory is verified. Pending credits
+ * are dropped at the next user message (a new turn).
  */
 export class UsageTracker {
-  private pending = new Map<string, Array<{ memoryId: string; terms: string[]; ledgerId: number }>>();
+  private pending = new Map<string, Array<{ memoryId: string; ledgerId: number }>>();
 
-  record(sessionId: string, items: Array<{ memoryId: string; terms: string[]; ledgerId: number }>): void {
+  record(sessionId: string, items: Array<{ memoryId: string; ledgerId: number }>): void {
     if (!sessionId) return;
     const existing = this.pending.get(sessionId) ?? [];
     this.pending.set(sessionId, existing.concat(items).slice(-100));
@@ -154,16 +159,14 @@ export class UsageTracker {
     if (sessionId) this.pending.delete(sessionId);
   }
 
-  /** Model text after an injection: credit any pending memory it references. */
-  onAssistantText(sessionId: string, text: string, service: MemoryService): void {
-    if (!sessionId) return;
+  /** The model retrieved a memory through a tool in this session: credit it. */
+  markToolUsed(sessionId: string, memoryId: string, service: MemoryService): void {
+    if (!sessionId || !memoryId) return;
     const items = this.pending.get(sessionId);
     if (!items || items.length === 0) return;
-    const lower = text.toLowerCase();
-    const still: Array<{ memoryId: string; terms: string[]; ledgerId: number }> = [];
+    const still: Array<{ memoryId: string; ledgerId: number }> = [];
     for (const item of items) {
-      const hit = item.terms.some((t) => t.trim().length >= 2 && lower.includes(t.trim().toLowerCase()));
-      if (hit) {
+      if (item.memoryId === memoryId) {
         service.markLedgerUsed(item.ledgerId);
         service.markMemoryVerified(item.memoryId);
       } else {
@@ -179,17 +182,15 @@ export function estimateTokens(text: string): number {
   return Math.max(1, Math.ceil(Buffer.byteLength(text, 'utf8') / 3));
 }
 
-export function registerHooks(ctx: Context, collector: SignalCollector, usage: UsageTracker, service: MemoryService): void {
+export function registerHooks(ctx: Context, collector: SignalCollector, usage: UsageTracker): void {
   ctx.on('session/event', (session, event) => {
     collector.onEvent(session, event);
     const sessionId = (session as { id?: unknown })?.id;
     if (typeof sessionId !== 'string') return;
-    if (event.type === 'assistant/message') {
-      const text = messageTextOf(event.data);
-      if (text) {
-        usage.onAssistantText(sessionId, text, service);
-      }
-    } else if (event.type === 'user/message') {
+    // Usage is credited ONLY when the model retrieves a memory through a tool
+    // (markToolUsed), never from reply-text matching. A user message still ends
+    // the pending window.
+    if (event.type === 'user/message') {
       usage.onUserMessage(sessionId);
     }
   });

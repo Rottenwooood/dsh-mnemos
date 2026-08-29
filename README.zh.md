@@ -54,7 +54,7 @@
   /memory git <status|log|rollback|restore|remote|push|pull|backup>
   /memory bus <blacklist|unblacklist|list|revoke|writers>
   ```
-- **浏览器界面**（better-sidebar「记忆」页签）：概览、30 天命中热力图、待审批（批准/拒绝/编辑后批准/批量批准低风险）、记忆列表（搜索/筛选/编辑/版本历史/回滚/删除）、已删除恢复、被拒历史、git 同步。
+- **浏览器界面**（better-sidebar「记忆」页签）：概览、待审批（批准/拒绝/编辑后批准/批量批准低风险）、记忆列表（搜索/筛选/编辑/版本历史/回滚/删除）、已删除恢复、被拒历史、git 同步。
 - **提炼。** LLM 生成记忆（每条带 2-5 个关键词，触发注入），流程/偏好/失败提炼成**规则提案**进审批；批准后的规则由 mnemos 注入模型，还能**提升为 DSH SKILL**——一份标准 Markdown 技能文件（frontmatter + 规则文本 + 来源证据），任何 agent 都能通过 DSH 的 `skill` 工具按需加载，让这份知识脱离 mnemos 也能用。只有已批准的规则能提升——草稿/待审的一律不行；幂等。
 
 ### 给开发者
@@ -103,7 +103,7 @@ node --import tsx/esm /path/to/dsh-mnemos/scripts/eval/run-eval.mts
 | 每会话冻结记忆索引 | 8 行 ≈ 207 token（KV 缓存友好） |
 | 索引覆盖正确记忆 | 100% |
 
-「记忆」页签顶部有**效果卡**（注入次数/命中率/平均 token/已验证记忆数），数据来自 `usage_ledger` 账本——每次注入记录 token 成本，模型下一条消息若引用了注入内容就记为命中并给该记忆打"已验证"标记。
+「记忆」页签顶部有**效果卡**（注入次数/命中率/平均 token/已验证记忆数），数据来自 `usage_ledger` 账本。一条记忆算**命中**，只有当模型在注入它的那个会话里**主动通过工具取用**（`memory_get` / `memory_search`）——比对模型回复文本没意义，因为 LLM 必然会复述用户消息里的词。命中即给该记忆打"已验证"标记。
 
 ### 公开数据集基准（LongMemEval-S / LoCoMo-10）
 

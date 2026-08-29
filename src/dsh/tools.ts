@@ -17,12 +17,14 @@ import type { Memory, MemoryScope, MemoryType } from '../domain/types.js';
 import type { Caller, ToolDefinition } from './types.js';
 import type { Llm } from '../domain/llm.js';
 import { runDistillIncremental, DistillCursor } from '../domain/distill.js';
-import type { SignalCollector } from './hooks.js';
+import type { SignalCollector, UsageTracker } from './hooks.js';
 
 export interface ToolDeps {
   service: MemoryService;
   llm?: Llm;
   collector?: SignalCollector;
+  /** Tracks injected memories so a retrieval tool call credits a hit. */
+  usage?: UsageTracker;
   /** Mutable distill cursor holder shared with the manual/auto distill paths. */
   cursor: { current: DistillCursor };
   persistCursor: (cursor: DistillCursor) => void;
@@ -98,7 +100,7 @@ function workspaceOf(exec: ToolExecLike): string | undefined {
 }
 
 export function registerTools(ctx: Context, deps: ToolDeps): void {
-  const { service, llm, collector, cursor, persistCursor } = deps;
+  const { service, llm, collector, usage, cursor, persistCursor } = deps;
   const search: MnemosTool = {
     name: 'memory_search',
     description:
@@ -158,6 +160,13 @@ export function registerTools(ctx: Context, deps: ToolDeps): void {
       const scope = asString(a.scope);
       const limit = asNumber(a.limit, 10);
       const rows = service.search(query, limit);
+      // The model actively retrieved memories — the only honest "used it" signal.
+      const sessionId = exec.agent?.id ?? exec.agent?.session?.id;
+      if (usage && sessionId) {
+        for (const r of rows) {
+          usage.markToolUsed(sessionId, r.id, service);
+        }
+      }
       return Promise.resolve({
         query,
         scope: scope ?? 'workspace',
@@ -496,13 +505,18 @@ export function registerTools(ctx: Context, deps: ToolDeps): void {
         return text(`# ${v.topic}\n${v.summary ?? ''}${v.detail ? `\n\n${v.detail}` : ''}${v.keywords?.length ? `\n\n关键词：${v.keywords.join(' ')}` : ''}`);
       },
     },
-    execute(args: unknown): Promise<unknown> {
+    execute(args: unknown, exec: ToolExecLike): Promise<unknown> {
       const a = args as { query?: unknown };
       const query = asString(a.query);
       if (!query) throw new Error('query is required');
       const mem = resolveByIdOrTopic(service, query);
       if (!mem) {
         return Promise.resolve({ found: false, id: null, topic: null, summary: null, detail: null, keywords: [], type: null, scope: null, workspace: null, crossSessionHits: 0 });
+      }
+      // The model actively drilled into this memory — the only honest "used it" signal.
+      const sessionId = exec.agent?.id ?? exec.agent?.session?.id;
+      if (usage && sessionId) {
+        usage.markToolUsed(sessionId, mem.id, service);
       }
       return Promise.resolve({
         found: true,
