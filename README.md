@@ -12,6 +12,8 @@
 
 **What it is.** A DSH plugin that gives the model cross-session memory. Facts you tell it in one session are injected at the start of the next, so you don't re-explain yourself. Every write path — model tools, /memory commands, third-party plugins, the browser panel — goes through a single approval-gated `MemoryService`. Data is fully local: SQLite (WAL + FTS5) with a git-versioned Markdown mirror for history, rollback, backup, and cross-machine sync.
 
+**Cross-device sync is git, and git has two backends.** Every memory is a Markdown file in a git repo; that repo is the sync transport. Set a git remote and mnemos merges per-entry: independent memories merge cleanly, a memory changed on both machines is flagged as a conflict for you to resolve — never silently overwritten. Two backends: `gitBackend: system` (your git CLI — more reliable) and `gitBackend: isomorphic` (a pure-JS npm package, the default, works without system git — in our testing it can occasionally time out or be flaky on slow connections; if you sync a lot, prefer `system`).
+
 **What it isn't.**
 
 - Not a memory *warehouse* or a vector store — it does not attempt unbounded accumulation.
@@ -20,10 +22,10 @@
 
 ## Why mnemos
 
-1. **Effect numbers that beat the field, reproducibly.** LongMemEval-S hit@1 **87.2%** vs deja-vu's published **85.3%** — same data, same metrics, same query text. Run it yourself (see [Benchmarks](#benchmarks)); it is deterministic and does not use an LLM.
-2. **A real memory lifecycle.** Active → archived → restorable, evicted by heat (coldest first). `pinned` memories never leave. When a fact is superseded, both versions are kept and chained — recall returns the new value with the old one marked *superseded*.
-3. **Remembers failures, not just facts.** Failed commands are recorded; if the exact failure recurs, the model is stopped and told why. A successful retry clears it automatically.
-4. **Memory as code.** One Markdown file per memory, in a git repo. Per-entry history, diff, rollback, recovery of deleted memories, merge-based sync across machines, and standard bundle backup. Pure-JS git backend (`isomorphic-git`) means no system git required.
+1. **Effect numbers that beat the published baseline — and they're reproducible.** LongMemEval-S hit@1 **87.2%** vs deja-vu's published **85.3%** — same data, same metrics, same query text. Deterministic, no LLM, run it yourself. Most memory plugins publish no numbers at all.
+2. **Facts are corrected in place, not contradicted.** When a fact changes, the existing memory is updated in place — the old value stays recoverable in git history. Only genuinely conflicting claims become *replacement proposals* that wait for a human decision; recall never returns two live versions of one fact.
+3. **Failures are remembered with a mechanism, not vibes.** On a failed command, mnemos records tool + working directory + exact command with evidence. The next identical attempt is denied up front and the model is told why — from the stored evidence. The record self-expires after a TTL or the first successful retry. Negative memories are **never injected into prompts**; they are intercepted at execution time.
+4. **Human-readable memory, versioned and portable.** One Markdown file per memory inside a git repo: per-entry history, diffs, rollback, recovery of deleted memories, merge-based sync across machines, and standard git-bundle backup. A pure-JS git backend (`isomorphic-git`) means no system git is required.
 5. **Open, measured, governable.** A memory bus (`ctx.mnemosBus`) lets other plugins read/write — writes require a declared identity and always enter the approval queue; a plugin can be blacklisted at runtime. A versioned measurement ABI (`ctx.mnemosAbi`) exposes real effect data, proven by a conformance suite.
 
 ## Features
@@ -46,8 +48,10 @@
   ```
 - **Browser UI** (better-sidebar "记忆" tab): overview, 30-day hit heatmap, approval queue (approve / reject / edit-then-approve / batch-approve low-risk), memory list with search/filter/edit/version-history/rollback/delete, deleted-memory recovery, rejection history, and git sync.
 - **Distillation.** LLM-generated memories (each with 2–5 keywords that trigger injection), and rules — procedures/preferences/error-fixes become *rule proposals* that enter the approval flow. Approved rules are injected; approved ones can be promoted to **SKILL files** (`~/.dsh/mnemos/skills/`).
+- **Facts update in place; conflicts go to a human.** When the model learns a fact changed, it edits the existing memory in place (the old value stays recoverable in git). Only genuinely conflicting claims become *replacement proposals* that wait for a human — recall never shows two live versions of one fact.
+- **Negative memory (failed commands).** A failure is stored as a fingerprint of *tool + working directory + normalized command* with evidence. It is **not injected into prompts**; it is checked at tool-execution time — the next identical attempt under the same directory is denied up front and the model is shown why. A successful retry resolves it; otherwise it expires after `negativeMemoryTtlMs`. Different directory or different command = different precondition = not blocked.
 - **Import foreign history.** Auto-detects and ingests ChatGPT exports, Claude Code logs, Codex logs, and DSH's own session logs — content-hashed, so re-importing dedupes.
-- **Cross-machine sync & backup.** git remote (reuses `~/.git-credentials`) with merge-based sync; conflicts are flagged for human resolution, never silently overwritten. Standard `git bundle` export for backup.
+- **Cross-machine sync & backup.** The git mirror doubles as the sync transport: independent memories merge cleanly, and a memory changed on both machines is flagged as a conflict (never silently overwritten). Two backends: `gitBackend: system` (your git CLI — reliable) or `gitBackend: isomorphic` (pure-JS npm package, the default — works without system git, but in our testing it can occasionally time out or be flaky on slow connections). Standard `git bundle` export for backup.
 
 ### For developers
 
@@ -156,7 +160,7 @@ Different philosophies. **dsh-memento** is a *capability seam*: a typed `ctx.mem
 
 ### vs deja-vu
 
-deja-vu is a Go memory engine whose public long-memory benchmarks we replicate same-protocol. We win LongMemEval-S (87.2% vs 85.3%) and trail LoCoMo (60.9% vs 69.6%) — details in [Benchmarks](#benchmarks). We bring, on top of retrieval, the governance/lifecycle layer (approval gate, trust tiers, supersession chains, negative memory, git) that deja-vu does not have.
+deja-vu is a Go memory engine whose public long-memory benchmarks we replicate same-protocol. We win LongMemEval-S (87.2% vs 85.3%) and trail LoCoMo (60.9% vs 69.6%) — details in [Benchmarks](#benchmarks). We bring, on top of retrieval, the governance/lifecycle layer (approval gate, trust tiers, conflict replacement proposals, negative memory, git) that deja-vu does not have.
 
 ## Roadmap
 
@@ -167,6 +171,7 @@ Honest state of the project — these are the gaps between "functional and measu
 - [ ] **npm publish** — packaging is ready (`npm pack` verified); publish + package-name availability check + post-install verification pending.
 - [ ] **Distill-mode benchmark at scale** — the real-LLM distill pipeline is wired and validated on a single question; a representative sample (10–20 questions across types) is not yet run (provider quota/cost bound).
 - [ ] **Stress tests** — concurrent writes, thousands of memories (index/search performance), long-run behavior (WAL growth, git repo growth).
+- [ ] **Stabilize the `isomorphic` git backend** — it can time out / be flaky on slow connections in our testing; worth a reliability pass or documenting `system` as the recommended sync backend.
 - [ ] **MCP server** — align with memento's read-only stdio server for external clients.
 - [ ] Optional: a dsh-memory-protocol spec + adapter registry to match memento's ecosystem surface.
 
@@ -193,7 +198,7 @@ Honest state of the project — these are the gaps between "functional and measu
 | Bounded occupancy + source-marked anti-poisoning | 2608.21230 / Veracium |
 | Failed-command interception + self-expiry (negative memory) | dsh-negative-ledger / deja-vu |
 | Active → archived → deleted + pinned (never hard-delete) | dsh-evolve state machine |
-| Supersession chains (both versions kept, current flagged) | StateMemBench / MELD |
+| Conflict replacement proposal (new value supersedes old; contradictions never silently dropped) | StateMemBench / MELD |
 | Protocol refresh by turns (compression-cliff defense) | 2608.22752 |
 | Open measurement ABI + conformance | memento conformance suite |
 | Effect ledger + reproducible eval | memlab / LongMemEval methodology |
