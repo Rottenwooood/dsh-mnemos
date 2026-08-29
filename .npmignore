@@ -1,0 +1,9 @@
+docs/.obsidian/
+scripts/bench/_debug-*.test.ts
+scripts/bench/*.bench.test.ts
+scripts/bench/*.json
+src/test/
+scripts/eval/
+scripts/e2e-http.mts
+scripts/verify-real-composition.mts
+scripts/conformance.mts

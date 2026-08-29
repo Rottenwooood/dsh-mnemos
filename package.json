@@ -1,12 +1,48 @@
 {
   "name": "dsh-mnemos",
   "version": "0.1.0",
-  "description": "Cross-session memory with governance, self-evolution and an approval-gated write path for DeepSeek Harness.",
+  "description": "Cross-session memory with governance, self-evolution and an approval-gated write path for DeepSeek Harness. Heat-ranked recall, negative memory, forgetting lifecycle, supersession chains, poisoning defense, auto-distillation, and an open measurement ABI.",
   "type": "module",
   "license": "MIT",
   "engines": {
     "node": ">=22.19.0"
   },
+  "keywords": [
+    "dsh",
+    "dsh-plugin",
+    "deepseek-harness",
+    "memory",
+    "agent-memory",
+    "recall",
+    "distill",
+    "negative-memory",
+    "approval",
+    "sqlite",
+    "fts5"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Rottenwooood/dsh-mnemos.git"
+  },
+  "homepage": "https://github.com/Rottenwooood/dsh-mnemos#readme",
+  "bugs": {
+    "url": "https://github.com/Rottenwooood/dsh-mnemos/issues"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "files": [
+    "src",
+    "lib",
+    "docs/ARCHITECTURE.md",
+    "scripts/run-verify.sh",
+    "scripts/build-client.mjs",
+    "cordis.patch.yml",
+    "README.md",
+    "CHANGELOG.md",
+    "SECURITY.md",
+    "LICENSE"
+  ],
   "dsh": {
     "bundle": {
       "patch": "./cordis.patch.yml"
@@ -24,8 +60,11 @@
   "scripts": {
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
+    "bench:longmemeval": "BENCH_SKIP_ABS=1 BENCH_LIMIT=470 BENCH_OUT=scripts/bench/longmemeval-scorecard.json vitest run scripts/bench/longmemeval.bench.test.ts",
+    "bench:locomo": "BENCH_OUT=scripts/bench/locomo-scorecard.json vitest run scripts/bench/locomo.bench.test.ts",
     "build": "pnpm run build:client",
-    "build:client": "node scripts/build-client.mjs"
+    "build:client": "node scripts/build-client.mjs",
+    "verify": "bash scripts/run-verify.sh"
   },
   "peerDependencies": {
     "@deepseek-ai/cordis": "^4.0.1",

@@ -22,6 +22,20 @@ node --import tsx/esm /home/c6h4o2/dsh-mnemos/scripts/eval/run-eval.mts
 
 管理页"记忆"页签顶部有**效果卡**（注入次数/命中率/平均 token/已验证记忆数），数据来自 `usage_ledger` 效果账本——每次注入会记录用了多少 token，模型下一条消息若引用了注入内容就记为命中并给该记忆打"已验证"标记。
 
+### 公开数据集基准（LongMemEval-S / LoCoMo-10）
+
+与 deja-vu 同口径跑业界公开长期记忆基准。检索已实现多级阶梯
+（全词匹配 → 任词匹配 → 包含扫描）。详见
+[`scripts/bench/BENCHMARKS.md`](scripts/bench/BENCHMARKS.md)。
+
+| 数据集 | dsh-mnemos 产品路径 | deja-vu 官方 |
+|---|---|---|
+| LongMemEval-S（cleaned, 470 题, hit@1） | **87.2%** | 85.3% |
+| LoCoMo-10（1982 QA, R@1） | 60.9% | 69.6% |
+
+阶梯上线前产品路径分别为约 10%（LongMemEval-S）与约 7%（LoCoMo）——
+差距全部来自"全词必须命中"的查询构造，而非底层引擎。
+
 ## 它能做什么
 
 - **跨会话记忆**：这次会话说的"用 pnpm 装依赖"，下次会话模型自动知道，不用重复教。

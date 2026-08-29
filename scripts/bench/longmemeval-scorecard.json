@@ -1,0 +1,73 @@
+{
+  "generated_at": "2026-08-29T07:59:36.158Z",
+  "dataset": "longmemeval_s_cleaned",
+  "skip_abs": true,
+  "current": {
+    "mode": "current",
+    "n": 470,
+    "hit_at_1": 0.872,
+    "hit_at_5": 0.966,
+    "hit_at_10": 0.985,
+    "hit_at_20": 0.994,
+    "mrr": 0.914,
+    "evidence_recall": {
+      "1": 0.563,
+      "5": 0.908,
+      "10": 0.951,
+      "20": 0.976
+    },
+    "by_type": {
+      "single-session-user": {
+        "n": 64,
+        "hit_at_1": 0.938,
+        "mrr": 0.964
+      },
+      "multi-session": {
+        "n": 121,
+        "hit_at_1": 0.868,
+        "mrr": 0.911
+      },
+      "single-session-preference": {
+        "n": 30,
+        "hit_at_1": 0.5,
+        "mrr": 0.655
+      },
+      "temporal-reasoning": {
+        "n": 127,
+        "hit_at_1": 0.827,
+        "mrr": 0.881
+      },
+      "knowledge-update": {
+        "n": 72,
+        "hit_at_1": 0.958,
+        "mrr": 0.976
+      },
+      "single-session-assistant": {
+        "n": 56,
+        "hit_at_1": 1,
+        "mrr": 1
+      }
+    }
+  },
+  "ladder": {
+    "mode": "ladder",
+    "n": 470,
+    "hit_at_1": 0.872,
+    "hit_at_5": 0.966,
+    "hit_at_10": 0.985,
+    "hit_at_20": 0.994,
+    "mrr": 0.914,
+    "evidence_recall": {
+      "1": 0.563,
+      "5": 0.889,
+      "10": 0.931,
+      "20": 0.957
+    },
+    "by_type": {}
+  },
+  "deja_anchor": {
+    "hit_at_1": 0.853,
+    "hit_at_5": 0.955,
+    "mrr": 0.896
+  }
+}
