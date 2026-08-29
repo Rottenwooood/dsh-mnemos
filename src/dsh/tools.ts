@@ -99,6 +99,16 @@ function workspaceOf(exec: ToolExecLike): string | undefined {
   return exec.agent?.session?.header?.cwd;
 }
 
+/**
+ * Stable key for per-session tracking. MUST match the key used at injection
+ * time (registerInjection reads `payload.agent.session.id`); memory_get /
+ * memory_search credit a hit by this key, so an agent id mismatch would never
+ * match the pending set. Session id wins, agent id is the fallback.
+ */
+function sessionIdOf(exec: ToolExecLike): string | undefined {
+  return exec.agent?.session?.id ?? exec.agent?.id;
+}
+
 export function registerTools(ctx: Context, deps: ToolDeps): void {
   const { service, llm, collector, usage, cursor, persistCursor } = deps;
   const search: MnemosTool = {
@@ -161,7 +171,7 @@ export function registerTools(ctx: Context, deps: ToolDeps): void {
       const limit = asNumber(a.limit, 10);
       const rows = service.search(query, limit);
       // The model actively retrieved memories — the only honest "used it" signal.
-      const sessionId = exec.agent?.id ?? exec.agent?.session?.id;
+      const sessionId = sessionIdOf(exec);
       if (usage && sessionId) {
         for (const r of rows) {
           usage.markToolUsed(sessionId, r.id, service);
@@ -242,7 +252,7 @@ export function registerTools(ctx: Context, deps: ToolDeps): void {
       // User preferences apply everywhere, not just the current workspace.
       const scope = (asString(a.scope) ?? (type === 'preference' ? 'global' : 'workspace')) as MemoryScope;
       const caller: Caller = 'model';
-      const sessionId = exec.agent?.id ?? exec.agent?.session?.id;
+      const sessionId = sessionIdOf(exec);
       const keywords = asString(a.keywords)
         ?.split(',')
         .map((k) => k.trim())
@@ -452,7 +462,7 @@ export function registerTools(ctx: Context, deps: ToolDeps): void {
         return { requested: 0, memories: 0, rules: 0, conflicts: 0, dropped: 0 };
       }
       const workspace = exec.agent?.session?.header?.cwd;
-      const sessionId = exec.agent?.id ?? exec.agent?.session?.id;
+      const sessionId = sessionIdOf(exec);
       const result = await runDistillIncremental(llm, service, messages, cursor.current, {
         scope: workspace ? 'workspace' : 'global',
         workspace,
@@ -514,7 +524,7 @@ export function registerTools(ctx: Context, deps: ToolDeps): void {
         return Promise.resolve({ found: false, id: null, topic: null, summary: null, detail: null, keywords: [], type: null, scope: null, workspace: null, crossSessionHits: 0 });
       }
       // The model actively drilled into this memory — the only honest "used it" signal.
-      const sessionId = exec.agent?.id ?? exec.agent?.session?.id;
+      const sessionId = sessionIdOf(exec);
       if (usage && sessionId) {
         usage.markToolUsed(sessionId, mem.id, service);
       }

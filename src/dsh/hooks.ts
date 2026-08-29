@@ -236,12 +236,11 @@ export function registerInjection(
         }
         if (index.injectedCount > 0) {
           const tokens = estimateTokens(index.text);
-          const tracked: Array<{ memoryId: string; terms: string[]; ledgerId: number }> = [];
+          const tracked: Array<{ memoryId: string; ledgerId: number }> = [];
           for (const id of index.injectedIds) {
             try {
               const ledgerId = service.recordHit(id, sessionId, tokens);
-              const mem = service.getMemory(id);
-              tracked.push({ memoryId: id, terms: (mem?.keywords?.length ? mem.keywords : mem ? [mem.topic] : []), ledgerId });
+              tracked.push({ memoryId: id, ledgerId });
             } catch {
               // hit tracking is best-effort
             }
@@ -273,12 +272,11 @@ export function registerInjection(
       }
       if (sessionId !== undefined) lastPartial.set(sessionId, Date.now());
       const tokens = estimateTokens(partial.text);
-      const tracked: Array<{ memoryId: string; terms: string[]; ledgerId: number }> = [];
+      const tracked: Array<{ memoryId: string; ledgerId: number }> = [];
       for (const id of partial.injectedIds) {
         try {
           const ledgerId = service.recordHit(id, sessionId, tokens);
-          const mem = service.getMemory(id);
-          tracked.push({ memoryId: id, terms: (mem?.keywords?.length ? mem.keywords : mem ? [mem.topic] : []), ledgerId });
+          tracked.push({ memoryId: id, ledgerId });
         } catch {
           // best-effort
         }

@@ -368,6 +368,24 @@ describe('pre-step injection', () => {
     expect(service.telemetry().used).toBe(1);
   });
 
+  it('credits a hit when the agent carries a real (id + session.id) shape', async () => {
+    const { ctx, tools, listeners } = fakeContext();
+    const { service } = makeService();
+    service.add(memoryWithKeywords(['pnpm']), 'human');
+    const usage = new UsageTracker();
+    registerTools(ctx, { ...toolDeps(service), usage });
+    registerInjection(ctx, service, () => ({ ...defaultConfig(), injectMaxBytes: 4096 }), usage);
+    await listen(listeners, [userMsg('install with pnpm')]);
+    const getTool = tools.find((t) => t.name === 'memory_get')!;
+    // DSH Agent: id === session.id (the harness enforces this). sessionIdOf must
+    // prefer session.id so it matches the injection-time key.
+    const out = (await (getTool as unknown as {
+      execute(args: unknown, e: unknown): Promise<{ found: boolean }>;
+    }).execute({ query: 'pnpm' }, { agent: { id: 'a1', session: { id: 's1' } } })) as { found: boolean };
+    expect(out.found).toBe(true);
+    expect(service.telemetry().used).toBe(1);
+  });
+
   it('does not credit a hit from reply text — only a retrieval tool call counts', async () => {
     const { ctx, listeners } = fakeContext();
     const { service } = makeService();
