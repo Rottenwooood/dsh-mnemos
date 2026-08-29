@@ -18,6 +18,10 @@
 - 发布外壳：`files`/`keywords`/`publishConfig` 发布面、CHANGELOG、
   SECURITY、架构文档、GitHub Actions CI（`.github/workflows/ci.yml`）。
 
+### Removed
+- 负面记忆（失败命令拦截）：删除 `negative_memory` 表、`tools/pre-execute`
+  拦截与相关配置/面板项，让模型自由执行。P2 历史段中的对应条目保留作记录。
+
 ## [0.1.0] - 2026-08-29
 
 首个可发布版本。DeepSeek Harness 的跨会话记忆插件：治理 + 自动进化 +

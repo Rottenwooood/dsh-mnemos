@@ -1,7 +1,7 @@
 {
   "name": "dsh-mnemos",
   "version": "0.1.0",
-  "description": "Cross-session memory with governance, self-evolution and an approval-gated write path for DeepSeek Harness. Heat-ranked recall, negative memory, forgetting lifecycle, supersession chains, poisoning defense, auto-distillation, and an open measurement ABI.",
+  "description": "Cross-session memory with governance, self-evolution and an approval-gated write path for DeepSeek Harness. Heat-ranked recall, environment conventions, forgetting lifecycle, supersession chains, poisoning defense, auto-distillation, and an open measurement ABI.",
   "type": "module",
   "license": "MIT",
   "engines": {
@@ -15,7 +15,7 @@
     "agent-memory",
     "recall",
     "distill",
-    "negative-memory",
+    "environment-conventions",
     "approval",
     "sqlite",
     "fts5"
@@ -33,6 +33,7 @@
   },
   "files": [
     "src",
+    "!src/test",
     "lib",
     "docs/ARCHITECTURE.md",
     "scripts/run-verify.sh",
