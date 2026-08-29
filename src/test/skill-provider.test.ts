@@ -46,7 +46,7 @@ describe('mnemos skill provider (DSH wiring)', () => {
 
     const { registry } = makeRegistry();
     const ctx = {
-      skills: registry,
+      get: () => registry,
       effect(fn: () => unknown): void {
         void fn();
       },
@@ -66,9 +66,9 @@ describe('mnemos skill provider (DSH wiring)', () => {
     rmSync(dir, { recursive: true, force: true });
   });
 
-  it('does nothing when ctx.skills is absent', () => {
+  it('does nothing when the skills registry is absent', () => {
     const { registry } = makeRegistry();
-    registerMnemosSkillProvider({ effect: () => {} }, '/tmp/opencode/nonexistent', { warn: () => {} });
+    registerMnemosSkillProvider({ get: () => undefined, effect: () => {} }, '/tmp/opencode/nonexistent', { warn: () => {} });
     expect(registry.providers).toHaveLength(0);
   });
 
@@ -78,11 +78,11 @@ describe('mnemos skill provider (DSH wiring)', () => {
     const { registry } = makeRegistry();
     let cleanup: () => void = () => {};
     const ctx = {
-      skills: registry,
+      get: () => registry,
       effect(fn: () => unknown): void {
         cleanup = fn() as () => void;
       },
-    } as { skills: SkillsRegistryFace & { providers: SkillProviderFace[]; disposed: number }; effect(fn: () => unknown): void };
+    };
     registerMnemosSkillProvider(ctx, dir, { warn: () => {} });
     expect(registry.providers).toHaveLength(1);
     // Run the effect's returned disposer (cordis unload).

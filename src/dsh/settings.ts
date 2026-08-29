@@ -147,28 +147,36 @@ export function installMnemosSettings(
   onChange: (next: Config) => void,
 ): () => void {
   let disposed = false;
-  void Promise.resolve().then(async () => {
-    if (disposed) return;
-    const mod = await import('@deepseek-ai/schemastery').catch(() => null);
-    if (!mod || typeof mod.default !== 'function' || disposed) {
-      return;
-    }
-    const Schema = mod.default as {
-      object(shape: Record<string, unknown>): unknown;
-      string(): unknown;
-      number(): unknown;
-      boolean(): unknown;
-      array(item: unknown): unknown;
-    };
-    const schema = buildSchema(Schema, MNEMOS_SETTINGS_FIELDS);
-    const inject = (ctx as unknown as { inject?: (deps: string[], cb: (sctx: Context) => void) => void }).inject;
-    if (typeof inject === 'function') {
-      inject(['settings'], (sctx) => {
-        const off = mountMnemosNamespace(sctx, schema, entry, onChange);
-        sctx.effect(() => off);
+  const inject = (ctx as unknown as { inject?: (deps: string[], cb: (sctx: Context) => void) => void }).inject;
+  if (typeof inject === 'function') {
+    // ctx.inject must be called synchronously inside the plugin's apply fiber;
+    // the async schemastery import happens inside the inject fiber's effect so
+    // the registration unwinds when the service or this plugin unloads.
+    inject(['settings'], (sctx) => {
+      let off: (() => void) | undefined;
+      sctx.effect(() => {
+        void (async () => {
+          if (disposed) return;
+          const mod = await import('@deepseek-ai/schemastery').catch(() => null);
+          if (!mod || typeof mod.default !== 'function' || disposed) {
+            return;
+          }
+          const Schema = mod.default as {
+            object(shape: Record<string, unknown>): unknown;
+            string(): unknown;
+            number(): unknown;
+            boolean(): unknown;
+            array(item: unknown): unknown;
+          };
+          const schema = buildSchema(Schema, MNEMOS_SETTINGS_FIELDS);
+          off = mountMnemosNamespace(sctx, schema, entry, onChange);
+        })();
+        return () => {
+          off?.();
+        };
       });
-    }
-  });
+    });
+  }
   return () => {
     disposed = true;
   };

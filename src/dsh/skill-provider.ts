@@ -52,12 +52,14 @@ export interface CtxEffectFace {
 
 /** Register the mnemos skill directory as a harness skill provider. */
 export function registerMnemosSkillProvider(
-  ctx: { skills?: SkillsRegistryFace } & CtxEffectFace,
+  ctx: { get(name: string): unknown } & CtxEffectFace,
   skillsDir: string,
   logger: { warn(msg: string): void },
 ): void {
-  const registry = ctx.skills;
-  if (!registry) {
+  // Optional services are read via ctx.get(), never property access (cordis
+  // rejects undeclared properties with "cannot get property ... without inject").
+  const registry = ctx.get('skills') as SkillsRegistryFace | undefined;
+  if (!registry || typeof registry.registerProvider !== 'function') {
     return;
   }
   const register = (): (() => void) | undefined => {

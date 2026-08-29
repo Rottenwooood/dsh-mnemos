@@ -93,6 +93,35 @@ describe('installMnemosSettings', () => {
     disposer();
     await new Promise((r) => setTimeout(r, 10));
   });
+
+  it('calls ctx.inject synchronously (not in a stale async context) and unwinds on effect dispose', async () => {
+    let injectCalled = 0;
+    let effectRan = 0;
+    let cleanup: (() => void) | undefined;
+    const ctx = {
+      inject(_deps: string[], cb: (sctx: unknown) => void) {
+        injectCalled++;
+        const sctx = {
+          effect(fn: () => unknown) {
+            effectRan++;
+            const disposer = fn() as () => void;
+            cleanup = disposer;
+            return () => disposer?.();
+          },
+        };
+        cb(sctx);
+      },
+    };
+    const disposer = installMnemosSettings(ctx as never, defaultConfig(), () => {});
+    // ctx.inject must be invoked synchronously from installMnemosSettings.
+    expect(injectCalled).toBe(1);
+    // The schemastery import fails in this test env, but the effect still ran
+    // (and its cleanup was registered) without throwing on a stale context.
+    expect(effectRan).toBe(1);
+    expect(typeof cleanup).toBe('function');
+    disposer();
+    cleanup?.();
+  });
 });
 
 describe('live gate re-apply', () => {
