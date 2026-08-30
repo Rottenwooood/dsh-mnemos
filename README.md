@@ -211,3 +211,5 @@ scripts/run-verify.sh     # typecheck+unit → deterministic eval → ABI confor
 ## License
 
 MIT
+
+[![Star History](https://api.star-history.com/svg?repos=Rottenwooood/dsh-mnemos&type=Date)](https://star-history.com/#Rottenwooood/dsh-mnemos&Date)

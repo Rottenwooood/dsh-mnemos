@@ -214,3 +214,5 @@ scripts/run-verify.sh     # typecheck+单测 → 确定性评测 → ABI conform
 ## 许可
 
 MIT
+
+[![Star History](https://api.star-history.com/svg?repos=Rottenwooood/dsh-mnemos&type=Date)](https://star-history.com/#Rottenwooood/dsh-mnemos&Date)
