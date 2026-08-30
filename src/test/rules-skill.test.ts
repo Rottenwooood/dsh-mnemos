@@ -87,7 +87,7 @@ describe('skill synthesis', () => {
   it('refuses to promote a rule that is not approved', () => {
     const { service } = make();
     service.proposeRule(rule(), 'model');
-    const result = promoteRuleToSkill(service, 'rule-1', '/tmp/opencode/nonexistent-skills');
+    const result = promoteRuleToSkill(service, 'rule-1', join(tmpdir(), 'nonexistent-skills'));
     expect(result.ok).toBe(false);
     expect(result.reason).toContain('not-approved');
   });

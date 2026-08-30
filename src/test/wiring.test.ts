@@ -1,5 +1,7 @@
 import { describe, it, expect, vi } from 'vitest';
 import { unlinkSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import type { Context } from '@deepseek-ai/cordis';
 import { openMemoryStore } from '../domain/store.js';
 import { createSensitiveDetector } from '../domain/sensitive.js';
@@ -212,7 +214,7 @@ describe('command wiring', () => {
     const { service } = makeService();
     const collector = new SignalCollector(() => {});
     registerCommand(ctx, { ...commandDeps(service), collector });
-    const file = '/tmp/opencode/mnemos-import-test.jsonl';
+    const file = join(tmpdir(), `mnemos-import-test-${Date.now()}.jsonl`);
     writeFileSync(
       file,
       JSON.stringify({

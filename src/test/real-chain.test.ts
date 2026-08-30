@@ -2,6 +2,8 @@ import { describe, it, expect } from 'vitest';
 import { Context } from '@deepseek-ai/cordis';
 import { apply } from '../index.js';
 import { unlinkSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 
 /**
  * REAL integration chain (not fakeContext): a real cordis Context, the real
@@ -10,7 +12,7 @@ import { unlinkSync } from 'node:fs';
  */
 describe('REAL chain (real cordis Context)', () => {
   it('registers tools and credits a hit on memory_search', async () => {
-    const dbPath = `/tmp/opencode/mnemos-real-chain-${Date.now()}.db`;
+    const dbPath = join(tmpdir(), `mnemos-real-chain-${Date.now()}.db`);
     try {
       unlinkSync(dbPath);
     } catch {

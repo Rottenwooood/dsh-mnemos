@@ -9,10 +9,11 @@
  * never exercised. Every flow here asserts and fails the run on mismatch.
  */
 import { existsSync, mkdirSync, writeFileSync, unlinkSync } from 'node:fs'
+import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
 const BASE = 'http://localhost:3080/mnemos/api'
-const FIXTURE = '/tmp/opencode/mnemos-e2e'
+const FIXTURE = join(tmpdir(), 'mnemos-e2e')
 const fixtureFile = join(FIXTURE, 'session.jsonl')
 
 let failures = 0
@@ -149,7 +150,7 @@ async function main(): Promise<void> {
   await new Promise((r) => setTimeout(r, 1500))
 
   await check('git backup writes a bundle', async () => {
-    const out = '/tmp/opencode/mnemos-e2e-backup.bundle'
+    const out = join(tmpdir(), 'mnemos-e2e-backup.bundle')
     const res = await api('/git/backup', { method: 'POST', body: { out } })
     expect(res.json.bundle === out, 'backup path mismatch')
     expect(existsSync(out), 'bundle file not created')

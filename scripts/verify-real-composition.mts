@@ -16,6 +16,8 @@ import CommandRuntime, { type Agent } from '@deepseek-ai/dsh-commands'
 import ToolRuntime, { type ToolDefinition } from '@deepseek-ai/dsh-tools'
 import { CallId, type ContentBlock } from '@deepseek-ai/dsh-llm'
 import { unlinkSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import { openMemoryStore } from '/home/c6h4o2/dsh-mnemos/src/domain/store.ts'
 import { createSystemGitBackend } from '/home/c6h4o2/dsh-mnemos/src/domain/git/system-git.ts'
 import { apply as applyMnemos } from '/home/c6h4o2/dsh-mnemos/src/index.ts'
@@ -131,7 +133,7 @@ async function main(): Promise<void> {
   results.push(`/memory approve -> ${approve}`)
 
   // /memory import from a claude-code fixture.
-  const importFile = '/tmp/opencode/mnemos-real-import.jsonl'
+  const importFile = join(tmpdir(), 'mnemos-real-import.jsonl')
   writeFileSync(importFile, JSON.stringify({ type: 'user', message: { role: 'user', content: [{ type: 'text', text: '记住：real import works' }] }, timestamp: '2025-01-01T00:00:00.000Z' }))
   const imported = await run(`/memory import auto ${importFile}`)
   unlinkSync(importFile)

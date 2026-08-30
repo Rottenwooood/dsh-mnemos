@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { mkdirSync, writeFileSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { registerMnemosSkillProvider, type SkillsRegistryFace, type SkillProviderFace } from '../dsh/skill-provider.js';
 function makeRegistry(): {
@@ -39,7 +40,7 @@ Always install dependencies with pnpm, never npm.
 
 describe('mnemos skill provider (DSH wiring)', () => {
   it('registers only when ctx.skills exists and lists/gets promoted skill files', async () => {
-    const dir = join('/tmp/opencode', `mnemos-skills-${Date.now()}`);
+    const dir = join(tmpdir(), `mnemos-skills-${Date.now()}`);
     mkdirSync(dir, { recursive: true });
     writeFileSync(join(dir, 'mnemos-use-pnpm.md'), SKILL_MD, 'utf8');
     writeFileSync(join(dir, 'invalid.md'), '# no frontmatter\n', 'utf8');
@@ -68,12 +69,12 @@ describe('mnemos skill provider (DSH wiring)', () => {
 
   it('does nothing when the skills registry is absent', () => {
     const { registry } = makeRegistry();
-    registerMnemosSkillProvider({ get: () => undefined, effect: () => {} }, '/tmp/opencode/nonexistent', { warn: () => {} });
+    registerMnemosSkillProvider({ get: () => undefined, effect: () => {} }, join(tmpdir(), 'nonexistent'), { warn: () => {} });
     expect(registry.providers).toHaveLength(0);
   });
 
   it('disposes the provider on unload', () => {
-    const dir = join('/tmp/opencode', `mnemos-skills-dispose-${Date.now()}`);
+    const dir = join(tmpdir(), `mnemos-skills-dispose-${Date.now()}`);
     mkdirSync(dir, { recursive: true });
     const { registry } = makeRegistry();
     let cleanup: () => void = () => {};
