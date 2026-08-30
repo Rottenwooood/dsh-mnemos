@@ -68,7 +68,7 @@ So another plugin gets the *same* treatment as the model: an identity stamp, the
 
 #### Measurement ABI — `ctx.mnemosAbi`
 
-Versioned `recall / get / state / probe` for external tools and evals to read real numbers (active / pending / unverified / verified / injections / hit-rate). `scripts/conformance.mts` proves it is the actual implementation, not a stub.
+Versioned `recall / get / state / probe` for external tools and evals to read real numbers (active / pending / unverified / verified / injections / hit-rate). 
 
 #### Import adapters
 

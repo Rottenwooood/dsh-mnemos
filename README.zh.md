@@ -69,7 +69,7 @@ dsh-mnemos 不只是给模型和人用——它把记忆库通过总线开放给
 
 #### 测量 ABI —— `ctx.mnemosAbi`
 
-版本化的 `recall / get / state / probe`，让外部工具和评测读到真实数字（活跃/待审批/未验证/已验证/注入/命中率）。`scripts/conformance.mts` 证明它就是实际实现，不是空壳。
+版本化的 `recall / get / state / probe`，让外部工具和评测读到真实数字（活跃/待审批/未验证/已验证/注入/命中率）。
 
 #### 导入适配器
 
