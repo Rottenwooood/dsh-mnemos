@@ -105,7 +105,7 @@ Honest notes:
 
 - **LongMemEval-S:** we beat deja-vu on every reported metric (hit@1 87.2% vs 85.3%, MRR 0.914 vs 0.896, evidence-recall@1 56.3% vs 55.0%).
 - **LoCoMo-10:** we trail (60.9% vs 69.8%). LoCoMo sessions are longer and the questions lean on cross-session reasoning; deja-vu's stem layer and stronger ranking variants win there. Closing this gap is on the roadmap, not a defect.
-- **Attribution is honest:** deja-vu's official numbers were reproduced locally (go1.25, running its own `scripts/longmemeval` / `scripts/locomo`; same data, same metrics, same verbatim query text): LongMemEval-S hit@1 85.3%, LoCoMo R@1 69.8%. Reproduction commands in [scripts/bench/BENCHMARKS.md](scripts/bench/BENCHMARKS.md).
+
 
 ## Install & quick start
 
@@ -169,13 +169,13 @@ Different philosophies. **dsh-memento** is a *capability seam*: a typed `ctx.mem
 
 deja-vu is a Go memory engine whose public long-memory benchmarks we replicate same-protocol. We win LongMemEval-S (87.2% vs 85.3%) and trail LoCoMo (60.9% vs 69.8%) — details in [Benchmarks](#benchmarks). We bring, on top of retrieval, the governance/lifecycle layer (approval gate, trust tiers, conflict replacement proposals, git) that deja-vu does not have.
 
-## Roadmap
+## TODO
 
-Honest state of the project — these are the gaps between "functional and measured" and "formally released":
+These are the gaps between "functional and measured" and "formally released":
 
 - [ ] **Cross-platform verification** — developed on Linux; test Windows / macOS.
 - [ ] **Schema upgrade-path tests** — user_version 1 migrations are exercised only on dev databases.
-- [ ] **npm publish** — packaging is ready (`npm pack` verified); publish + package-name availability check + post-install verification pending.
+- [ ] **npm publish** — have published .
 - [ ] **Distill-mode benchmark at scale** — the real-LLM distill pipeline is wired and validated on a single question; a representative sample (10–20 questions across types) is not yet run (provider quota/cost bound).
 - [ ] **Stress tests** — concurrent writes, thousands of memories (index/search performance), long-run behavior (WAL growth, git repo growth).
 - [ ] **Stabilize the `isomorphic` git backend** — it can time out / be flaky on slow connections in our testing; worth a reliability pass or documenting `system` as the recommended sync backend.

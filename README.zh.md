@@ -105,8 +105,7 @@ node --import tsx/esm /path/to/dsh-mnemos/scripts/eval/run-eval.mts
 说明：
 
 - **LongMemEval-S：** 每一项指标都超过 deja-vu（hit@1 87.2% vs 85.3%、MRR 0.914 vs 0.896、evidence-recall@1 56.3% vs 55.0%）。
-- **LoCoMo-10：** 落后（60.9% vs 69.8%）。LoCoMo 会话更长、问题更依赖跨会话推理；deja 的词形还原（stem）层和更强的排序变体在这里占优。缩小差距在路线图上，不是缺陷。
-- **口径诚实：** deja-vu 的官方数字已在本机**真实复现**（go1.25，跑其官方 `scripts/longmemeval` / `scripts/locomo`，同数据、同指标、同问题原文）：LongMemEval-S hit@1=85.3%、LoCoMo R@1=69.8%。复现命令见 [scripts/bench/BENCHMARKS.md](scripts/bench/BENCHMARKS.md)。
+- **LoCoMo-10：** 落后（60.9% vs 69.8%）。LoCoMo 会话更长、问题更依赖跨会话推理；deja 的词形还原（stem）层和更强的排序变体在这里占优。
 
 ## 安装与快速开始
 
@@ -170,13 +169,13 @@ dsh plugin --profile web add ./dsh-mnemos-<version>.tgz
 
 deja-vu 是 Go 写的记忆引擎，它的公开长期记忆基准我们用同口径复现。LongMemEval-S 我们赢（87.2% vs 85.3%）、LoCoMo 落后（60.9% vs 69.8%），细节见[效果](#效果)。在检索之上，我们还带了 deja-vu 没有的治理/生命周期层（审批门禁、信任分级、冲突替换提案、git）。
 
-## 路线图
+## TODO
 
-诚实状态——这些是"功能可用且有数字"与"正式发布"之间的差距：
+这些是"功能可用且有数字"与"正式发布"之间的差距：
 
 - [ ] **跨平台验证** —— 仅在 Linux 上开发；尚未测试 Windows / macOS。
 - [ ] **schema 升级路径测试** —— user_version 1 的迁移只在开发库上跑过。
-- [ ] **npm 发布** —— 打包已就绪（`npm pack` 验证过）；发布 + 包名占用检查 + 装后验证待做。
+- [x] **npm 发布** —— 已发布
 - [ ] **蒸馏模式规模验证** —— 真实 LLM 蒸馏管线已接通、单题验证过；代表性样本（跨题型 10-20 题）还没跑（受 provider 配额/成本限制）。
 - [ ] **压测** —— 并发写入、几千条记忆（索引/搜索性能）、长时间运行（WAL 膨胀、git 仓库膨胀）。
 - [ ] **加固 `isomorphic` git 后端** —— 实测在慢网络下有概率超时/不稳；值得做一轮可靠性打磨，或把 `system` 定为推荐的同步后端。
