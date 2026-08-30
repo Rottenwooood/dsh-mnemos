@@ -212,4 +212,12 @@ scripts/run-verify.sh     # typecheck+unit → deterministic eval → ABI confor
 
 MIT
 
-[![Star History](https://api.star-history.com/svg?repos=Rottenwooood/dsh-mnemos&type=Date)](https://star-history.com/#Rottenwooood/dsh-mnemos&Date)
+## Star History
+
+<a href="https://www.star-history.com/?repos=Rottenwooood%2Fdsh-mnemos&type=date&legend=top-left">
+ <picture>
+   <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/chart?repos=Rottenwooood/dsh-mnemos&type=date&theme=dark&legend=top-left&sealed_token=Emh6TOB7Y22Eu7IoGad8JCvsL9DIYOGipsgjy0cdzBDf-hM8UNsqA1POgNgz9ya9L0_mKWnl_zsMaWXZghDth55h0rNCcJB-ocdezAyzmXewf4Ryo0k8V6pby_XyFOf0e8NFozoy3mx1CkKqsmWLb2OYU-xB4IzfvmHj5XxvhMbKm8K1UOZccTtsgRFv" />
+   <source media="(prefers-color-scheme: light)" srcset="https://api.star-history.com/chart?repos=Rottenwooood/dsh-mnemos&type=date&legend=top-left&sealed_token=Emh6TOB7Y22Eu7IoGad8JCvsL9DIYOGipsgjy0cdzBDf-hM8UNsqA1POgNgz9ya9L0_mKWnl_zsMaWXZghDth55h0rNCcJB-ocdezAyzmXewf4Ryo0k8V6pby_XyFOf0e8NFozoy3mx1CkKqsmWLb2OYU-xB4IzfvmHj5XxvhMbKm8K1UOZccTtsgRFv" />
+   <img alt="Star History Chart" src="https://api.star-history.com/chart?repos=Rottenwooood/dsh-mnemos&type=date&legend=top-left&sealed_token=Emh6TOB7Y22Eu7IoGad8JCvsL9DIYOGipsgjy0cdzBDf-hM8UNsqA1POgNgz9ya9L0_mKWnl_zsMaWXZghDth55h0rNCcJB-ocdezAyzmXewf4Ryo0k8V6pby_XyFOf0e8NFozoy3mx1CkKqsmWLb2OYU-xB4IzfvmHj5XxvhMbKm8K1UOZccTtsgRFv" />
+ </picture>
+</a>
