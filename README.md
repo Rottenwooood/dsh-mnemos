@@ -176,7 +176,7 @@ These are the gaps between "functional and measured" and "formally released":
 
 - [ ] **Cross-platform verification** — developed on Linux; test Windows / macOS.
 - [ ] **Schema upgrade-path tests** — user_version 1 migrations are exercised only on dev databases.
-- [ ] **npm publish** — have published .
+- [x] **npm publish** — have published .
 - [ ] **Distill-mode benchmark at scale** — the real-LLM distill pipeline is wired and validated on a single question; a representative sample (10–20 questions across types) is not yet run (provider quota/cost bound).
 - [ ] **Stress tests** — concurrent writes, thousands of memories (index/search performance), long-run behavior (WAL growth, git repo growth).
 - [ ] **Stabilize the `isomorphic` git backend** — it can time out / be flaky on slow connections in our testing; worth a reliability pass or documenting `system` as the recommended sync backend.
