@@ -24,7 +24,7 @@ function makeDeps(overrides: Partial<MnemosRouteDeps> = {}): MnemosRouteDeps {
   return {
     store,
     service,
-    runDistillNow: async () => ({ memories: 0, rules: 0, conflicts: 0 }),
+    runDistillNow: async () => ({ memories: 0, conflicts: 0 }),
     resolveModel: async () => undefined,
     getConfig: () => defaultConfig(),
     collector: new SignalCollector(() => {}),

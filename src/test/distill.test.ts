@@ -8,7 +8,6 @@ import {
   createDistillRunner,
   detectConflicts,
   filterNewMessages,
-  toRule,
 } from '../domain/distill.js';
 import { Llm } from '../domain/llm.js';
 import { ImportedMessage } from '../domain/imports/types.js';
@@ -51,8 +50,8 @@ describe('distill runner', () => {
     return { store, service };
   }
 
-  it('commits a high-confidence project fact and proposes a procedure rule', async () => {
-    const { service } = make();
+  it('commits high-confidence facts and procedures as ordinary memories', async () => {
+    const { store, service } = make();
     const llm = fakeLlm(() =>
       JSON.stringify([
         { type: 'project_fact', topic: 'build tool', summary: 'The project builds with pnpm.', confidence: 0.95, keywords: ['pnpm', 'install'] },
@@ -64,16 +63,30 @@ describe('distill runner', () => {
       msg({ role: 'user', text: 'we use pnpm', index: 0 }),
       msg({ role: 'assistant', text: 'running release steps', index: 1 }),
     ]);
-    expect(stats.memories).toBe(1);
-    expect(stats.rules).toBe(1);
+    expect(stats.memories).toBe(2);
     expect(stats.dropped).toBe(0);
     expect(service.listActive('workspace', 'ws')).toHaveLength(1);
-    const stored = service.listActive('workspace', 'ws')[0]!;
+    const stored = service.listActive('workspace', 'ws').find((m) => m.topic === 'build tool')!;
     expect(stored.keywords).toEqual(['pnpm', 'install']);
-    expect(service.listRules('proposed')).toHaveLength(1);
+    expect(store.listApprovals('proposed')).toHaveLength(1);
   });
 
-  it('stores a protocol entry as a memory, not a rule', async () => {
+  it('redacts sensitive content before sending the transcript to the LLM', async () => {
+    const { service } = make();
+    let received = '';
+    const llm: Llm = {
+      async complete(messages) {
+        received = messages[1]!.content;
+        return '[]';
+      },
+    };
+    const runner = createDistillRunner(llm, service, { scope: 'workspace', workspace: 'ws', sessionId: 's1' });
+    await runner.run([msg({ role: 'user', text: 'remember sk-abc123XYZ456def789ABC123XYZ456def789', index: 0 })]);
+    expect(received).toContain('[REDACTED]');
+    expect(received).not.toContain('sk-abc123XYZ456def789ABC123XYZ456def789');
+  });
+
+  it('stores a protocol entry as a separate memory type', async () => {
     const { service } = make();
     const llm = fakeLlm(() =>
       JSON.stringify([
@@ -83,8 +96,6 @@ describe('distill runner', () => {
     const runner = createDistillRunner(llm, service, { scope: 'workspace', workspace: 'ws', sessionId: 's1' });
     const stats = await runner.run([msg({ role: 'user', text: 'bash runs in a sandbox', index: 0 })]);
     expect(stats.memories).toBe(1);
-    expect(stats.rules).toBe(0);
-    expect(service.listRules('proposed')).toHaveLength(0);
     const stored = service.listActive('workspace', 'ws')[0]!;
     expect(stored.type).toBe('protocol');
     expect(stored.keywords).toEqual(['bash', 'sandbox']);
@@ -124,7 +135,6 @@ describe('distill runner', () => {
     expect(stats.dropped).toBe(0);
     expect(stats.memories).toBe(0);
     expect(service.listActive()).toHaveLength(0);
-    expect(service.listRules()).toHaveLength(0);
   });
 
   it('forces conflicting entries to the approval queue, never auto-approved', async () => {
@@ -226,14 +236,6 @@ function makeServiceWithMemory() {
   );
   return { service };
 }
-
-describe('toRule', () => {
-  it('maps procedure to a skill rule and preference to a preference rule', () => {
-    expect(toRule({ type: 'procedure', topic: 'x', summary: 'release steps', confidence: 0.8 })?.kind).toBe('skill');
-    expect(toRule({ type: 'preference', topic: 'x', summary: 'use tabs', confidence: 0.9 })?.kind).toBe('preference');
-    expect(toRule({ type: 'project_fact', topic: 'x', summary: 'fact', confidence: 1 })).toBeUndefined();
-  });
-});
 
 describe('filterNewMessages (incremental cursor)', () => {
   it('returns only the tail beyond the cursor', () => {

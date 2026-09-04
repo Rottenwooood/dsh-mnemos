@@ -229,12 +229,12 @@ export function apply(ctx: Context, raw: Partial<Config> = {}): void {
   const llm = createLlmFromContext(ctx, {
     resolveTarget: resolveLlmTarget,
     system:
-      'You are dsh-mnemos, extracting durable cross-session memories and rules from a conversation. Return only the requested JSON.',
+      'You are dsh-mnemos, extracting durable cross-session memories from a conversation. Return only the requested JSON.',
   });
   const cursorStore = createJsonFileStore<DistillCursor>(join(dirname(config.dbPath), 'distill-cursor.json'));
   const distillCursor: { current: DistillCursor } = { current: cursorStore.read() };
 
-  let runDistillNow: () => Promise<{ memories: number; rules: number; conflicts: number } | null>;
+  let runDistillNow: () => Promise<{ memories: number; conflicts: number } | null>;
   // Count-based auto-distill: every N live user messages, when distillAuto is on.
   const collector = new SignalCollector(
     (message) => logger.debug(message),
@@ -250,15 +250,15 @@ export function apply(ctx: Context, raw: Partial<Config> = {}): void {
       void runDistillNow().catch(() => {});
     },
   );
-  runDistillNow = async (): Promise<{ memories: number; rules: number; conflicts: number } | null> => {
+  runDistillNow = async (): Promise<{ memories: number; conflicts: number } | null> => {
     const cfg = getConfig();
     if (!cfg.enabled) {
       collector.drain();
-      return { memories: 0, rules: 0, conflicts: 0 };
+        return { memories: 0, conflicts: 0 };
     }
     const messages = collector.drain();
     if (messages.length === 0) {
-      return { memories: 0, rules: 0, conflicts: 0 };
+      return { memories: 0, conflicts: 0 };
     }
     if (!llm) {
       return null;
@@ -271,7 +271,6 @@ export function apply(ctx: Context, raw: Partial<Config> = {}): void {
       cursorStore.write(distillCursor.current);
       return {
         memories: result.stats.memories,
-        rules: result.stats.rules,
         conflicts: result.stats.conflicts,
       };
     } catch (err) {
@@ -293,7 +292,7 @@ export function apply(ctx: Context, raw: Partial<Config> = {}): void {
     },
   };
 
-  registerTools(ctx, { service, llm, collector, cursor: distillCursor, persistCursor: (c) => cursorStore.write(c) });
+  registerTools(ctx, { service, llm, collector, cursor: distillCursor, persistCursor: (c) => cursorStore.write(c), skillsDir: config.skillsDir });
   registerCommand(ctx, commandDeps);
   registerHooks(ctx, collector);
   registerInjection(ctx, service, getConfig);

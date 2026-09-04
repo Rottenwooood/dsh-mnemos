@@ -260,14 +260,15 @@ function userTextOf(messages: unknown[]): string {
 
 /**
  * Protocol effect: inject active `protocol` memories (environment / tool-
- * calling conventions, e.g. sandbox rules, background-job usage) once per
+ * calling conventions, e.g. sandbox conventions, background-job usage) once per
  * session at the first pre-step, then re-inject right after a context
  * compaction completes. Protocol memories are real memories — visible in the
  * console, counted in stats — and this channel makes them always present before
- * the agent acts. Rules are NOT injected; they are the skill-promotion pipeline
+ * the agent acts. Ordinary memories are NOT injected here; formalized memories
+ * are provided through the skill directory instead.
  * only.
  *
- * Compaction drops standing instructions (2608.22752: standing rules survive
+ * Compaction drops standing instructions (2608.22752: standing instructions survive
  * ~10% after 5 summary rounds), so instead of guessing with a turn counter we
  * listen for the harness's own `compaction/end` session event and re-attach the
  * protocol block at the next pre-step after it. The memory INDEX stays frozen

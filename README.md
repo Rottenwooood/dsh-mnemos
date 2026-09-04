@@ -6,6 +6,8 @@
 
 **A governed, self-evolving, extensible DSH plugin for cross-session memory.**
 
+**Compatibility:** adapted to DSH `v0.1.2-rc.1`.
+
 ![CI](https://img.shields.io/github/actions/workflow/status/Rottenwooood/dsh-mnemos/ci.yml?branch=main&label=CI) ![License](https://img.shields.io/badge/license-MIT-blue) ![npm version](https://img.shields.io/npm/v/dsh-mnemos) ![npm downloads](https://img.shields.io/npm/dw/dsh-mnemos) ![Version](https://img.shields.io/github/v/tag/Rottenwooood/dsh-mnemos?label=version) ![Node](https://img.shields.io/badge/node-%3E%3D22.19-brightgreen)
 
 ---
@@ -17,7 +19,7 @@ The whole thing hangs on four design principles.
 
 1. **Every memory passes a gate — auditable.** Every write — model tools, /memory, third-party plugins, the browser — goes through one approval gate: sensitive / duplicate / out-of-budget writes are rejected, risky ones wait for a human. Model/import/third-party memories are marked *unverified* and bounded at injection (anti-poisoning). Every write / approval / rejection is audited.
 
-2. **It evolves and corrects itself.** Sessions distill into memories *and* rules. A rule lives in the memory store and is injected by mnemos — or, once approved, **promoted to a DSH SKILL**: a standard Markdown skill file any agent can load on demand, so the knowledge leaves mnemos and works anywhere in the harness. Facts update in place (the old value stays recoverable in git); only genuine conflicts become *replacement proposals* for a human. Heat-based cleanup keeps the store bounded (active → archived → restorable; `pinned` never leaves).
+2. **It evolves and corrects itself.** Sessions distill into ordinary memories. Any active non-protocol memory can be formally written as a DSH SKILL, a standard Markdown skill file any agent can load on demand, after which the source memory is soft-deleted so the skill is the only active form. Facts update in place (the old value stays recoverable in git); only genuine conflicts become *replacement proposals* for a human. Heat-based cleanup keeps the store bounded (active → archived → restorable; `pinned` never leaves).
 
 3. **Your data — importable from other agents, manageable, cross-device syncable.** Local SQLite (WAL + FTS5); every memory is also a Markdown file in a git repo — history, diff, rollback, restore, backup, and cross-device sync (via push/pull). Imports ChatGPT / Claude Code / Codex / DSH history.
 
@@ -28,9 +30,9 @@ The whole thing hangs on four design principles.
 ### For users
 
 - **Model tools** (the model uses them in-session):
-  `memory_search` (recall) · `memory_record` (write one entry now, gated, can update an outdated memory in place) · `memory_distill` (batch-distill the buffered conversation → memory/rule candidates, incremental dedup) · `memory_list` · `memory_stats`.
+  `memory_search` (recall) · `memory_record` (write one entry now, gated, can update an outdated memory in place) · `memory_distill` (batch-distill the buffered conversation → memory candidates, incremental dedup) · `memory_to_skill` (formalize one memory as a skill) · `memory_list` · `memory_stats`.
 - **Injection.** Once per session, a *memory index* is injected (one line per memory: type · short-id · topic · keywords, byte-stable, KV-cache friendly, negligible token cost). The model drills into details with `memory_get` or `memory_research`. When more than N minutes have passed and a keyword hits, the matching index entries are injected again.
-- **Environment conventions.** `protocol`-typed memories (environment/tool conventions, e.g. sandbox rules) ride a **separate channel**: injected once at the session's first step and re-attached after each context compaction, so they are always present before the agent acts; **they never enter the memory index**.
+- **Environment conventions.** `protocol`-typed memories (environment/tool conventions, e.g. sandbox constraints) ride a **separate channel**: injected once at the session's first step and re-attached after each context compaction, so they are always present before the agent acts; **they never enter the memory index**.
 - **Hits.** A `memory_get` or `memory_search` call counts as a hit.
 - **/memory commands** — the complete list, usage scenarios, and troubleshooting live in [docs/HANDOVER.md](docs/HANDOVER.md); the key ones:
   ```
@@ -38,13 +40,12 @@ The whole thing hangs on four design principles.
   /memory approve <id> | reject <id>
   /memory import <source> <path>       auto-detected: chatgpt|claude|codex|dsh
   /memory distill [path]
-  /memory rules <list|activate|rollback|deprecate>
-  /memory skill <list|promote <ruleId>>
+  /memory skill list
   /memory git <status|log|rollback|restore|remote|push|pull|backup>
   /memory bus <blacklist|unblacklist|list|revoke|writers>
   ```
 - **Browser UI** (better-sidebar "记忆" tab): overview, approval queue (approve / reject / edit-then-approve / batch-approve low-risk), memory list with search/filter/edit/version-history/rollback/delete, deleted-memory recovery, rejection history, and git sync.
-- **Distillation.** Unlike `memory_record` (one entry written now), distillation hands the **whole buffered conversation** to a dedicated specialist that **batch-mines** memory candidates, rule candidates and conflict-replacement proposals in one pass; an incremental cursor ensures already-distilled content is never reprocessed. Each memory carries 2–5 keywords (triggering injection), all candidates pass the approval gate; conflicts always go to a human, rule-class entries become rule proposals. Approved rules are injected by mnemos, and can additionally be **promoted to a DSH SKILL** that any agent can load on demand through DSH's `skill` tool, making the knowledge usable outside mnemos.
+- **Distillation.** Unlike `memory_record` (one entry written now), distillation hands the **whole buffered conversation** to a dedicated specialist that **batch-mines** memory candidates and conflict-replacement proposals in one pass; an incremental cursor ensures already-distilled content is never reprocessed. Each memory carries 2–5 keywords (triggering injection), and all candidates pass the approval gate. `memory_to_skill` formally writes an approved active non-protocol memory as a portable DSH SKILL and then soft-deletes the source memory.
 
 ### For developers
 
@@ -56,7 +57,7 @@ dsh-mnemos isn't just for the model and the human — it exposes its memory stor
 |---|---|---|
 | `bus.recall({ query, limit })` | Search memories (or list by scope/workspace). Read-only — never writes, never bumps the usage ledger. | — |
 | `bus.record(input, identity)` | Request a memory write. | **Must declare who it is** (`{ name, version }` → stamped `plugin:<name>@<version>`, `source: third_party`). The write **always enters the human approval queue** — never direct, never auto-approved, regardless of confidence. Audited. |
-| `bus.subscribe(listener)` | Watch store changes: memory committed / proposal pending / memory replaced / memory revoked / rule approved. | Subscriber errors never break the bus. |
+| `bus.subscribe(listener)` | Watch store changes: memory committed / proposal pending / memory replaced / memory revoked. | Subscriber errors never break the bus. |
 
 Governance that applies to every third-party write:
 
@@ -152,13 +153,13 @@ The full 34-field table, YAML snippets, usage scenarios, and troubleshooting: [d
 
 ### vs dsh-memento
 
-Different philosophies. **dsh-memento** is a *capability seam*: a typed `ctx.memory` contract, hard per-track/per-layer character budgets, and a dsh-memory-protocol with an adapter registry (mem0 / Hermes / CLAUDE.md) and a read-only MCP server — strong on ecosystem interoperability. **dsh-mnemos** is a complete memory *product*: distillation, rules/SKILL, a full lifecycle, and measured retrieval.
+Different philosophies. **dsh-memento** is a *capability seam*: a typed `ctx.memory` contract, hard per-track/per-layer character budgets, and a dsh-memory-protocol with an adapter registry (mem0 / Hermes / CLAUDE.md) and a read-only MCP server — strong on ecosystem interoperability. **dsh-mnemos** is a complete memory *product*: distillation, memory/SKILL formalization, a full lifecycle, and measured retrieval.
 
 | Dimension | dsh-mnemos | dsh-memento |
 |---|---|---|
 | Retrieval | FTS5 ladder + bigram RRF, **public benchmark numbers** | substring search (no FTS5), no published numbers |
 | Lifecycle / heat eviction / pinned | yes | no |
-| Distillation / rules / SKILL | yes (LLM, approval-gated) | no |
+| Distillation / memory / SKILL | yes (LLM, approval-gated) | no |
 | git version history + cross-machine sync | yes (one .md per memory) | no |
 | Third-party writes | bus: identity-stamped, approval-queue, blacklist, revoke | adapter registry (pure data conversion), MCP server |
 | Protocol spec / MCP / adapters | bus + ABI + conformance; **no MCP yet** | dsh-memory-protocol v1 + MCP + adapters |

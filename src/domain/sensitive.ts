@@ -37,6 +37,18 @@ function entropy(text: string): number {
 const HIGH_ENTROPY = 4.2;
 const LONG_TOKEN_RE = /[A-Za-z0-9._~+/-]{32,}/g;
 
+/** Replace detected secret-like values before text is sent to an LLM. */
+export function redactSensitiveText(text: string): string {
+  let redacted = text;
+  for (const { re } of PATTERNS) {
+    redacted = redacted.replace(re, '[REDACTED]');
+  }
+  redacted = redacted.replace(LONG_TOKEN_RE, (token) => {
+    return token.length >= 40 && entropy(token) >= HIGH_ENTROPY ? '[REDACTED]' : token;
+  });
+  return redacted;
+}
+
 export function createSensitiveDetector(): SensitiveDetector {
   return {
     detect(text: string): string[] {

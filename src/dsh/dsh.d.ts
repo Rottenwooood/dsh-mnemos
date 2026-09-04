@@ -62,7 +62,7 @@ declare module '@deepseek-ai/cordis' {
         };
       },
     ): void;
-    /** Memory-bus change notifications (committed/proposed/replaced/revoked/rule-approved). */
+    /** Memory-bus change notifications (committed/proposed/replaced/revoked). */
     'mnemos/memory'(event: BusEvent): void;
     /**
      * Waterfall deciding the next step; listeners call next() then may return

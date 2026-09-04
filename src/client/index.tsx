@@ -204,9 +204,9 @@ export function MnemosTab(): ReactNode {
   const distill = async (): Promise<void> => {
     setBusy(true)
     try {
-      const result = (await postJson('/mnemos/api/distill')) as { error?: string; memories?: number; rules?: number; conflicts?: number }
+      const result = (await postJson('/mnemos/api/distill')) as { error?: string; memories?: number; conflicts?: number }
       if (result.error !== undefined) setNotice({ kind: 'err', text: result.error })
-      else setNotice({ kind: 'ok', text: `提炼完成：${result.memories ?? 0} 条记忆 · ${result.rules ?? 0} 条规则 · ${result.conflicts ?? 0} 冲突` })
+      else setNotice({ kind: 'ok', text: `提炼完成：${result.memories ?? 0} 条记忆 · ${result.conflicts ?? 0} 冲突` })
     } catch (err) {
       setNotice({ kind: 'err', text: err instanceof Error ? err.message : String(err) })
     }
@@ -354,7 +354,7 @@ export function MnemosTab(): ReactNode {
                   className="mnemos-button"
                   style={{ marginRight: 6, marginTop: 6 }}
                   disabled={busy || approvalDraft.trim().length === 0}
-                  onClick={() => void act('/mnemos/api/approve', { approvalId: p.id, decision: 'approve', edited: p.kind === 'rule' ? { text: approvalDraft.trim() } : { summary: approvalDraft.trim() } }, '已编辑并批准').then(() => setEditingApproval(null))}
+                  onClick={() => void act('/mnemos/api/approve', { approvalId: p.id, decision: 'approve', edited: { summary: approvalDraft.trim() } }, '已编辑并批准').then(() => setEditingApproval(null))}
                 >
                   保存并批准
                 </button>
@@ -594,7 +594,7 @@ const FIELDS: MnemosField[] = [
   { key: 'sessionLogDirs', kind: 'stringList', label: '会话日志扫描目录', hint: '逗号分隔', group: '导入' },
   { key: 'backfillEnabled', kind: 'boolean', label: '启动时回填历史会话日志', group: '导入' },
   { key: 'importCaller', kind: 'string', label: '导入写入方', hint: 'human / plugin', group: '导入' },
-  { key: 'skillsDir', kind: 'string', label: '规则技能文件目录', group: '导入' },
+  { key: 'skillsDir', kind: 'string', label: '记忆技能文件目录', group: '导入' },
   { key: 'llmProvider', kind: 'string', label: '提炼用 LLM provider', hint: '留空用 DSH 默认', group: '提炼' },
   { key: 'llmModel', kind: 'string', label: '提炼用 LLM 模型', hint: '留空用 DSH 默认', group: '提炼' },
   { key: 'distillAuto', kind: 'boolean', label: '自动提炼', hint: '开 = 每 N 次用户输入自动提炼；关 = 纯手动按钮', group: '提炼' },

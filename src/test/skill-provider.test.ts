@@ -39,7 +39,7 @@ Always install dependencies with pnpm, never npm.
 `;
 
 describe('mnemos skill provider (DSH wiring)', () => {
-  it('registers only when ctx.skills exists and lists/gets promoted skill files', async () => {
+  it('registers only when ctx.skills exists and lists/gets formalized skill files', async () => {
     const dir = join(tmpdir(), `mnemos-skills-${Date.now()}`);
     mkdirSync(dir, { recursive: true });
     writeFileSync(join(dir, 'mnemos-use-pnpm.md'), SKILL_MD, 'utf8');

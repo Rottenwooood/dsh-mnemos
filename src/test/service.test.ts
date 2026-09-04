@@ -210,8 +210,8 @@ describe('memory service write path', () => {
 
   it('proposeUpdate queues global-memory updates for approval, then applies in place', () => {
     const { service, store } = makeService();
-    const m = service.add({ ...input(), scope: 'global', type: 'protocol', topic: 'sandbox', summary: 'old sandbox rule' }, 'human').memory!;
-    const r = service.proposeUpdate(m.id, { summary: 'new sandbox rule' }, 'model');
+      const m = service.add({ ...input(), scope: 'global', type: 'protocol', topic: 'sandbox', summary: 'old sandbox convention' }, 'human').memory!;
+    const r = service.proposeUpdate(m.id, { summary: 'new sandbox convention' }, 'model');
     expect(r.outcome).toBe('proposed');
     expect(store.getMemory(m.id)!.summary).toContain('old'); // not applied yet
     const pending = store.listApprovals('proposed');

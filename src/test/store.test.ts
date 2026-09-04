@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { openMemoryStore } from '../domain/store.js';
-import { Memory, MemoryInput, Rule } from '../domain/types.js';
+import { Memory, MemoryInput } from '../domain/types.js';
 
 function mem(partial: Partial<MemoryInput> & { id?: string } = {}): Memory {
   return {
@@ -168,20 +168,8 @@ describe('memory store', () => {
     store.close();
   });
 
-  it('round-trips rules and approvals', () => {
+  it('round-trips memories and approvals', () => {
     const store = openMemoryStore(':memory:');
-    const rule: Rule = {
-      id: 'rule-1',
-      kind: 'preference',
-      text: 'Never touch package-lock.json.',
-      evidence: [{ sessionId: 's1', eventRange: [1, 1], quote: 'never touch it' }],
-      state: 'proposed',
-      proposedBy: 'model',
-      version: 1,
-    };
-    store.insertRule(rule);
-    expect(store.listRules('proposed')).toHaveLength(1);
-
     const approval = {
       id: 0,
       kind: 'memory' as const,

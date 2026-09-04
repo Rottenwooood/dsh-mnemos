@@ -37,7 +37,7 @@ export interface MnemosRouteDeps {
   /** Distill buffer; import ingests parsed transcripts here (memory generation is LLM distillation, never regex). */
   collector?: SignalCollector;
   /** Manual distillation trigger ("现在提炼"); null when no LLM adapter is mounted. */
-  runDistillNow: () => Promise<{ memories: number; rules: number; conflicts: number } | null>;
+  runDistillNow: () => Promise<{ memories: number; conflicts: number } | null>;
   /** The harness llm service (optional; absent in llm-less profiles). */
   llm?: LlmRuntimeLike;
   /** Resolve the plugin's distillation model target (DSH default fallback). */
@@ -435,7 +435,6 @@ export function createMnemosRouteHandler(deps: MnemosRouteDeps): (req: Req, res:
         json(res, 200, {
           exportedAt: new Date().toISOString(),
           memories,
-          rules: deps.store.listRules('approved'),
         });
         return;
       }

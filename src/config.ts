@@ -44,7 +44,7 @@ export interface Config {
   backfillEnabled: boolean;
   /** How backfill/imported candidates write: 'human' commits, 'model' queues. */
   importCaller: 'human' | 'model';
-  /** Directory where approved rules are promoted into Markdown skill files. */
+  /** Directory where formalized memories are written as Markdown skill files. */
   skillsDir: string;
   /** Inject active protocol (environment/tool-convention) memories every session. */
   protocolInjectEnabled: boolean;

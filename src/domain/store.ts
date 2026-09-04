@@ -1,6 +1,6 @@
 /**
  * SQLite storage for dsh-mnemos using node:sqlite (zero native deps).
- * Tables: memories, rules, audit, approval, usage_ledger + an FTS5 external-content index.
+ * Tables: memories, audit, approval, usage_ledger + an FTS5 external-content index.
  */
 import { DatabaseSync } from 'node:sqlite';
 import { normalizeTopic } from './dedup.js';
@@ -9,16 +9,14 @@ import {
   MemoryInput,
   MemoryScope,
   MemoryStatus,
-  Rule,
-  RuleState,
   AuditEntry,
   ApprovalCandidate,
 } from './types.js';
 
-export const SCHEMA_VERSION = 1;
+export const SCHEMA_VERSION = 2;
 
 const SCHEMA = `
-PRAGMA user_version = 1;
+PRAGMA user_version = 2;
 CREATE TABLE IF NOT EXISTS memories (
   rowid INTEGER PRIMARY KEY AUTOINCREMENT,
   id TEXT NOT NULL UNIQUE,
@@ -58,18 +56,6 @@ CREATE TRIGGER IF NOT EXISTS mem_au AFTER UPDATE ON memories BEGIN
   INSERT INTO memory_fts(memory_fts, rowid, summary) VALUES ('delete', old.rowid, old.summary);
   INSERT INTO memory_fts(rowid, summary) VALUES (new.rowid, new.summary);
 END;
-CREATE TABLE IF NOT EXISTS rules (
-  id TEXT PRIMARY KEY,
-  kind TEXT NOT NULL,
-  text TEXT NOT NULL,
-  evidence TEXT NOT NULL,
-  state TEXT NOT NULL,
-  proposed_by TEXT NOT NULL,
-  approved_by TEXT,
-  approved_at TEXT,
-  version INTEGER NOT NULL DEFAULT 1,
-  blacklist_reason TEXT
-);
 CREATE TABLE IF NOT EXISTS audit (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   ts TEXT NOT NULL,
@@ -83,7 +69,7 @@ CREATE TABLE IF NOT EXISTS audit (
 );
 CREATE TABLE IF NOT EXISTS approval (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
-  kind TEXT NOT NULL CHECK(kind IN ('memory','rule')),
+  kind TEXT NOT NULL CHECK(kind IN ('memory')),
   payload TEXT NOT NULL,
   state TEXT NOT NULL DEFAULT 'proposed' CHECK(state IN ('proposed','approved','rejected','edited')),
   proposed_by TEXT NOT NULL,
@@ -184,9 +170,6 @@ export interface MemoryStore {
   usageStats(days?: number): UsageStats;
   exactTopicExists(m: MemoryInput): boolean;
   countActive(): number;
-  insertRule(r: Rule): void;
-  listRules(state?: RuleState): Rule[];
-  updateRuleState(id: string, state: RuleState, patch?: Partial<Rule>): void;
   insertApproval(c: ApprovalCandidate): void;
   listApprovals(state?: ApprovalCandidate['state']): ApprovalCandidate[];
   getApproval(id: number): ApprovalCandidate | undefined;
@@ -278,6 +261,7 @@ function ftsQuery(query: string, join: ' AND ' | ' OR ' = ' AND '): string | nul
 export function openMemoryStore(path: string): MemoryStore {
   const db = new DatabaseSync(path);
   db.exec('PRAGMA journal_mode = WAL;');
+  migrateRetiredRuleLayer(db);
   db.exec(SCHEMA);
   // Migration: older stores lack keywords/verified/ledger-token columns; add idempotently.
   const cols = db.prepare('PRAGMA table_info(memories)').all() as Array<{ name: string }>;
@@ -402,13 +386,6 @@ export function openMemoryStore(path: string): MemoryStore {
   );
   const countActiveStmt = db.prepare(`SELECT COUNT(*) AS c FROM memories WHERE status='active'`);
 
-
-  const insRule = db.prepare(
-    `INSERT INTO rules (id, kind, text, evidence, state, proposed_by, approved_by, approved_at, version, blacklist_reason)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-  );
-  const listRulesStmt = db.prepare('SELECT * FROM rules WHERE state = COALESCE(?, state) ORDER BY id');
-  const updRule = db.prepare('UPDATE rules SET state=?, approved_by=COALESCE(?, approved_by), approved_at=COALESCE(?, approved_at) WHERE id=?');
 
   const insAudit = db.prepare(
     `INSERT INTO audit (ts, action, target_type, target_id, payload, denied, by_agent, reason) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
@@ -625,38 +602,6 @@ export function openMemoryStore(path: string): MemoryStore {
     countActive() {
       return Number(countActiveStmt.get()?.c ?? 0);
     },
-    insertRule(r) {
-      insRule.run(
-        r.id,
-        r.kind,
-        r.text,
-        JSON.stringify(r.evidence),
-        r.state,
-        r.proposedBy,
-        r.approvedBy ?? null,
-        r.approvedAt ?? null,
-        r.version,
-        r.blacklistReason ?? null,
-      );
-    },
-    listRules(state) {
-      const rows = listRulesStmt.all(state ?? null) as Record<string, unknown>[];
-      return rows.map((row) => ({
-        id: String(row.id),
-        kind: row.kind as Rule['kind'],
-        text: String(row.text),
-        evidence: JSON.parse(String(row.evidence)),
-        state: row.state as RuleState,
-        proposedBy: String(row.proposed_by),
-        approvedBy: (row.approved_by as string | null) ?? undefined,
-        approvedAt: (row.approved_at as string | null) ?? undefined,
-        version: Number(row.version),
-        blacklistReason: (row.blacklist_reason as string | null) ?? undefined,
-      }));
-    },
-    updateRuleState(id, state, patch) {
-      updRule.run(state, patch?.approvedBy ?? null, patch?.approvedAt ?? null, id);
-    },
     insertApproval(c) {
       insApproval.run(c.kind, JSON.stringify(c.payload), c.proposedBy, JSON.stringify(c.evidence), c.createdAt);
     },
@@ -739,4 +684,37 @@ export function openMemoryStore(path: string): MemoryStore {
     },
   };
   return store;
+}
+
+/** Remove the retired rules table and preserve only memory approvals in old stores. */
+function migrateRetiredRuleLayer(db: DatabaseSync): void {
+  const rules = db.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name='rules'").get() !== undefined;
+  const approval = db.prepare("SELECT sql FROM sqlite_master WHERE type='table' AND name='approval'").get() as { sql?: string } | undefined;
+  if (!rules && !approval?.sql?.includes("'rule'")) return;
+  db.exec('BEGIN');
+  try {
+    if (approval?.sql?.includes("'rule'")) {
+      db.exec(`
+        CREATE TABLE approval_v2 (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          kind TEXT NOT NULL CHECK(kind IN ('memory')),
+          payload TEXT NOT NULL,
+          state TEXT NOT NULL DEFAULT 'proposed' CHECK(state IN ('proposed','approved','rejected','edited')),
+          proposed_by TEXT NOT NULL,
+          evidence TEXT NOT NULL,
+          created_at TEXT NOT NULL
+        );
+        INSERT INTO approval_v2 (id, kind, payload, state, proposed_by, evidence, created_at)
+          SELECT id, kind, payload, state, proposed_by, evidence, created_at FROM approval WHERE kind='memory';
+        DROP TABLE approval;
+        ALTER TABLE approval_v2 RENAME TO approval;
+      `);
+    }
+    if (rules) db.exec('DROP TABLE rules');
+    db.exec('PRAGMA user_version = 2');
+    db.exec('COMMIT');
+  } catch (error) {
+    db.exec('ROLLBACK');
+    throw error;
+  }
 }

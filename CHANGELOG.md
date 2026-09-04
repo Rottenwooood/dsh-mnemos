@@ -3,6 +3,14 @@
 本项目遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，
 版本号遵循 [Semantic Versioning](https://semver.org/lang/zh-CN/)。
 
+## [0.2.0] - 2026-09-04
+
+### Changed
+- 已适配 DSH `v0.1.2-rc.1`。
+- 移除独立 rule 层：提炼结果统一作为普通记忆处理。
+- 新增 `memory_to_skill`，将已批准的非 `protocol` 记忆正式化为 DSH SKILL；写入成功后源记忆软删除。
+- `memory_distill` 在调用 LLM 前对会话内容进行敏感信息脱敏，以 `[REDACTED]` 替换密钥、令牌、私钥、地址和高熵长字符串；写入前仍保留拒绝检查。
+
 ## [0.1.1] - 2026-08-30
 
 ### Changed

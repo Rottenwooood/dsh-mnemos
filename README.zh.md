@@ -6,6 +6,8 @@
 
 **有治理、会自我进化、可拓展的 DSH 跨会话记忆插件。** 
 
+**兼容性：** 已适配 DSH `v0.1.2-rc.1`。
+
 ![CI](https://img.shields.io/github/actions/workflow/status/Rottenwooood/dsh-mnemos/ci.yml?branch=main&label=CI) ![License](https://img.shields.io/badge/license-MIT-blue) ![npm version](https://img.shields.io/npm/v/dsh-mnemos) ![npm downloads](https://img.shields.io/npm/dw/dsh-mnemos) ![Version](https://img.shields.io/github/v/tag/Rottenwooood/dsh-mnemos?label=version) ![Node](https://img.shields.io/badge/node-%3E%3D22.19-brightgreen)
 ---
 </div>
@@ -17,7 +19,7 @@
 
 1. **所有记忆经过门禁，可审计。** 每一次写入——模型工具、/memory、第三方插件、浏览器——都走同一个审批门禁：敏感/重复/越界的直接打回，有风险的等人工。模型/导入/第三方记忆标记"未验证"并在注入时设上限（防投毒）。每次写入/批准/拒绝都记审计。
 
-2. **会自我进化、会自我修正。** 会话被提炼成记忆**和规则**。规则活在记忆库里、由 mnemos 注入模型；批准后还可以**提升为 DSH SKILL**——任何 agent 都能按需加载，让这份知识脱离 mnemos 也能在 harness 里用。事实就地更新（旧值 git 可回滚）；只有真正的冲突才变成**替换提案**交人裁决。热度清理让存储有界（活跃 → 归档 → 可还原；`固定` 永不离开）。
+2. **会自我进化、会自我修正。** 会话被提炼成普通记忆。任何活跃的非 `protocol` 记忆都可以正式化为 DSH SKILL；写入成功后源记忆软删除，只保留 SKILL 作为活跃形态。事实就地更新（旧值 git 可回滚）；只有真正的冲突才变成**替换提案**交人裁决。热度清理让存储有界（活跃 → 归档 → 可还原；`固定` 永不离开）。
 
 3. **数据可从其他Agent导入、可管理、可跨设备同步。** 本地 SQLite（WAL + FTS5）；每条记忆同时是一个 git 仓库里的 Markdown 文件——历史、diff、回滚、恢复、备份、可跨设备（通过push/pull）。可导入 ChatGPT / Claude Code / Codex / DSH 历史。
 
@@ -28,9 +30,9 @@
 ### 给使用者
 
 - **模型工具**（模型在会话里自己用）：
-  `memory_search`（主动检索）· `memory_record`（单条即写即审，可原地更新旧记忆）· `memory_distill`（批量提炼缓冲会话→记忆/规则候选，增量去重）· `memory_list` · `memory_stats`。
+  `memory_search`（主动检索）· `memory_record`（单条即写即审，可原地更新旧记忆）· `memory_distill`（批量提炼缓冲会话→记忆候选，增量去重）· `memory_to_skill`（把一条记忆正式化为技能）· `memory_list` · `memory_stats`。
 - **注入**  每个会话开头注入一次**记忆索引**（每条一行：类型·短id·主题·关键词，字节稳定，命中 KV 缓存，token消耗极少）；模型要详细信息用 `memory_get`或 `memory_research` 查询。时间间隔大于N分钟且检测到关键词时，再次注入对应的记忆索引。
-- **环境约定**  `protocol` 类型的记忆（环境约定，如沙箱规则）走**独立通道**：每会话首步注入一次、上下文压缩完成后重新注入，保证在 agent 行动前始终在场；**不进入记忆索引**。
+- **环境约定**  `protocol` 类型的记忆（环境约定，如沙箱限制）走**独立通道**：每会话首步注入一次、上下文压缩完成后重新注入，保证在 agent 行动前始终在场；**不进入记忆索引**。
 - **命中** `memory_get`与`memory_search`执行即视为命中。
 - **/memory 命令**——完整清单、使用场景、故障排查在 [docs/HANDOVER.md](docs/HANDOVER.md)；关键几条：
   ```
@@ -38,13 +40,12 @@
   /memory approve <id> | reject <id>
   /memory import <来源> <路径>       自动识别：chatgpt|claude|codex|dsh
   /memory distill [路径]
-  /memory rules <list|activate|rollback|deprecate>
-  /memory skill <list|promote <ruleId>>
+  /memory skill list
   /memory git <status|log|rollback|restore|remote|push|pull|backup>
   /memory bus <blacklist|unblacklist|list|revoke|writers>
   ```
 - **浏览器界面**（better-sidebar「记忆」页签）：概览、待审批（批准/拒绝/编辑后批准/批量批准低风险）、记忆列表（搜索/筛选/编辑/版本历史/回滚/删除）、已删除恢复、被拒历史、git 同步。
-- **提炼。** 与 `memory_record` 的单条即写即审不同，提炼把**整段对话缓冲**交给独立提炼角色**批量**挖掘：一次性产出记忆候选、规则候选与冲突替换提案，增量游标保证不重复处理已提炼过的内容。每条带 2-5 个关键词（触发注入），全部过门禁；冲突强制人工裁决，规则类走规则提案；批准后的规则由 mnemos 注入模型，还能**提升为 DSH SKILL**，任何 agent 都能通过 DSH 的 `skill` 工具按需加载，让这份知识脱离 mnemos 也能用。
+- **提炼。** 与 `memory_record` 的单条即写即审不同，提炼把**整段对话缓冲**交给独立提炼角色**批量**挖掘记忆候选和冲突替换提案，增量游标保证不重复处理已提炼过的内容。每条带 2-5 个关键词（触发注入），全部过门禁；冲突强制人工裁决。`memory_to_skill` 把活跃的非 `protocol` 记忆写成可移植的 DSH SKILL，成功后软删除源记忆。
 
 
 ### 给开发者
@@ -57,7 +58,7 @@ dsh-mnemos 不只是给模型和人用——它把记忆库通过总线开放给
 |---|---|---|
 | `bus.recall({ query, limit })` | 搜索记忆（或按作用域/工作区列出）。只读——绝不写入、绝不计入效果账本。 | — |
 | `bus.record(input, identity)` | 申请写入一条记忆。 | **必须声明身份**（`{ name, version }` → 盖 `plugin:<名字>@<版本>` 章、`source: third_party`）。写入**永远进人工审批队列**——不管置信度多高，绝不直接落库、绝不自动放行。记审计。 |
-| `bus.subscribe(listener)` | 订阅存储变化：新记忆落库 / 提案待审 / 记忆被替换 / 记忆被撤销 / 规则被批准。 | 订阅方报错也不会弄坏总线。 |
+| `bus.subscribe(listener)` | 订阅存储变化：新记忆落库 / 提案待审 / 记忆被替换 / 记忆被撤销。 | 订阅方报错也不会弄坏总线。 |
 
 对每一次第三方写入都生效的治理：
 
@@ -152,13 +153,13 @@ dsh plugin --profile web add ./dsh-mnemos-<version>.tgz
 
 ### vs dsh-memento
 
-两条路线。**dsh-memento** 是一个*能力接缝*：类型化的 `ctx.memory` 契约、按轨×层的硬字符预算、dsh-memory-protocol 规范 + adapter 注册表（mem0 / Hermes / CLAUDE.md）+ 只读 MCP server——生态互操作强。**dsh-mnemos** 是完整记忆*产品*：提炼、规则/SKILL、完整生命周期、带数字的检索。
+两条路线。**dsh-memento** 是一个*能力接缝*：类型化的 `ctx.memory` 契约、按轨×层的硬字符预算、dsh-memory-protocol 规范 + adapter 注册表（mem0 / Hermes / CLAUDE.md）+ 只读 MCP server——生态互操作强。**dsh-mnemos** 是完整记忆*产品*：提炼、记忆/SKILL 正式化、完整生命周期、带数字的检索。
 
 | 维度 | dsh-mnemos | dsh-memento |
 |---|---|---|
 | 检索 | FTS5 阶梯 + 二元组 RRF，**有公开基准数字** | 子串搜索（无 FTS5），无公开数字 |
 | 生命周期 / 热度清理 / pinned | 有 | 无 |
-| 提炼 / 规则 / SKILL | 有（LLM，过门禁） | 无 |
+| 提炼 / 记忆 / SKILL | 有（LLM，过门禁） | 无 |
 | git 版本历史 + 跨机同步 | 有（每条记忆一个 .md） | 无 |
 | 第三方写入 | 总线：身份烙印 + 审批队列 + 拉黑 + 撤销 | adapter 注册表（纯数据转换）+ MCP server |
 | 协议规范 / MCP / adapter | 总线 + ABI + conformance；暂无 MCP | dsh-memory-protocol v1 + MCP + adapters |

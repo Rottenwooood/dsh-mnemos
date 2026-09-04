@@ -17,7 +17,7 @@ import { processImported } from '../domain/backfill.js';
 import { ImportSource } from '../domain/imports/types.js';
 import { Llm } from '../domain/llm.js';
 import { runDistillIncremental, DistillCursor } from '../domain/distill.js';
-import { promoteRuleToSkill, listSkillFiles } from '../domain/skill.js';
+import { listSkillFiles } from '../domain/skill.js';
 import { MemoryBus } from '../domain/bus.js';
 import { GitStore } from '../domain/gitstore.js';
 import type { SignalCollector } from './hooks.js';
@@ -52,8 +52,8 @@ export function registerCommand(ctx: Context, deps: CommandDeps): void {
   const command: CommandDefinition = {
     name: 'memory',
     description:
-      'Manage dsh-mnemos memories: search across sessions, list active entries, show stats, approve/reject proposals, import/backfill history, distill sessions, manage rules and promote skills.',
-    input: { hint: 'search <query> | list | stats | approve <id> | reject <id> | import <src> <path> | backfill <dir> | distill [path] | rules <...> | skill <...> | bus <...> | git <...>' },
+      'Manage dsh-mnemos memories: search across sessions, list active entries, show stats, approve/reject proposals, import/backfill history, distill sessions, and list generated skills.',
+    input: { hint: 'search <query> | list | stats | approve <id> | reject <id> | import <src> <path> | backfill <dir> | distill [path] | skill list | bus <...> | git <...>' },
     async handler(invocation) {
       const raw = invocation.rawInput.trim();
       const [verb, ...rest] = raw.split(/\s+/);
@@ -220,38 +220,8 @@ export function registerCommand(ctx: Context, deps: CommandDeps): void {
           deps.persistCursor(result.cursor);
           return ok(
             `Distilled ${result.stats.requested} messages → ${result.stats.memories} memory candidate(s), ` +
-              `${result.stats.rules} rule proposal(s), ${result.stats.conflicts} conflict(s), ` +
-              `${result.stats.dropped} dropped.`,
+              `${result.stats.conflicts} conflict(s), ${result.stats.dropped} dropped.`,
           );
-        }
-        case 'rules': {
-          const sub = rest[0];
-          if (sub === 'list' || sub === undefined) {
-            const rules = service.listRules();
-            if (rules.length === 0) {
-              return ok('No rules.');
-            }
-            return ok(
-              rules
-                .map((r) => `- [${r.state}] ${r.id} (${r.kind}) ${r.text}`)
-                .join('\n'),
-            );
-          }
-          const id = rest[1];
-          if (!id) {
-            return ok('usage: /memory rules <list|activate|rollback|deprecate> [ruleId]');
-          }
-          const stateMap: Record<string, 'approved' | 'rolled_back' | 'deprecated'> = {
-            activate: 'approved',
-            rollback: 'rolled_back',
-            deprecate: 'deprecated',
-          };
-          const target = stateMap[sub];
-          if (!target) {
-            return ok('usage: /memory rules <list|activate|rollback|deprecate> [ruleId]');
-          }
-          const result = service.setRuleState(id, target);
-          return ok(result.ok ? `Rule ${id} → ${target}.` : `Cannot update rule: ${result.reason}.`);
         }
         case 'skill': {
           const sub = rest[0];
@@ -259,15 +229,7 @@ export function registerCommand(ctx: Context, deps: CommandDeps): void {
             const files = listSkillFiles(config.skillsDir);
             return ok(files.length ? files.map((f) => `- ${f}`).join('\n') : 'No skill files yet.');
           }
-          if (sub === 'promote') {
-            const id = rest[1];
-            if (!id) {
-              return ok('usage: /memory skill promote <ruleId>');
-            }
-            const result = promoteRuleToSkill(service, id, config.skillsDir);
-            return ok(result.ok ? `Promoted ${id} → ${result.path}.` : `Cannot promote: ${result.reason}.`);
-          }
-          return ok('usage: /memory skill <list|promote <ruleId>>');
+          return ok('usage: /memory skill list');
         }
         case 'bus': {
           const bus = deps.bus;
@@ -377,7 +339,7 @@ export function registerCommand(ctx: Context, deps: CommandDeps): void {
         }
         default:
           return ok(
-            'commands: search <query> | list | stats | archive <id> | restore <id> | pin <id> | unpin <id> | approve <id> | reject <id> | import <src> <path> | backfill <dir> | distill [path] | rules <...> | skill <...> | bus <...> | git <...>',
+            'commands: search <query> | list | stats | archive <id> | restore <id> | pin <id> | unpin <id> | approve <id> | reject <id> | import <src> <path> | backfill <dir> | distill [path] | skill list | bus <...> | git <...>',
           );
       }
     },

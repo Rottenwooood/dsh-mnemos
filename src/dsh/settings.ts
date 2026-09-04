@@ -54,7 +54,7 @@ export const MNEMOS_SETTINGS_FIELDS: MnemosSettingsField[] = [
   { key: 'sessionLogDirs', kind: 'stringList', label: '会话日志扫描目录（逗号分隔）' },
   { key: 'backfillEnabled', kind: 'boolean', label: '启动时回填历史会话日志' },
   { key: 'importCaller', kind: 'string', label: '导入写入方（human=直接提交，model=进审批）' },
-  { key: 'skillsDir', kind: 'string', label: '规则提升为技能文件的目录' },
+  { key: 'skillsDir', kind: 'string', label: '记忆正式化技能文件目录' },
   { key: 'protocolInjectEnabled', kind: 'boolean', label: '每会话注入环境约定（protocol 记忆）' },
   { key: 'distillAuto', kind: 'boolean', label: '自动提炼（关=纯手动；开=每 N 次用户输入自动提炼）' },
   { key: 'distillEveryNTurns', kind: 'number', label: '自动提炼间隔（次用户输入）' },

@@ -17,6 +17,7 @@ import type { Memory, MemoryScope, MemoryType } from '../domain/types.js';
 import type { Caller, ToolDefinition } from './types.js';
 import type { Llm } from '../domain/llm.js';
 import { runDistillIncremental, DistillCursor } from '../domain/distill.js';
+import { writeMemorySkill } from '../domain/skill.js';
 import type { SignalCollector } from './hooks.js';
 
 export interface ToolDeps {
@@ -26,6 +27,7 @@ export interface ToolDeps {
   /** Mutable distill cursor holder shared with the manual/auto distill paths. */
   cursor: { current: DistillCursor };
   persistCursor: (cursor: DistillCursor) => void;
+  skillsDir: string;
 }
 
 const SCOPES = new Set<MemoryScope>(['global', 'workspace']);
@@ -108,7 +110,7 @@ function sessionIdOf(exec: ToolExecLike): string | undefined {
 }
 
 export function registerTools(ctx: Context, deps: ToolDeps): void {
-  const { service, llm, collector, cursor, persistCursor } = deps;
+  const { service, llm, collector, cursor, persistCursor, skillsDir } = deps;
   const search: MnemosTool = {
     name: 'memory_search',
     description:
@@ -428,25 +430,24 @@ export function registerTools(ctx: Context, deps: ToolDeps): void {
   const distill: MnemosTool = {
     name: 'memory_distill',
     description:
-      'Distill the buffered recent conversation into memory and rule candidates. Call this when the user says to remember/record something, or when a reusable workflow/preference emerged. The LLM writes each memory\'s "keywords" — 2-5 short discriminative terms or phrases the user would type verbatim later (e.g. "pnpm", "deploy to us-east-1") — which drive automatic keyword-triggered injection. Candidates flow through the approval gate.',
+      'Distill the buffered recent conversation into memory candidates. Call this when the user says to remember/record something, or when a reusable workflow/preference emerged. The LLM writes each memory\'s "keywords" — 2-5 short discriminative terms or phrases the user would type verbatim later (e.g. "pnpm", "deploy to us-east-1") — which drive automatic keyword-triggered injection. Candidates flow through the approval gate.',
     parameters: { type: 'object', properties: {} },
     output: {
       schema: {
         type: 'object',
         additionalProperties: false,
-        required: ['requested', 'memories', 'rules', 'conflicts', 'dropped'],
+        required: ['requested', 'memories', 'conflicts', 'dropped'],
         properties: {
           requested: { type: 'number' },
           memories: { type: 'number' },
-          rules: { type: 'number' },
           conflicts: { type: 'number' },
           dropped: { type: 'number' },
         },
       },
       render: (_args, value) => {
-        const v = value as { memories: number; rules: number; conflicts: number; dropped: number };
+        const v = value as { memories: number; conflicts: number; dropped: number };
         return text(
-          `memory_distill: ${v.memories} memory, ${v.rules} rule, ${v.conflicts} conflict, ${v.dropped} dropped`,
+          `memory_distill: ${v.memories} memory, ${v.conflicts} conflict, ${v.dropped} dropped`,
         );
       },
     },
@@ -456,7 +457,7 @@ export function registerTools(ctx: Context, deps: ToolDeps): void {
       }
       const messages = collector ? collector.drain() : [];
       if (messages.length === 0) {
-        return { requested: 0, memories: 0, rules: 0, conflicts: 0, dropped: 0 };
+        return { requested: 0, memories: 0, conflicts: 0, dropped: 0 };
       }
       const workspace = exec.agent?.session?.header?.cwd;
       const sessionId = sessionIdOf(exec);
@@ -470,7 +471,6 @@ export function registerTools(ctx: Context, deps: ToolDeps): void {
       return {
         requested: result.stats.requested,
         memories: result.stats.memories,
-        rules: result.stats.rules,
         conflicts: result.stats.conflicts,
         dropped: result.stats.dropped,
       };
@@ -539,7 +539,56 @@ export function registerTools(ctx: Context, deps: ToolDeps): void {
     },
   };
 
-  for (const tool of [search, record, list, stats, getDetail, distill]) {
+  const memoryToSkill: MnemosTool = {
+    name: 'memory_to_skill',
+    description: 'Formalize one active non-protocol memory as a portable Markdown skill file. The source memory is archived from the active memory set only after the file is written.',
+    parameters: {
+      type: 'object',
+      properties: {
+        query: { type: 'string', description: 'Memory id, short id, or topic text.' },
+        requirement: { type: 'string', description: 'Optional user requirement for shaping the skill body.' },
+      },
+      required: ['query'],
+    },
+    output: {
+      schema: { type: 'object', additionalProperties: false, required: ['ok'], properties: { ok: { type: 'boolean' }, path: { type: 'string' }, reason: { type: 'string' }, memoryId: { type: 'string' } } },
+      render: (_args, value) => {
+        const v = value as { ok: boolean; path?: string; reason?: string };
+        return text(v.ok ? `memory_to_skill: wrote ${v.path}` : `memory_to_skill: ${v.reason}`);
+      },
+    },
+    async execute(args: unknown): Promise<unknown> {
+      const a = args as { query?: unknown; requirement?: unknown };
+      const query = asString(a.query);
+      if (!query) throw new Error('query is required');
+      const mem = resolveByIdOrTopic(service, query);
+      if (!mem) return { ok: false, reason: 'memory-not-found' };
+      if (mem.type === 'protocol') return { ok: false, reason: 'protocol-cannot-become-skill' };
+      if (mem.status !== 'active') return { ok: false, reason: 'memory-not-active' };
+      let body: string | undefined;
+      const requirement = asString(a.requirement);
+      if (requirement && llm) {
+        try {
+          body = (await llm.complete([
+            { role: 'system', content: 'Write only the body of a DSH skill from the supplied memory. Do not add facts not present in the memory.' },
+            { role: 'user', content: `Memory summary: ${mem.summary}\nMemory detail: ${mem.detail ?? ''}\nRequirement: ${requirement}` },
+          ])).trim();
+        } catch {
+          body = undefined;
+        }
+      }
+      try {
+        const result = writeMemorySkill(mem, skillsDir, body);
+        if (!result.ok) return result;
+        const removed = service.removeMemory(mem.id);
+        return removed.ok ? { ok: true, path: result.path, memoryId: mem.id } : removed;
+      } catch (error) {
+        return { ok: false, reason: error instanceof Error ? error.message : String(error) };
+      }
+    },
+  };
+
+  for (const tool of [search, record, list, stats, getDetail, distill, memoryToSkill]) {
     ctx.effect(() => ctx.tools.register(tool as unknown as ToolDefinition));
   }
 }

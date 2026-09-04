@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { createSensitiveDetector } from '../domain/sensitive.js';
+import { createSensitiveDetector, redactSensitiveText } from '../domain/sensitive.js';
 
 const detect = createSensitiveDetector();
 
@@ -47,5 +47,19 @@ describe('sensitive detector', () => {
     expect(detect.detect('send to 0x52908400098527886E0F7030069857D2E4169EE7')).toContain(
       'ethereum-address',
     );
+  });
+
+  it('redacts secret-like values before model processing', () => {
+    const input = 'key=sk-abc123XYZ456def789ABC123XYZ456def789 and token github_pat_1234567890abcdefghijklmnopqrstuvwxyz';
+    const output = redactSensitiveText(input);
+    expect(output).toBe('key=[REDACTED] and token [REDACTED]');
+    expect(output).not.toContain('sk-');
+    expect(output).not.toContain('github_pat_');
+  });
+
+  it('redacts high-entropy long tokens but preserves ordinary long words', () => {
+    const secret = '9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08';
+    expect(redactSensitiveText(`secret ${secret}`)).toBe('secret [REDACTED]');
+    expect(redactSensitiveText('a'.repeat(50))).toBe('a'.repeat(50));
   });
 });

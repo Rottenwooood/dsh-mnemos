@@ -11,7 +11,7 @@
 
 - 模型在会话里写的/提炼出的记忆跨会话保留，下一次会话开头自动注入（模型"记得你"）。
 - 所有写入过**两级门禁**（程序检查 → 风险分诊），敏感/重复/越权写被硬打回并留审计。
-- 自进化：会话隔离提炼 → 记忆/规则提案 → 人工审批 → 规则注入 / SKILL 固化。
+- 自进化：会话隔离提炼 → 记忆提案 → 人工审批 → 记忆注入 / SKILL 正式化。
 - 数据全本地：SQLite（`node:sqlite` + FTS5 + WAL）+ git 版本化 Markdown 镜像（历史/回滚/跨机同步/备份）。
 - 无 LLM 依赖的确定性召回：FTS5 BM25 与 bigram-Jaccard 的 **RRF 融合**（dsh-evolve 机制）。
 
@@ -26,7 +26,7 @@
                                           │  ① 程序检查（预算/敏感/去重/作用域/黑名单）
                                           │  ② 风险分诊（自动放行 / 进待审批队列）
                                           ▼
-                          SQLite (memories/rules/audit/approval/usage_ledger)
+                           SQLite (memories/audit/approval/usage_ledger)
                                      │      └─  git Markdown 镜像（版本化/同步/备份）
                                      ▼
                         注入（每会话冻结快照）/ 总线通知 / 管理界面 / 提炼流水线
@@ -44,7 +44,7 @@
   1. **程序检查**（确定性，命中即打回 + 审计 `denied=1`）：字节/条数预算、敏感内容、内容哈希精确去重、模型禁写全局作用域、写入者黑名单。
   2. **风险分诊**：人类写入直接落库；模型写入**高置信度 + 工作区 + 带溯源证据**的自动放行（用户锚定，见下）；其余进待审批队列。
 - **用户锚定放行**（对齐 dsh-evolve / evolve-modes）：自动放行**不看模型自报的类型**（模型自报标签豁免 = 没有门禁），只认"工作区（可逆）+ 置信度 ≥ 阈值 + evidence 非空（证据逐字来自用户消息）"。
-- **审计**：每次写入/批准/拒绝/替换/撤销/回滚/规则迁移都落 `audit` 表，`by_agent` 标模型发起、`denied` 标被程序打回。
+- **审计**：每次写入/批准/拒绝/替换/撤销/回滚/旧结构迁移都落 `audit` 表，`by_agent` 标模型发起、`denied` 标被程序打回。
 - **敏感检测**（`sensitive.ts`）：正则 + 熵检测（API key、token、密钥特征）。可用 `sensitivityCheckEnabled` 整个关闭。
 
 ### M1 · 装完即满 + 冷热分层注入
@@ -53,19 +53,18 @@
 - **回填**（`backfill.ts`）：增量 + 断点续传（字节 checkpoint）；启动时扫描 `sessionLogDirs`，消息进提炼缓冲。
 - **关键词触发注入**（`recall.ts` + `hooks.ts`）：**低频**扫描——仅当 `agent/pre-step` 携带**新的用户消息**时，把用户文本与每条记忆的 `keywords`（无关键词则回退 topic）做子串匹配；命中即在下一条模型请求注入该记忆。无启发式、无嵌入、无每会话冻结快照。每次命中记一次 `usage_ledger`。
 
-### M2 · 自进化（提炼流水线 + 规则 + SKILL）
+### M2 · 自进化（提炼流水线 + SKILL）
 
 - **提炼流水线**（`distill.ts`）：**隔离专职角色**（独立 system prompt，不继承主对话历史）→ 严格 JSON 输出 → schema 校验（不合法即丢弃计数，绝不半生效）→ 过门禁。复用 DSH 已配置的 LLM，**无需单独 API key**（`llmProvider`/`llmModel` 留空自动回落到 `agent-default-model`）。
   - 每条记忆由 LLM 写 **`keywords`**（2-5 个简短、可区分的词/短语，用户日后可能原样说出，如 `pnpm`、`deploy to us-east-1`）——它们是关键词触发注入的依据。工具的说明与提炼 prompt 都会指导 LLM 怎么写。
-  - 事实/决策 → 记忆；流程/偏好/失败 → **规则提案**（类型→kind 映射固定：procedure→skill / preference→preference / error_fix→system_prompt）。
+  - 事实、流程、偏好、失败、决策都进入普通记忆；`protocol` 记忆走独立环境约定注入通道。
   - **冲突裁决**：同一话题说法不同 → 打标**替换提案**（`proposeReplacement`），强制人工裁决，批准后替换原记忆，绝不自动放行。
-- **规则生命周期**：提案 → 批准/拒绝 → 生效（注入）→ 弃用/回滚（状态机校验非法迁移）。
-- **SKILL 合成**（`skill.ts`）：仅**批准后**的规则才固化为 `SKILL.md`（frontmatter + 来源证据），写盘后规则标 `promoted`（run2skill 草稿审批落盘思路）。
+- **SKILL 正式化**（`skill.ts`）：`memory_to_skill` 仅处理活跃的非 `protocol` 记忆，写入 `SKILL.md`（frontmatter + 来源证据）成功后软删除源记忆。
 - **三层触发时机**：① **模型工具** `memory_distill`（LLM 主动调用）② **每 N 次用户输入自动执行**（`distillAuto` + `distillEveryNTurns`，按用户消息计数，非定时器）③ **手动**（"现在提炼"按钮 / `/memory distill`）。增量用每会话游标（序号 + 内容哈希）。
 
 ### M3 · 开放记忆总线（`bus.ts` + `ctx.mnemosBus`）
 
-- **三原语**：`recall`（只读查询，从不写）、`record`（申请写入，**必须声明身份** 插件名+版本）、`subscribe`（订阅变化：新记忆/提案/替换/撤销/规则批准）。
+- **三原语**：`recall`（只读查询，从不写）、`record`（申请写入，**必须声明身份** 插件名+版本）、`subscribe`（订阅变化：新记忆/提案/替换/撤销）。
 - **第三方治理**：第三方写入盖章 `plugin:<name>@<version>`、`source=third_party`，**只能进审批队列**（绝不直接落库）；运行时拉黑（`bus_blacklist` 表）后其写入即拒绝并审计；撤销只允许写入者本人或人类。
 - 按写入者分组 `listByWriter`，供审批面板按来源过滤。
 
@@ -120,7 +119,8 @@ P0 效果账本/评测/仪表、P1 冻结索引+memory_get 下钻+幂律热度�
 |---|---|
 | `memory_search` | 跨会话搜索记忆（RRF 混合召回），参数 `query`/`scope`/`limit` |
 | `memory_record` | 单条即写即审：提议写一条记忆，参数 `topic`/`summary`/`detail`/`keywords`/`type`/`scope`/`confidence`；过门禁（committed / proposed / denied）。`keywords` 是触发注入的关键词；`replaceMemoryId` 可原地更新旧记忆（git 可回滚，不新建重复条目） |
-| `memory_distill` | 批量提炼缓冲会话（或转录文件）→ 记忆/规则候选，独立提炼角色 + 增量游标去重 + 冲突强制人工，LLM 为每条记忆写 keywords；过门禁 |
+| `memory_distill` | 批量提炼缓冲会话（或转录文件）→ 记忆候选，独立提炼角色 + 增量游标去重 + 冲突强制人工，LLM 为每条记忆写 keywords；过门禁 |
+| `memory_to_skill` | 将一条活跃的非 `protocol` 记忆正式化为 SKILL.md，写入成功后软删除源记忆 |
 | `memory_list` | 列出 active 记忆，按 `scope`/`workspace`/`type` 过滤 |
 | `memory_stats` | 统计：总数、按作用域/类型分布、门禁配置 |
 
@@ -132,8 +132,7 @@ P0 效果账本/评测/仪表、P1 冻结索引+memory_get 下钻+幂律热度�
 /memory import <auto|claude|codex|chatgpt|dsh> <path>   导入（进提炼缓冲）
 /memory backfill <session-log-dir>          回填（进提炼缓冲）
 /memory distill [path]                      提炼缓冲会话（或给定转录文件）
-/memory rules <list|activate|rollback|deprecate> [ruleId]
-/memory skill <list|promote <ruleId>>
+/memory skill list
 /memory bus <blacklist|unblacklist|list|revoke|writers>  第三方治理
 /memory git <status|log|rollback|restore|remote|push|pull|backup>
 ```
@@ -149,7 +148,7 @@ P0 效果账本/评测/仪表、P1 冻结索引+memory_get 下钻+幂律热度�
 ```
 ~/.dsh/mnemos/mnemos.db             SQLite（WAL + FTS5）
 ~/.dsh/mnemos/repo/                 git 记忆镜像仓库
-~/.dsh/mnemos/skills/               规则固化的 SKILL.md
+~/.dsh/mnemos/skills/               记忆正式化生成的 SKILL.md
 ~/.dsh/mnemos/backfill-checkpoint.json · distill-cursor.json   游标
 ```
 
@@ -177,11 +176,10 @@ P0 效果账本/评测/仪表、P1 冻结索引+memory_get 下钻+幂律热度�
 | `injectLimit` | number | `8` | 每次会话注入的记忆条数上限 | 即时 |
 | `injectMinHits` | number | `0` | 自动注入最低跨会话命中次数（≥1 只注入被反复用过的） | 即时 |
 | `injectMaxBytes` | number | `2048` | 注入投影字节预算（硬限制） | 即时 |
-| `rulesInjectEnabled` | bool | `true` | 向模型注入已批准规则 | 即时 |
 | `sessionLogDirs` | string[] | `[]` | 启动回填扫描的会话日志目录 | 重启 |
 | `backfillEnabled` | bool | `true` | 启动时回填；关 = 仅手动 | 重启 |
 | `importCaller` | enum | `human` | 导入写入方：human=直接落库，model=进审批队列 | 即时 |
-| `skillsDir` | string | `~/.dsh/mnemos/skills` | 规则固化为 SKILL.md 的目录 | 重启 |
+| `skillsDir` | string | `~/.dsh/mnemos/skills` | 记忆正式化为 SKILL.md 的目录 | 重启 |
 | `llmProvider` | string | `''` | 提炼用 provider；留空用 DSH `agent-default-model` | 即时 |
 | `llmModel` | string | `''` | 提炼用模型；留空同上 | 即时 |
 | `distillAuto` | bool | `false` | 自动提炼；开 = 每 N 次用户输入自动执行 | 即时 |
@@ -230,7 +228,7 @@ P0 效果账本/评测/仪表、P1 冻结索引+memory_get 下钻+幂律热度�
 3. **查看**：better-sidebar"记忆"页签；搜索 + 类型筛选；点"版本历史"看任意 sha 并一键回滚。
 4. **审批**：模型写的高风险/无证据记忆进"待审批"，人类批准/拒绝/编辑后批准/批量批准。
 5. **提炼**：点"现在提炼"（或用 `/memory distill`）；`distillAuto: true` 可定时。
-6. **规则与 SKILL**：`/memory rules list` 看提案 → `/memory approve <id>` 批准 → `rules activate`；批准后 `/memory skill promote <ruleId>` 固化为 SKILL.md。
+6. **记忆与 SKILL**：`/memory list` 查看活跃记忆；模型可调用 `memory_to_skill` 将已批准的非 `protocol` 记忆正式化为 SKILL.md，写盘成功后源记忆软删除。
 7. **第三方插件**：走 `ctx.mnemosBus.record()`（必须声明身份），写入只能进审批；`/memory bus blacklist <plugin>` 拉黑。
 8. **跨机同步**：设置 `gitRemoteUrl` + `syncEnabled`，或手动 `/memory git pull` / `push`；冲突时 `/memory git status` 看冲突文件，人工裁决后回滚/保留。
 9. **备份**：设置页"git 同步 → 备份"（或 `/memory git backup /path/out.bundle`）。

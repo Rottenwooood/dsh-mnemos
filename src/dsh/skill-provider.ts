@@ -1,7 +1,7 @@
 /**
  * DSH skill provider (M2 wiring): expose the mnemos skills directory
- * (`~/.dsh/mnemos/skills/`, where approved rules are promoted to SKILL files)
- * to the harness's `ctx.skills` registry. This makes a promoted skill loadable
+ * (`~/.dsh/mnemos/skills/`, where formalized memories are written as SKILL files)
+ * to the harness's `ctx.skills` registry. This makes a formalized skill loadable
  * through DSH's `skill` tool — the knowledge leaves mnemos and works anywhere
  * in the harness.
  *

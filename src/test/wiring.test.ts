@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from 'vitest';
-import { unlinkSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, unlinkSync, writeFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { Context } from '@deepseek-ai/cordis';
@@ -94,13 +94,13 @@ function makeService() {
   return { store, service };
 }
 function toolDeps(service: ReturnType<typeof makeService>['service']): ToolDeps {
-  return { service, cursor: { current: {} }, persistCursor: () => {} };
+  return { service, skillsDir: '/tmp/mnemos-test-skills', cursor: { current: {} }, persistCursor: () => {} };
 }
 
 describe('tools wiring', () => {
-  it('registers the six model-facing tools', () => {
+  it('registers the model-facing tools', () => {
     const { ctx, tools } = fakeContext();
-    const { service } = makeService();
+    const { store, service } = makeService();
     registerTools(ctx, toolDeps(service));
     expect(tools.map((t) => t.name)).toEqual([
       'memory_search',
@@ -109,12 +109,13 @@ describe('tools wiring', () => {
       'memory_stats',
       'memory_get',
       'memory_distill',
+      'memory_to_skill',
     ]);
   });
 
   it('memory_search finds a committed memory', async () => {
     const { ctx, tools } = fakeContext();
-    const { service } = makeService();
+    const { store, service } = makeService();
     registerTools(ctx, toolDeps(service));
     service.add(
       {
@@ -161,6 +162,61 @@ describe('tools wiring', () => {
     expect(denied.outcome).toBe('denied');
   });
 
+  it('memory_to_skill writes a skill and removes the source memory', async () => {
+    const { ctx, tools } = fakeContext();
+    const { service } = makeService();
+    const skillsDir = mkdtempSync(join(tmpdir(), 'mnemos-tool-skills-'));
+    registerTools(ctx, { ...toolDeps(service), skillsDir });
+    const created = service.add(
+      {
+        type: 'procedure',
+        scope: 'workspace',
+        workspace: 'ws',
+        topic: 'release checks',
+        summary: 'Run typecheck before tests.',
+        detail: 'Run typecheck, then run tests before release.',
+        evidence: [],
+        confidence: 1,
+        source: 'manual',
+        writer: 'human',
+      },
+      'human',
+    ).memory!;
+    const tool = tools.find((t) => t.name === 'memory_to_skill')!;
+    const result = await (tool as unknown as { execute(args: unknown, e: unknown): Promise<{ ok: boolean; path?: string; memoryId?: string }> }).execute(
+      { query: created.id },
+      { agent: { id: 'a1', session: { id: 's1', header: { cwd: 'ws' } } } },
+    );
+    expect(result.ok).toBe(true);
+    expect(result.memoryId).toBe(created.id);
+    expect(result.path).toBeDefined();
+    expect(service.getMemory(created.id)?.status).toBe('deleted');
+    rmSync(skillsDir, { recursive: true, force: true });
+  });
+
+  it('memory_to_skill rejects protocol memories', async () => {
+    const { ctx, tools } = fakeContext();
+    const { service } = makeService();
+    registerTools(ctx, toolDeps(service));
+    const created = service.add(
+      {
+        type: 'protocol',
+        scope: 'global',
+        topic: 'sandbox',
+        summary: 'Use the sandbox.',
+        evidence: [],
+        confidence: 1,
+        source: 'manual',
+        writer: 'human',
+      },
+      'human',
+    ).memory!;
+    const tool = tools.find((t) => t.name === 'memory_to_skill')!;
+    const result = await (tool as unknown as { execute(args: unknown, e: unknown): Promise<{ ok: boolean; reason?: string }> }).execute({ query: created.id }, {});
+    expect(result).toEqual({ ok: false, reason: 'protocol-cannot-become-skill' });
+    expect(service.getMemory(created.id)?.status).toBe('active');
+  });
+
   it('memory_distill distills buffered messages via the LLM and stores keywords', async () => {
     const { ctx, tools } = fakeContext();
     const { service } = makeService();
@@ -173,7 +229,7 @@ describe('tools wiring', () => {
     };
     const collector = new SignalCollector(() => {});
     collector.ingest([{ role: 'user', text: 'we use pnpm', sessionId: 's1', index: 0 }]);
-    registerTools(ctx, { service, llm, collector, cursor: { current: {} }, persistCursor: () => {} });
+    registerTools(ctx, { service, llm, collector, skillsDir: '/tmp/mnemos-test-skills', cursor: { current: {} }, persistCursor: () => {} });
     const distill = tools.find((t) => t.name === 'memory_distill')!;
     const out = (await (distill as unknown as {
       execute(args: unknown, e: unknown): Promise<{ memories: number }>;
@@ -467,9 +523,9 @@ describe('protocol injection (agent/pre-step)', () => {
 
 
 describe('/mnemos distill command', () => {
-  it('distills buffered session messages and proposes a rule', async () => {
+  it('distills buffered session messages into a memory', async () => {
     const { ctx, commands } = fakeContext();
-    const { service } = makeService();
+    const { store, service } = makeService();
     const collector = new SignalCollector(() => {});
     collector.onEvent({ id: 's1' }, { type: 'user/message', seq: 0, data: { message: { role: 'user', content: [{ type: 'text', text: '记住：用 pnpm' }] } } });
     const llm: Llm = {
@@ -480,7 +536,7 @@ describe('/mnemos distill command', () => {
     registerCommand(ctx, { ...commandDeps(service), llm, collector });
     const command = commands[0]!;
     const result = await invokeCommand(command, 'distill');
-    expect(service.listRules('proposed')).toHaveLength(1);
+    expect(store.listApprovals('proposed')).toHaveLength(1);
     expect(result.text).toContain('Distilled');
   });
 });
@@ -599,6 +655,6 @@ describe('apply', () => {
     } as unknown as Context;
     apply(ctx2, { dbPath: ':memory:', gitVersioning: false });
     expect(provided[0]?.[0]).toBe('mnemos');
-    expect(tools.length).toBe(6);
+    expect(tools.length).toBe(7);
   });
 });

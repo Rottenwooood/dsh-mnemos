@@ -31,7 +31,7 @@
 │    dedup.ts          规范化与去重（normalizeTopic）
 │    imports/          历史导入适配器（dsh/claude-code/codex/chatgpt）
 │    backfill.ts       倒排索引回填
-│    skill.ts          规则 → skill 合成
+│    skill.ts          记忆 → skill 正式化
 │    llm.ts            LLM 接口抽象
 │    types.ts          领域类型
 │
@@ -57,7 +57,7 @@ status（active/archived/deleted/superseded）。
   保证主表与索引同步；检索按 `rank`（bm25）排序。
 - 检索多级阶梯：FTS5 全词 AND（精确）→ 空则 FTS5 任词 OR（bm25 排序）→
   空则包含扫描。服务层再与二元组相似度做 RRF 融合（`hybridSearch`）。
-- 辅助表：`rules`、`audit`、`approval`、`usage_ledger`、`bus_blacklist`。
+- 辅助表：`audit`、`approval`、`usage_ledger`、`bus_blacklist`。
 - 迁移策略：`IF NOT EXISTS` 建表 + 幂等 `ALTER TABLE ADD COLUMN`（逐列探测），
   `user_version` 校验。
 
@@ -85,8 +85,8 @@ status（active/archived/deleted/superseded）。
 
 ### 蒸馏（distill.ts）
 
-会话日志窗口（200 条）→ LLM（DSH 配置）→ 结构化记忆/规则，字段参考见
-`DISTILL_SYSTEM_PROMPT`；`detectConflicts` 决定走接替链还是规则；
+会话日志窗口（200 条）→ LLM（DSH 配置）→ 结构化记忆，字段参考见
+`DISTILL_SYSTEM_PROMPT`；`detectConflicts` 决定走替换链还是普通写入；
 `distillAuto` 默认关闭（计数触发，每 5 条用户消息）。
 
 ### 镜像（mirror.ts + gitstore.ts）

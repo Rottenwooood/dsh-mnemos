@@ -1,6 +1,6 @@
 {
   "name": "dsh-mnemos",
-  "version": "0.1.1",
+  "version": "0.2.0",
   "description": "Cross-session memory with governance, self-evolution and an approval-gated write path for DeepSeek Harness. Heat-ranked recall, environment conventions, forgetting lifecycle, supersession chains, poisoning defense, auto-distillation, and an open measurement ABI.",
   "type": "module",
   "license": "MIT",

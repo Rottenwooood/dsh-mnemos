@@ -6,8 +6,8 @@
  *   record(input, identity) — write: REQUIRES a declared plugin identity and
  *                              ALWAYS goes to the approval queue (never direct,
  *                              never auto-approved), then is audited
- *   subscribe(listener)    — watch memory/rule changes (new committed memory,
- *                              proposal, replacement, revocation, rule approval)
+ *   subscribe(listener)    — watch memory changes (new committed memory,
+ *                              proposal, replacement, revocation)
  *
  * Governance:
  *   - identity is mandatory; the writer is stamped as `plugin:<name>@<version>`
@@ -18,7 +18,7 @@
  */
 import { MemoryService } from './service.js';
 import { MemoryStore, SummaryRow } from './store.js';
-import { Memory, MemoryInput, MemoryScope, Rule } from './types.js';
+import { Memory, MemoryInput, MemoryScope } from './types.js';
 import { exactDedupKey } from './dedup.js';
 import { memoryShortId } from './recall.js';
 
@@ -39,7 +39,6 @@ export type BusEvent =
   | { type: 'memory-proposed'; approvalId: number; input: MemoryInput; identity: BusIdentity }
   | { type: 'memory-replaced'; memoryId: string }
   | { type: 'memory-revoked'; memoryId: string }
-  | { type: 'rule-approved'; rule: Rule };
 
 export interface BusRecordResult {
   outcome: 'committed' | 'proposed' | 'denied';

@@ -12,7 +12,7 @@
  */
 import { randomUUID } from 'node:crypto';
 import { MemoryStore, SummaryRow } from './store.js';
-import { Memory, MemoryInput, Caller, Rule, RuleState } from './types.js';
+import { Memory, MemoryInput, Caller } from './types.js';
 import { SensitiveDetector } from './sensitive.js';
 import { exactDedupKey, similarity } from './dedup.js';
 
@@ -50,10 +50,9 @@ export interface ApproveResult {
   ok: boolean;
   reason?: string;
   memory?: Memory;
-  rule?: Rule;
 }
 
-export interface RuleWriteResult {
+export interface ReplacementWriteResult {
   outcome: 'proposed' | 'denied';
   approvalId?: number;
   reason?: string;
@@ -146,12 +145,6 @@ function hybridSearch(store: MemoryStore, query: string, limit: number): Summary
   return out.slice(0, limit);
 }
 
-export interface RuleStateResult {
-  ok: boolean;
-  reason?: string;
-  rule?: Rule;
-}
-
 export interface MemoryService {
   readonly config: GateConfig;
   /** Replace the gate in place (live settings re-apply). */
@@ -171,11 +164,7 @@ export interface MemoryService {
   /** Edit one memory's summary/detail (human action); fires onWrite. */
   editMemory(id: string, patch: Partial<Pick<MemoryInput, 'summary' | 'detail'>>): { ok: boolean; reason?: string };
   approve(id: number, decision: 'approve' | 'reject', edited?: MemoryInput): ApproveResult;
-  proposeRule(rule: Rule, caller: Caller): RuleWriteResult;
-  proposeReplacement(input: MemoryInput, replaceMemoryId: string, caller: Caller): RuleWriteResult;
-  listRules(state?: RuleState): Rule[];
-  getRule(id: string): Rule | undefined;
-  setRuleState(id: string, state: RuleState): RuleStateResult;
+  proposeReplacement(input: MemoryInput, replaceMemoryId: string, caller: Caller): ReplacementWriteResult;
   /** Record an INJECTION of a memory into a session (ledger row; used=0 until the model references it). */
   recordHit(id: string, sessionId?: string, injectedTokens?: number): number;
   /** Record a TOOL HIT: the model retrieved this memory via memory_get/memory_search. */
@@ -205,7 +194,7 @@ export function createMemoryService(
 
   function audit(
     action: string,
-    targetType: 'memory' | 'rule' | 'approval',
+    targetType: 'memory' | 'approval',
     targetId: string,
     payload: unknown,
     denied: boolean,
@@ -292,33 +281,6 @@ export function createMemoryService(
       input.confidence >= current.autoApproveConfidence &&
       (input.evidence?.length ?? 0) > 0
     );
-  }
-
-  const RULE_TRANSITIONS: Record<RuleState, RuleState[]> = {
-    proposed: ['approved', 'rejected'],
-    approved: ['deprecated', 'rolled_back', 'promoted'],
-    rejected: [],
-    edited: ['approved', 'rejected'],
-    promoted: ['deprecated', 'rolled_back'],
-    deprecated: ['rolled_back'],
-    rolled_back: ['approved'],
-  };
-
-  function ruleProgramChecks(rule: Rule, caller: Caller): { ok: true } | { ok: false; reason: string } {
-    if (current.sensitivityCheckEnabled) {
-      const reasons = detector.detect(`${rule.text} ${rule.kind}`);
-      if (reasons.length > 0) {
-        return { ok: false, reason: 'sensitive' };
-      }
-    }
-    if (current.blacklist.includes(rule.proposedBy)) {
-      return { ok: false, reason: 'blacklisted' };
-    }
-    const dup = store.listRules('proposed').find((r) => r.kind === rule.kind && r.text === rule.text);
-    if (dup) {
-      return { ok: false, reason: 'duplicate' };
-    }
-    return { ok: true };
   }
 
   return {
@@ -446,15 +408,10 @@ export function createMemoryService(
       }
       if (decision === 'reject') {
         store.updateApprovalState(id, 'rejected');
-        if (candidate.kind === 'rule') {
-          const r = candidate.payload as Rule;
-          store.updateRuleState(r.id, 'rejected');
-        }
         audit('reject', 'approval', String(id), candidate.payload, false, false);
         return { ok: true };
       }
-      if (candidate.kind === 'memory') {
-        const raw = (edited ?? candidate.payload) as unknown;
+      const raw = (edited ?? candidate.payload) as unknown;
         if (isUpdatePayload(raw)) {
           const existing = store.getMemory(raw.updateMemoryId);
           if (!existing) {
@@ -486,48 +443,14 @@ export function createMemoryService(
           onWrite?.();
           return { ok: true, memory: replacement };
         }
-        const input = raw as MemoryInput;
-        const memory = buildMemory(input);
-        memory.trust = 'trusted'; // a human approved this content
-        store.addMemory(memory);
-        store.updateApprovalState(id, 'approved');
-        audit('approve', 'approval', String(id), { approvalId: id, memoryId: memory.id }, false, false);
-        onWrite?.();
-        return { ok: true, memory };
-      }
-      const rule = (edited ?? candidate.payload) as Rule;
-      const existing = store.listRules().find((r) => r.id === rule.id);
-      const committed: Rule = existing
-        ? { ...existing, state: 'approved' as const }
-        : { ...rule, id: rule.id || `rule-${randomUUID()}`, state: 'approved' as const };
-      store.updateRuleState(committed.id, 'approved', {
-        approvedBy: 'human',
-        approvedAt: now(),
-      });
+      const input = raw as MemoryInput;
+      const memory = buildMemory(input);
+      memory.trust = 'trusted'; // a human approved this content
+      store.addMemory(memory);
       store.updateApprovalState(id, 'approved');
-      audit('approve', 'rule', committed.id, { approvalId: id, ruleId: committed.id }, false, false);
-      return { ok: true, rule: store.listRules().find((r) => r.id === committed.id) };
-    },
-
-    proposeRule(rule, caller) {
-      const check = ruleProgramChecks(rule, caller);
-      if (!check.ok) {
-        const auditId = audit('denied', 'rule', rule.id, rule, true, caller === 'model', check.reason);
-        return { outcome: 'denied', reason: check.reason, auditId };
-      }
-      store.insertRule({ ...rule, state: 'proposed' });
-      store.insertApproval({
-        id: 0,
-        kind: 'rule',
-        payload: rule,
-        state: 'proposed',
-        proposedBy: rule.proposedBy,
-        evidence: rule.evidence,
-        createdAt: now(),
-      });
-      const approvalId = store.listApprovals('proposed').at(-1)?.id ?? 0;
-      const auditId = audit('propose', 'approval', String(approvalId), rule, false, caller === 'model');
-      return { outcome: 'proposed', approvalId, auditId };
+      audit('approve', 'approval', String(id), { approvalId: id, memoryId: memory.id }, false, false);
+      onWrite?.();
+      return { ok: true, memory };
     },
 
     proposeReplacement(input, replaceMemoryId, caller) {
@@ -548,31 +471,6 @@ export function createMemoryService(
       const approvalId = store.listApprovals('proposed').at(-1)?.id ?? 0;
       const auditId = audit('propose', 'approval', String(approvalId), { __replace: true, memory: input, replaceMemoryId }, false, caller === 'model');
       return { outcome: 'proposed', approvalId, auditId };
-    },
-
-    listRules(state) {
-      return store.listRules(state);
-    },
-
-    getRule(id) {
-      return store.listRules().find((r) => r.id === id);
-    },
-
-    setRuleState(id, state) {
-      const rule = store.listRules().find((r) => r.id === id);
-      if (!rule) {
-        return { ok: false, reason: 'not-found' };
-      }
-      const allowed = RULE_TRANSITIONS[rule.state] ?? [];
-      if (!allowed.includes(state)) {
-        return { ok: false, reason: `invalid transition ${rule.state} -> ${state}` };
-      }
-      store.updateRuleState(id, state, {
-        approvedBy: state === 'approved' ? 'human' : undefined,
-        approvedAt: state === 'approved' ? now() : undefined,
-      });
-      audit('rule-state', 'rule', id, { from: rule.state, to: state }, false, false);
-      return { ok: true, rule: store.listRules().find((r) => r.id === id) };
     },
 
     recordHit(id, sessionId, injectedTokens) {

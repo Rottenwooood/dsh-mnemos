@@ -1,6 +1,6 @@
 /**
  * Distillation pipeline (M2): turn a conversation window into strict, validated
- * memory and rule candidates.
+ * memory candidates.
  *
  * The distiller runs an isolated specialist role (its own system prompt, never
  * inheriting the main conversation history), asks for strict JSON, parses and
@@ -10,11 +10,12 @@
  * adjudication (never auto-approved).
  */
 import { Llm, LlmMessage } from './llm.js';
-import { MemoryInput, MemoryScope, MemoryType, Evidence, MemorySource, Rule, RuleKind } from './types.js';
+import { MemoryInput, MemoryScope, MemoryType, Evidence, MemorySource } from './types.js';
 import { ImportedMessage } from './imports/types.js';
 import { MemoryService } from './service.js';
 import { similarity, normalizeTopic } from './dedup.js';
 import { createHash } from 'node:crypto';
+import { redactSensitiveText } from './sensitive.js';
 
 export const DISTILL_SYSTEM_PROMPT = `You are a memory curator for a coding-assistant harness.
 Read the conversation and extract durable, reusable facts the user would want remembered across sessions.
@@ -65,7 +66,6 @@ export interface DistillEntry {
 
 export interface DistillOutput {
   memories: DistillEntry[];
-  rules: Array<{ kind: RuleKind; text: string; confidence: number }>;
 }
 
 export interface DistillOptions {
@@ -79,7 +79,6 @@ export interface DistillStats {
   returned: number;
   dropped: number;
   memories: number;
-  rules: number;
   conflicts: number;
 }
 
@@ -126,7 +125,7 @@ function transcriptMessages(messages: ImportedMessage[]): LlmMessage[] {
   for (const m of messages) {
     const role = m.role === 'assistant' ? 'assistant' : m.role === 'tool' ? 'tool' : 'user';
     const prefix = m.role === 'tool' ? (m.name ? `[tool ${m.name}] ` : '[tool] ') : '';
-    out.push({ role, content: `${prefix}${m.text}` });
+    out.push({ role, content: `${prefix}${redactSensitiveText(m.text)}` });
   }
   return out;
 }
@@ -171,20 +170,6 @@ export function isValidEntry(v: unknown): v is DistillEntry {
     (o.confidence === undefined || (typeof o.confidence === 'number' && o.confidence >= 0 && o.confidence <= 1)) &&
     (o.scope === undefined || o.scope === 'global' || o.scope === 'workspace')
   );
-}
-
-/** Map a distilled procedure/preference/error_fix into a reusable rule. */
-export function toRule(d: DistillEntry): { kind: RuleKind; text: string } | undefined {
-  switch (d.type) {
-    case 'procedure':
-      return { kind: 'skill', text: d.summary };
-    case 'preference':
-      return { kind: 'preference', text: d.summary };
-    case 'error_fix':
-      return { kind: 'system_prompt', text: d.summary };
-    default:
-      return undefined;
-  }
 }
 
 export interface ConflictCandidate {
@@ -244,20 +229,6 @@ function toMemoryInput(
   };
 }
 
-function ruleToProposal(d: DistillEntry, opts: DistillOptions): Rule {
-  const rule = toRule(d)!;
-  const id = `rule-${createHash('sha1').update(`${rule.kind}:${rule.text}`).digest('hex').slice(0, 12)}`;
-  return {
-    id,
-    kind: rule.kind,
-    text: rule.text,
-    evidence: opts.sessionId ? [{ sessionId: opts.sessionId, eventRange: [0, 0], quote: d.summary }] : [],
-    state: 'proposed',
-    proposedBy: 'distill',
-    version: 1,
-  };
-}
-
 export interface DistillRunner {
   run(messages: ImportedMessage[]): Promise<DistillStats>;
 }
@@ -282,7 +253,7 @@ export async function runDistillIncremental(
 /**
  * Run one distillation pass: build the specialist prompt, call the LLM, parse +
  * validate, route memories through the gate (conflicts forced to the queue) and
- * propose rules. Invalid LLM output is counted and dropped.
+ * Invalid LLM output is counted and dropped.
  */
 export function createDistillRunner(
   llm: Llm,
@@ -291,7 +262,7 @@ export function createDistillRunner(
 ): DistillRunner {
   return {
     async run(messages) {
-      const stats: DistillStats = { requested: 0, returned: 0, dropped: 0, memories: 0, rules: 0, conflicts: 0 };
+      const stats: DistillStats = { requested: 0, returned: 0, dropped: 0, memories: 0, conflicts: 0 };
       if (messages.length === 0) {
         return stats;
       }
@@ -312,7 +283,6 @@ export function createDistillRunner(
 
       for (const entry of valid) {
         const conflict = conflictMap.get(entry);
-        const rule = toRule(entry);
         if (conflict) {
           const result = service.proposeReplacement(
             toMemoryInput(entry, opts, true),
@@ -321,11 +291,6 @@ export function createDistillRunner(
           );
           if (result.outcome === 'proposed') {
             stats.memories++;
-          }
-        } else if (rule) {
-          const proposed = service.proposeRule(ruleToProposal(entry, opts), 'model');
-          if (proposed.outcome === 'proposed') {
-            stats.rules++;
           }
         } else {
           const result = service.add(toMemoryInput(entry, opts, false), 'model');
